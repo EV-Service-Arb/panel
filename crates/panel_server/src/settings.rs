@@ -2,6 +2,7 @@
 
 use panel::seal::DataKey;
 use panel_core::notify::Locale;
+use panel_server::forward::CabinetPins;
 use sa_auth::{Catalog, PermissionSet};
 use sha2::{Digest, Sha256};
 
@@ -56,6 +57,10 @@ ev_lib::settings! {
 		/// `/cabinet/mfe/*` (the account chip's bundle) is fetched from it. Unset: not served,
 		/// and `serve` says so. Not required: the panel runs without the chip.
 		panel_cabinet_url: Option<String>,
+		/// The SHA-256 of each file `/cabinet/mfe` serves, as the cabinet's release prints them
+		/// (`mfe:pins`): `account-chip.js=<hex>,account-chip.css=<hex>`. Unset: nothing is
+		/// served, whatever `PANEL_CABINET_URL` says. Not a secret: the files are public.
+		panel_cabinet_mfe_pins: Option<String>,
 		/// The panel's bot (`@evinvest_sa_bot`; not `telegram_token_main`). Unset: no Telegram
 		/// notifications, and `serve` says so. Needs the sign-in configured too.
 		#[secret]
@@ -363,13 +368,25 @@ impl Settings {
 		}))
 	}
 
-	/// The cabinet behind `/cabinet/mfe` (docs/ARCHITECTURE.md, Forward): `None` when unset.
-	pub fn cabinet(&self) -> eyre::Result<Option<axum::http::Uri>> {
-		match self.panel_cabinet_url.as_deref().map(str::trim) {
-			None | Some("") => Ok(None),
-			Some(raw) => bare_http_origin("PANEL_CABINET_URL", raw).map(Some),
-		}
+	/// The cabinet behind `/cabinet/mfe` (docs/ARCHITECTURE.md, Forward): each half `None` when
+	/// unset, and served only with both. Either one malformed fails the boot, the other unset
+	/// or not.
+	pub fn cabinet(&self) -> eyre::Result<CabinetSettings> {
+		let set = |v: &Option<String>| v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+		Ok(CabinetSettings {
+			url: set(&self.panel_cabinet_url).map(|raw| bare_http_origin("PANEL_CABINET_URL", &raw)).transpose()?,
+			pins: set(&self.panel_cabinet_mfe_pins)
+				.map(|raw| CabinetPins::parse(&raw).map_err(|e| eyre::eyre!("PANEL_CABINET_MFE_PINS: {e}")))
+				.transpose()?,
+		})
 	}
+}
+
+/// `PANEL_CABINET_URL` and `PANEL_CABINET_MFE_PINS`, checked.
+#[derive(Debug)]
+pub struct CabinetSettings {
+	pub url: Option<axum::http::Uri>,
+	pub pins: Option<CabinetPins>,
 }
 
 /// An in-cluster peer's address: `http://host[:port]`, nothing after it.
@@ -513,6 +530,7 @@ mod tests {
 				"PANEL_REVIEW_ARCHIVE_URL",
 				"PANEL_PLAYBOOK_URL",
 				"PANEL_CABINET_URL",
+				"PANEL_CABINET_MFE_PINS",
 				"TELEGRAM_BOT_TOKEN",
 				"TELEGRAM_BOT_USERNAME",
 				"TELEGRAM_LOCALE",
@@ -777,13 +795,35 @@ mod tests {
 
 	#[test]
 	fn the_cabinet_is_optional_and_a_bare_http_origin() {
-		assert!(from(&[]).unwrap().cabinet().unwrap().is_none());
-		assert!(from(&[("PANEL_CABINET_URL", " ")]).unwrap().cabinet().unwrap().is_none());
-		let on = from(&[("PANEL_CABINET_URL", "http://ev-banking-cabinet.apps:50061")]).unwrap().cabinet().unwrap().unwrap();
-		assert_eq!(on.authority().unwrap().as_str(), "ev-banking-cabinet.apps:50061");
+		let none = from(&[]).unwrap().cabinet().unwrap();
+		assert!(none.url.is_none() && none.pins.is_none());
+		assert!(from(&[("PANEL_CABINET_URL", " ")]).unwrap().cabinet().unwrap().url.is_none());
+		let on = from(&[("PANEL_CABINET_URL", "http://ev-banking-cabinet.apps:50061")]).unwrap().cabinet().unwrap();
+		assert_eq!(on.url.unwrap().authority().unwrap().as_str(), "ev-banking-cabinet.apps:50061");
+		assert!(on.pins.is_none(), "the url alone pins nothing");
 		for raw in ["https://evinvest.ltd", "http://cabinet:50061/cabinet", "http://cabinet:50061/?a=1", "cabinet:50061"] {
 			let e = format!("{}", from(&[("PANEL_CABINET_URL", raw)]).unwrap().cabinet().unwrap_err());
 			assert!(e.contains("PANEL_CABINET_URL"), "{raw}: {e}");
+		}
+	}
+
+	#[test]
+	fn the_cabinets_pins_are_optional_and_malformed_ones_fail_the_boot() {
+		let js = "0f".repeat(32);
+		assert!(from(&[("PANEL_CABINET_MFE_PINS", "  ")]).unwrap().cabinet().unwrap().pins.is_none());
+		let pins = format!("account-chip.js={js}, account-chip.css={js}");
+		let on = from(&[("PANEL_CABINET_MFE_PINS", &pins)]).unwrap().cabinet().unwrap();
+		assert_eq!(on.pins, Some(CabinetPins::parse(&pins).unwrap()));
+		for (raw, says) in [
+			(format!("account-chip.js:{js}"), "is not `<file>=<sha256 hex>`"),
+			(format!("account-chip.js={}", js.to_uppercase()), "64 lowercase hex"),
+			(format!("account-chip.js.map={js}"), "no file of the bundle"),
+			(",".to_owned(), "no pin in it"),
+		] {
+			// with a good URL too: a bad pin is not served around
+			let vars = [("PANEL_CABINET_URL", "http://cabinet:50061"), ("PANEL_CABINET_MFE_PINS", raw.as_str())];
+			let e = format!("{}", from(&vars).unwrap().cabinet().unwrap_err());
+			assert!(e.contains("PANEL_CABINET_MFE_PINS") && e.contains(says), "{raw}: {e}");
 		}
 	}
 

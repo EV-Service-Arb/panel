@@ -16,11 +16,12 @@ use axum::{
 use panel::testing::{TestDb, admin, panel};
 use panel_server::{
 	concierge::{Concierge, DEV_CODE, DevIdentity},
-	forward::{Cabinet, Forward, Upstreams},
+	forward::{Cabinet, CabinetPins, Forward, Upstreams},
 	http,
 	signin::{SignIn, SignInConfig},
 };
 use sa_auth::{Keys, Service, Signer};
+use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
 const ORIGIN: &str = "http://127.0.0.1:59120";
@@ -194,6 +195,9 @@ async fn playbooks_open_paths_pass_without_a_session_and_its_consent_page_sends_
 	assert_eq!(headers[header::LOCATION], "/auth/login?return_to=%2Fplaybook_mcp%2Fauthorize%3Fclient_id%3Dc%26state%3Ds");
 }
 
+const CHIP_JS: &str = "customElements.define()";
+const CHIP_CSS: &str = ".chip{}";
+
 /// A cabinet: the chip's two files, and the ways a cabinet can go wrong.
 async fn cabinet() -> (String, Arc<Mutex<Vec<Seen>>>) {
 	let seen = Arc::new(Mutex::new(Vec::new()));
@@ -202,6 +206,7 @@ async fn cabinet() -> (String, Arc<Mutex<Vec<Seen>>>) {
 		let log = log.clone();
 		async move {
 			let path = req.uri().path().to_owned();
+			let fresh = req.headers().get(header::IF_NONE_MATCH).is_some_and(|v| v == "\"c1\"");
 			log.lock().unwrap().push(Seen {
 				method: req.method().clone(),
 				path_and_query: req.uri().path_and_query().unwrap().to_string(),
@@ -209,22 +214,28 @@ async fn cabinet() -> (String, Arc<Mutex<Vec<Seen>>>) {
 			});
 			let cookie = (header::SET_COOKIE, "cabinet=1; Path=/");
 			let inner = (header::HeaderName::from_static("x-cabinet-pod"), "10.42.0.7");
+			let js = (header::CONTENT_TYPE, "text/javascript");
 			match path.as_str() {
+				"/cabinet/mfe/account-chip.js" if fresh => (StatusCode::NOT_MODIFIED, [(header::ETAG, "\"c1\"")]).into_response(),
 				"/cabinet/mfe/account-chip.js" => (
 					[
 						(header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
 						(header::CACHE_CONTROL, "public, max-age=300, stale-while-revalidate=86400"),
 						(header::ETAG, "\"c1\""),
+						(header::LAST_MODIFIED, "Sun, 11 Oct 2026 07:00:00 GMT"),
 						cookie,
 						inner,
 					],
-					"customElements.define()",
+					CHIP_JS,
 				)
 					.into_response(),
-				"/cabinet/mfe/account-chip.css" => ([(header::CONTENT_TYPE, "text/css")], ".chip{}").into_response(),
+				"/cabinet/mfe/account-chip.css" => ([(header::CONTENT_TYPE, "text/css")], CHIP_CSS).into_response(),
+				"/cabinet/mfe/tampered.js" => ([js], "fetch('/api/v1/me').then(steal)").into_response(),
+				"/cabinet/mfe/zipped.js" => ([js, (header::CONTENT_ENCODING, "gzip")], CHIP_JS).into_response(),
+				"/cabinet/mfe/unpinned.js" => ([js], CHIP_JS).into_response(),
 				"/cabinet/mfe/moved.js" => (StatusCode::FOUND, [(header::LOCATION, "http://ev-banking-cabinet.apps:50061/elsewhere.js")]).into_response(),
 				"/cabinet/mfe/page.js" => ([(header::CONTENT_TYPE, "text/html")], "<html>").into_response(),
-				"/cabinet/mfe/huge.js" => ([(header::CONTENT_TYPE, "text/javascript")], vec![b'x'; 5 << 20]).into_response(),
+				"/cabinet/mfe/huge.js" => ([js], vec![b'x'; 5 << 20]).into_response(),
 				"/cabinet/mfe/broken.js" => (StatusCode::INTERNAL_SERVER_ERROR, "stack trace at 10.42.0.7").into_response(),
 				_ => (StatusCode::NOT_FOUND, "<html>404</html>").into_response(),
 			}
@@ -234,6 +245,31 @@ async fn cabinet() -> (String, Arc<Mutex<Vec<Seen>>>) {
 	let addr = listener.local_addr().unwrap();
 	tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 	(format!("http://{addr}"), seen)
+}
+
+fn sha256(bytes: &[u8]) -> String {
+	Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The chip's files pinned as they are; the misbehaving ones pinned to what they are not, so
+/// that it is the cabinet's answer, not a missing pin, that turns them away. `unpinned.js`
+/// has none.
+fn pins() -> CabinetPins {
+	let any = "0".repeat(64);
+	let mut raw = format!(
+		"account-chip.js={},account-chip.css={},zipped.js={}",
+		sha256(CHIP_JS.as_bytes()),
+		sha256(CHIP_CSS.as_bytes()),
+		sha256(CHIP_JS.as_bytes())
+	);
+	for f in ["tampered.js", "moved.js", "page.js", "huge.js", "broken.js", "gone.js"] {
+		raw.push_str(&format!(",{f}={any}"));
+	}
+	CabinetPins::parse(&raw).unwrap()
+}
+
+fn chip(base: &str) -> Router {
+	Cabinet::new(&base.parse().unwrap(), pins()).routes()
 }
 
 async fn fetch(app: &Router, method: Method, uri: &str, headers: &[(&str, &str)]) -> (StatusCode, HeaderMap, String) {
@@ -248,9 +284,9 @@ async fn fetch(app: &Router, method: Method, uri: &str, headers: &[(&str, &str)]
 }
 
 #[tokio::test]
-async fn the_chips_bundle_comes_from_the_cabinet_with_nothing_of_the_browsers_and_nothing_of_the_cabinets() {
+async fn the_chips_pinned_bundle_comes_from_the_cabinet_with_nothing_of_the_browsers_and_nothing_of_the_cabinets() {
 	let (base, seen) = cabinet().await;
-	let app = Cabinet::new(&base.parse().unwrap()).routes();
+	let app = chip(&base);
 
 	let (status, h, body) = fetch(
 		&app,
@@ -266,25 +302,32 @@ async fn the_chips_bundle_comes_from_the_cabinet_with_nothing_of_the_browsers_an
 		],
 	)
 	.await;
-	assert_eq!((status, body.as_str()), (StatusCode::OK, "customElements.define()"));
+	assert_eq!((status, body.as_str()), (StatusCode::OK, CHIP_JS), "the pin matches");
 	assert_eq!(h[header::CONTENT_TYPE], "text/javascript; charset=utf-8");
-	assert_eq!(h[header::CACHE_CONTROL], "public, max-age=300, stale-while-revalidate=86400", "the cabinet's");
+	assert_eq!(h[header::CACHE_CONTROL], "public, max-age=300", "the panel's, not the cabinet's stale-while-revalidate");
 	assert_eq!(h[header::ETAG], "\"c1\"");
+	assert_eq!(h[header::LAST_MODIFIED], "Sun, 11 Oct 2026 07:00:00 GMT");
 	assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
 	assert!(!h.contains_key(header::SET_COOKIE), "the cabinet sets nothing on the panel's origin");
 	assert!(!h.contains_key("x-cabinet-pod"), "nothing but what describes the file");
 
 	let got = seen.lock().unwrap().pop().unwrap();
 	assert_eq!((got.method, got.path_and_query.as_str()), (Method::GET, "/cabinet/mfe/account-chip.js"));
-	for name in ["cookie", "x-sa-csrf", "x-sa-assertion", "authorization"] {
+	for name in ["cookie", "x-sa-csrf", "x-sa-assertion", "authorization", "accept-encoding"] {
 		assert!(!got.headers.contains_key(name), "{name} went up");
 	}
-	assert_eq!(got.headers[header::ACCEPT_ENCODING], "gzip");
 	assert_eq!(got.headers[header::IF_NONE_MATCH], "\"c0\"");
 
-	let (status, h, _) = fetch(&app, Method::GET, "/cabinet/mfe/account-chip.css", &[]).await;
-	assert_eq!((status, h[header::CONTENT_TYPE].to_str().unwrap()), (StatusCode::OK, "text/css"));
-	assert_eq!(h[header::CACHE_CONTROL], "no-cache", "said by the panel when the cabinet says nothing");
+	let (status, h, body) = fetch(&app, Method::GET, "/cabinet/mfe/account-chip.css", &[]).await;
+	assert_eq!((status, h[header::CONTENT_TYPE].to_str().unwrap(), body.as_str()), (StatusCode::OK, "text/css", CHIP_CSS));
+	assert_eq!(h[header::CACHE_CONTROL], "public, max-age=300", "said by the panel when the cabinet says nothing too");
+
+	let (status, h, body) = fetch(&app, Method::GET, "/cabinet/mfe/account-chip.js", &[("if-none-match", "\"c1\"")]).await;
+	assert_eq!((status, body.as_str()), (StatusCode::NOT_MODIFIED, ""), "the browser's copy was checked when it came");
+	assert_eq!(
+		(&h[header::ETAG], &h[header::CACHE_CONTROL]),
+		(&"\"c1\"".parse().unwrap(), &"public, max-age=300".parse().unwrap())
+	);
 
 	let (status, h, body) = fetch(&app, Method::HEAD, "/cabinet/mfe/account-chip.js", &[]).await;
 	assert_eq!((status, body.as_str()), (StatusCode::OK, ""));
@@ -292,9 +335,25 @@ async fn the_chips_bundle_comes_from_the_cabinet_with_nothing_of_the_browsers_an
 }
 
 #[tokio::test]
+async fn bytes_the_pin_does_not_vouch_for_are_never_served() {
+	let (base, seen) = cabinet().await;
+	let app = chip(&base);
+	for (file, why) in [("tampered.js", "not the pinned bytes"), ("zipped.js", "encoded, though the pinned bytes")] {
+		let (status, h, body) = fetch(&app, Method::GET, &format!("/cabinet/mfe/{file}"), &[]).await;
+		assert_eq!((status, body.as_str()), (StatusCode::BAD_GATEWAY, r#"{"error":"the cabinet did not answer"}"#), "{file}: {why}");
+		assert!(!h.contains_key(header::ETAG) && !h.contains_key(header::CACHE_CONTROL), "{file}: nothing of it");
+	}
+	assert_eq!(seen.lock().unwrap().len(), 2);
+
+	let (status, _, body) = fetch(&app, Method::GET, "/cabinet/mfe/unpinned.js", &[]).await;
+	assert_eq!((status, body.as_str()), (StatusCode::NOT_FOUND, r#"{"error":"not found"}"#), "no pin, no file");
+	assert_eq!(seen.lock().unwrap().len(), 2, "and the cabinet was not asked");
+}
+
+#[tokio::test]
 async fn the_cabinet_is_read_only_and_only_for_the_bundles_plain_file_names() {
 	let (base, seen) = cabinet().await;
-	let app = Cabinet::new(&base.parse().unwrap()).routes();
+	let app = chip(&base);
 
 	for m in [Method::POST, Method::PUT, Method::DELETE, Method::PATCH, Method::OPTIONS] {
 		assert_eq!(fetch(&app, m.clone(), "/cabinet/mfe/account-chip.js", &[]).await.0, StatusCode::METHOD_NOT_ALLOWED, "{m}");
@@ -323,7 +382,7 @@ async fn the_cabinet_is_read_only_and_only_for_the_bundles_plain_file_names() {
 #[tokio::test]
 async fn a_cabinet_that_redirects_misbehaves_or_is_gone_is_a_502_that_names_nothing_inside() {
 	let (base, seen) = cabinet().await;
-	let app = Cabinet::new(&base.parse().unwrap()).routes();
+	let app = chip(&base);
 
 	let (status, _, body) = fetch(&app, Method::GET, "/cabinet/mfe/gone.js", &[]).await;
 	assert_eq!(
@@ -346,7 +405,7 @@ async fn a_cabinet_that_redirects_misbehaves_or_is_gone_is_a_502_that_names_noth
 
 	// A port nobody listens on: bound, then let go.
 	let gone = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
-	let app = Cabinet::new(&format!("http://{gone}").parse().unwrap()).routes();
+	let app = chip(&format!("http://{gone}"));
 	let (status, _, body) = fetch(&app, Method::GET, "/cabinet/mfe/account-chip.js", &[]).await;
 	assert_eq!((status, body.as_str()), (StatusCode::BAD_GATEWAY, r#"{"error":"the cabinet did not answer"}"#));
 }

@@ -521,8 +521,8 @@ fn google(settings: &Settings) -> eyre::Result<Option<(google_calendar::GoogleCa
 struct Edge {
 	/// The front end's export (`PANEL_WEB_DIR`).
 	files: Option<Files>,
-	/// `PANEL_CABINET_URL`, behind `/cabinet/mfe`.
-	cabinet: Option<axum::http::Uri>,
+	/// `PANEL_CABINET_URL` and its pins, behind `/cabinet/mfe`.
+	cabinet: settings::CabinetSettings,
 }
 
 /// Who signs people in.
@@ -644,13 +644,14 @@ async fn serve(
 		}
 	};
 	// Not behind the sign-in: the chip's bundle is public, and the cabinet is told nobody.
-	let app = match &front_end.cabinet {
-		Some(base) => {
-			tracing::info!(%base, "serving the cabinet's /cabinet/mfe");
-			app.merge(panel_server::forward::Cabinet::new(base).routes())
+	let settings::CabinetSettings { url, pins } = front_end.cabinet;
+	let app = match panel_server::forward::Cabinet::configured(url, pins) {
+		Ok(cabinet) => {
+			tracing::info!("serving the cabinet's /cabinet/mfe, pinned");
+			app.merge(cabinet.routes())
 		}
-		None => {
-			tracing::warn!("PANEL_CABINET_URL unset: no /cabinet/mfe, the account chip is not served");
+		Err(unset) => {
+			tracing::warn!(unset = unset.join(", "), "no /cabinet/mfe, the account chip is not served");
 			app
 		}
 	};
