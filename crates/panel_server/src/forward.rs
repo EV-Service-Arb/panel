@@ -284,7 +284,7 @@ const CABINET_DOWN: [HeaderName; 4] = [header::CONTENT_TYPE, header::ETAG, heade
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CabinetPins(std::collections::BTreeMap<String, [u8; 32]>);
 
-#[derive(Debug, thiserror::Error, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, thiserror::Error)]
 pub enum BadPins {
 	#[error("no pin in it: want `account-chip.js=<sha256 hex>,account-chip.css=<sha256 hex>`")]
 	Empty,
@@ -379,7 +379,7 @@ impl Cabinet {
 	}
 
 	/// `GET` and `HEAD` of `/cabinet/mfe/*`; any other method is a 405. At most
-	/// [`CABINET_CONCURRENT`] at once, past it a 503 rather than a queue.
+	/// `CABINET_CONCURRENT` at once, past it a 503 rather than a queue.
 	pub fn routes(self) -> Router {
 		let layers = ServiceBuilder::new()
 			// The only error the layers below raise is the shed: everything else is a response.
