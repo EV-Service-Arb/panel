@@ -247,7 +247,10 @@ async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSign
 				None => settings.sign_in()?.map(Identity::Concierge),
 			};
 			let telegram = settings.telegram()?;
-			let front_end = settings.web()?;
+			let front_end = Edge {
+				files: settings.web()?,
+				cabinet: settings.cabinet()?,
+			};
 			let capture = settings.capture()?.map(|c| CaptureApi::new(&c.host, &c.key)).transpose()?;
 			let google = google(&settings)?;
 			let sign_in = match (sign_in, settings.forward()?) {
@@ -514,6 +517,14 @@ fn google(settings: &Settings) -> eyre::Result<Option<(google_calendar::GoogleCa
 	Ok(Some((api, every)))
 }
 
+/// What the origin serves besides the panel's own API.
+struct Edge {
+	/// The front end's export (`PANEL_WEB_DIR`).
+	files: Option<Files>,
+	/// `PANEL_CABINET_URL` and its pins, behind `/cabinet/mfe`.
+	cabinet: settings::CabinetSettings,
+}
+
 /// Who signs people in.
 enum Identity {
 	Concierge(settings::SignInSettings),
@@ -527,7 +538,7 @@ async fn serve(
 	telegram: Option<settings::TelegramSettings>,
 	sender: Option<CaptureApi>,
 	google: Option<(google_calendar::GoogleCalendar, jiff::SignedDuration)>,
-	front_end: Option<Files>,
+	front_end: Edge,
 	bind: SocketAddr,
 ) -> eyre::Result<()> {
 	let sign_in = match sign_in {
@@ -632,7 +643,19 @@ async fn serve(
 			http::router(panel)
 		}
 	};
-	let app = match front_end {
+	// Not behind the sign-in: the chip's bundle is public, and the cabinet is told nobody.
+	let settings::CabinetSettings { url, pins } = front_end.cabinet;
+	let app = match panel_server::forward::Cabinet::configured(url, pins) {
+		Ok(cabinet) => {
+			tracing::info!("serving the cabinet's /cabinet/mfe, pinned");
+			app.merge(cabinet.routes())
+		}
+		Err(unset) => {
+			tracing::warn!(unset = unset.join(", "), "no /cabinet/mfe, the account chip is not served");
+			app
+		}
+	};
+	let app = match front_end.files {
 		Some(files) => web::serve(app, files),
 		None => {
 			tracing::warn!("PANEL_WEB_DIR unset: serving the API alone, no front end");
