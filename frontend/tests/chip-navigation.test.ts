@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { panelRouteFor } from "@/features/account-chip";
+import { panelRouteFor, routeOfNavigateEvent } from "@/features/account-chip";
 
 // The cabinet's account chip offers its menu links to the panel as `ev:navigate` with
 // `detail.href` (path + query + hash). The panel routes a link itself only when it is one of its
@@ -68,5 +68,36 @@ describe("panelRouteFor: left to the browser", () => {
     ["an object", { href: "/account" }],
   ])("refuses a href that is %s", (_, href) => {
     expect(panelRouteFor(href)).toBeNull();
+  });
+});
+
+// The listener reads the event the chip element dispatched: only a CustomEvent's `detail` is
+// trusted, and only as an object with `href`; anything else is no route, the event is left
+// alone and the browser follows the link.
+describe("routeOfNavigateEvent", () => {
+  const navigate = (detail?: unknown) => new CustomEvent("ev:navigate", { detail });
+
+  it("routes a panel screen from detail.href, spelled as the panel spells it", () => {
+    expect(routeOfNavigateEvent(navigate({ href: "/account" }))).toBe("/account");
+    expect(routeOfNavigateEvent(navigate({ href: "/account/?x=1" }))).toBe("/account?x=1");
+  });
+
+  it("leaves a link outside the panel's screens to the browser", () => {
+    expect(routeOfNavigateEvent(navigate({ href: "/auth/login" }))).toBeNull();
+  });
+
+  it.each([
+    ["no detail", navigate()],
+    ["an empty detail", navigate({})],
+    ["a numeric href", navigate({ href: 42 })],
+    ["a bare string detail", navigate("/account")],
+    ["a null detail", navigate(null)],
+  ])("finds no route in a CustomEvent with %s", (_, event) => {
+    expect(routeOfNavigateEvent(event)).toBeNull();
+  });
+
+  it("finds no route in a plain Event, even one carrying a detail property", () => {
+    expect(routeOfNavigateEvent(new Event("ev:navigate"))).toBeNull();
+    expect(routeOfNavigateEvent(Object.assign(new Event("ev:navigate"), { detail: { href: "/account" } }))).toBeNull();
   });
 });
