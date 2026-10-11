@@ -12,7 +12,7 @@
 //!                                                               each file pinned by its SHA-256
 //! ```
 //!
-//! The cabinet is no `sa_auth` service and is told nobody, so it is not one of [`ROUTES`]
+//! The cabinet is no `sa_auth` service and is told nobody, so it is not one of `ROUTES`
 //! but a [`Cabinet`] of its own, mounted without the sign-in.
 
 use std::time::Duration;
