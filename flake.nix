@@ -168,9 +168,13 @@
           # (`panel booking google-authorize <brand>` makes one); its calendar id defaults to
           # `primary`. A token without the client fails the boot.
           # PANEL_CABINET_URL: the cabinet's bare http origin; /cabinet/mfe/* (the account chip's
-          # bundle) is served from it. Unset, the route is not mounted and answers JSON 404.
+          # bundle) is served from it, and only with PANEL_CABINET_MFE_PINS
+          # (`account-chip.js=<sha256 hex>,account-chip.css=<sha256 hex>`, banking's
+          # `npm run mfe:pins`; public, no egress). Either unset, the route is not mounted and
+          # answers JSON 404; malformed pins fail the boot.
           optionalEnv = [
             "PANEL_CABINET_URL"
+            "PANEL_CABINET_MFE_PINS"
             "SENTRY_DSN"
             "TELEGRAM_BOT_TOKEN"
             "TELEGRAM_BOT_USERNAME"

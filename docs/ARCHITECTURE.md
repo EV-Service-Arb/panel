@@ -227,13 +227,38 @@ it — the front end's reserved paths (`web.rs`) are derived from it.
   the account chip's files only, and is held tighter than the rows above. A name is plain
   segments of `[A-Za-z0-9._-]` (no empty one, none starting with a dot, no `%` anywhere)
   ending in `.js` or `.css` — no source maps, the cabinet's sources stay off this origin;
-  anything else is a 404 that never reaches the cabinet. Only `Accept`, `Accept-Encoding`,
-  `If-None-Match` and `If-Modified-Since` go up (GET, no query); only `Content-Type`,
-  `Cache-Control`, `ETag`, `Last-Modified`, `Content-Encoding` and `Vary` come down, with
-  `nosniff`, and `no-cache` when the cabinet sends no `Cache-Control`. The body is read whole
-  (at most 4 MiB, 10 s in all) to check that a `.js` is JavaScript and a `.css` CSS; a 304
-  passes, a 404 is a 404, anything else — a redirect included — is a 502.
+  anything else is a 404 that never reaches the cabinet. Only `Accept`, `If-None-Match` and
+  `If-Modified-Since` go up (GET, no query); only `Content-Type`, `ETag`, `Last-Modified` and
+  `Vary` come down, with `nosniff` and the panel's own `Cache-Control: public, max-age=300`.
+  The body is read whole (at most 4 MiB, 10 s in all) to check that a `.js` is JavaScript and
+  a `.css` CSS, and that it is the pinned bytes (below); a 304 passes, a 404 is a 404,
+  anything else — a redirect, an encoded body, a pin mismatch included — is a 502. At most
+  32 files at once, past that a 503.
   Unset, `/cabinet` is still reserved: a JSON 404, never the front end's page.
+- **The chip's files are pinned** (`PANEL_CABINET_MFE_PINS`). The bundle runs on the panel's
+  origin, under the panel's session and CSP: whoever controls its bytes acts as the signed-in
+  operator. The cabinet is another team's release, reached over in-cluster plain HTTP, so
+  its answering is not trust enough; each file must also hash to the SHA-256 named for it:
+  `account-chip.js=<hex>,account-chip.css=<hex>` (lowercase hex, `sha256sum`'s spelling).
+  - *Fail closed.* A name without a pin is a 404 and the cabinet is not asked; bytes that
+    hash otherwise are a 502 and nothing of them comes down. The URL without the pins (or
+    the pins without the URL) mounts nothing, and `serve` warns, naming what is unset. Pins
+    that do not parse fail the boot.
+  - *A pin, not SRI.* `<script integrity>` would put the hash into the front end's build, so
+    every cabinet release would need a panel release; a pin is deploy configuration, changed
+    without a build. Checked here, it holds for every page that loads `/cabinet/mfe/*` and
+    for direct fetches too, and a mismatch never reaches a browser.
+  - *No compression.* A pin is of the file as built, so `Accept-Encoding` does not go up and
+    an encoded answer is refused rather than unpacked; the files are a few dozen KiB, and
+    the ingress may compress on the way out.
+  - *Cache.* The panel sets the lifetime, not the cabinet (whose
+    `stale-while-revalidate` would keep a file past the pin's change): five minutes, so a
+    pin change reaches the pages that soon. A 304 passes unchecked — it carries no bytes,
+    and the browser's copy came from here, checked.
+  - *Updating.* A cabinet release that changes the chip changes its hashes: in `banking`,
+    `npm run mfe:pins` prints the value for the release's build; set it in the deploy
+    together with (or before) rolling the cabinet. Until both agree the chip is a 502 and
+    the panel's pages run without it — the outage is the chip's, not the panel's.
 
 - **Who is calling** is told by an assertion the panel signs for that one request (`sa_auth`,
   header `x-sa-assertion`): Ed25519 (`PANEL_ASSERTION_KEY`), `aud` the service, the caller's
@@ -1082,8 +1107,9 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
   every boot and does not start if it is refused.
 - **The cabinet within reach.** With `PANEL_CABINET_URL` (a bare `http://` origin, e.g.
   `http://ev-banking-cabinet.apps:50061`; optional, not a secret) the pods need egress to it,
-  and the cabinet's ingress policy, if it has one, must let the panel in. Unset, `serve`
-  warns and `/cabinet/mfe/*` is a JSON 404.
+  and the cabinet's ingress policy, if it has one, must let the panel in. It is served only
+  with `PANEL_CABINET_MFE_PINS` too (Forward; not a secret, no egress of its own). Either
+  unset, `serve` warns and `/cabinet/mfe/*` is a JSON 404; malformed, the boot fails.
 - **Telegram, outbound only.** With `TELEGRAM_BOT_TOKEN` (the panel bot's, in sops; not
   `telegram_token_main`) the pods need egress to `api.telegram.org:443`; nothing inbound. No
   webhook is set on the bot (`getUpdates` refuses to run while one is).
