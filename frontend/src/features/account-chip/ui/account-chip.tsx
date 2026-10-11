@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@evinvest/uikit";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import type { Caller } from "@/entities/session";
 import { useLocale, useT } from "@/shared/i18n";
@@ -16,7 +16,8 @@ const BUNDLE = { minApiVersion: CHIP_API_VERSION, timeoutMs: 8000 } as const;
 
 /**
  * The EV account chip — the one the site and the cabinet show — in host mode: the panel tells
- * it who is signed in and owns Sign out (`signout` → `onSignOut`).
+ * it who is signed in, owns Sign out (`signout` → `onSignOut`) and routes its links to panel
+ * screens (`ev:navigate` → `router.push`).
  *
  * The element and the fallback share one grid cell, right-aligned, inside the chip's reserve
  * (178×42): the fallback paints at once and stays on top until the element has painted itself,
@@ -27,8 +28,9 @@ export function AccountChip({ me, onSignOut, className }: { me: Caller; onSignOu
   const t = useT();
   const locale = useLocale();
   const pathname = usePathname();
+  const router = useRouter();
   const bundle = useElementBundle(CHIP_TAG, CHIP_SCRIPT, BUNDLE);
-  const { hostRef, painted } = useChipElement(bundle === "ready", chipAttributes(me, pathname, t), onSignOut, locale);
+  const { hostRef, painted } = useChipElement(bundle === "ready", chipAttributes(me, pathname, t), { onSignOut, onNavigate: router.push }, locale);
   return (
     <div className={cn("grid min-h-10.5 min-w-44.5 items-center justify-items-end", className)}>
       <div ref={hostRef} className="col-start-1 row-start-1 flex items-center" />
