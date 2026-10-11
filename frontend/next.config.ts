@@ -13,6 +13,9 @@ import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
 export default function config(phase: string): NextConfig {
   if (phase === PHASE_DEVELOPMENT_SERVER) {
     const backend = process.env.PANEL_DEV_BACKEND ?? "http://127.0.0.1:3121";
+    // The account chip's bundle, forwarded by panel_server in production. Opt-in: unset, the
+    // script 404s and the top bar shows the chip's fallback, as before the forward is deployed.
+    const cabinet = process.env.PANEL_DEV_CABINET;
     return {
       // Next writes AGENTS.md and CLAUDE.md into the project on `next dev` otherwise.
       agentRules: false,
@@ -22,6 +25,7 @@ export default function config(phase: string): NextConfig {
         return [
           { source: "/api/:path*", destination: `${backend}/api/:path*` },
           { source: "/auth/:path*", destination: `${backend}/auth/:path*` },
+          ...(cabinet ? [{ source: "/cabinet/mfe/:path*", destination: `${cabinet}/cabinet/mfe/:path*` }] : []),
         ];
       },
     };

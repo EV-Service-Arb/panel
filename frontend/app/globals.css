@@ -1,5 +1,7 @@
-/* Declared first, so lowest: a remote's stylesheet is moved into it (shared/mfe) and never beats the panel's. */
-@layer mfe;
+/* Declared first, so lowest: a remote's stylesheet is moved into it (shared/mfe) and never beats the panel's.
+   `reamfe` is the layer the cabinet account chip inlines its own CSS into; undeclared here it would
+   come into being after the panel's layers and its theme variables would override the panel's. */
+@layer mfe, reamfe;
 @import "tailwindcss";
 /* The kit's Sheet, Dialog and Popover enter and leave with tw-animate's classes. */
 @import "tw-animate-css";

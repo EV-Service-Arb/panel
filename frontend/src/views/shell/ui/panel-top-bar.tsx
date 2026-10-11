@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  AccountMenu,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -11,22 +10,23 @@ import {
 } from "@evinvest/uikit";
 import { Check, ChevronDown } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 
-import { may, useMe } from "@/entities/session";
+import { useMe } from "@/entities/session";
 import { useTokens } from "@/entities/tokens";
+import { AccountChip } from "@/features/account-chip";
 import { useSignOut } from "@/features/sign-out";
-import { switchAccountPath } from "@/shared/api";
 import { ROUTES } from "@/shared/config/routes";
 import { useT } from "@/shared/i18n";
 import { LiveStatusIndicator } from "@/shared/ui/live-status";
 
-/** The wide screen's top bar (the kit's contract): where you are, your tokens, the connection, who you are. */
+/**
+ * The wide screen's top bar (the kit's contract): where you are, your tokens, the connection, who
+ * you are. The end slot is right-anchored and the chip is last, so the tokens and the connection
+ * appearing or changing width grow leftwards and never move the chip.
+ */
 export function PanelTopBar() {
-  const t = useT();
   const me = useMe();
   const signOut = useSignOut();
-  const pathname = usePathname();
   return (
     <TopBar
       start={<AppSwitcher accountCenter={me.account_center} />}
@@ -34,26 +34,7 @@ export function PanelTopBar() {
         <>
           <TokensStat />
           <LiveStatusIndicator />
-          <AccountMenu
-            account={{ name: me.preferred_name, email: me.email }}
-            manageHref={me.account_center ?? undefined}
-            switchHref={switchAccountPath(pathname)}
-            groups={[
-              {
-                id: "sa",
-                items: [
-                  { id: "account", href: ROUTES.account, label: t("account.title") },
-                  ...(may(me, "sa:review_archive:members:act_as")
-                    ? [{ id: "act-as", href: ROUTES.reviewArchiveActAs, label: t("account.actAs"), external: true }]
-                    : []),
-                  { id: "tokens", href: ROUTES.reviewArchiveTokens, label: t("account.tokens.history"), external: true },
-                ],
-              },
-            ]}
-            onSignOut={signOut}
-            linkComponent={Link}
-            labels={{ trigger: t("nav.account"), manage: t("account.manage"), switchAccount: t("nav.switchAccount"), signOut: t("nav.signOut") }}
-          />
+          <AccountChip me={me} onSignOut={signOut} />
         </>
       }
     />
