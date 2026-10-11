@@ -8,7 +8,11 @@
 //! /playbook_mcp/authorize          → playbook (same path)       session + assertion; its consent form
 //!                                                               POST carries playbook's own nonce
 //! /playbook_mcp/*, two .well-known → playbook (same path)       open: OAuth and bearer, no cookie
+//! /cabinet/mfe/<file>.{js,css}     → cabinet (same path)        open, GET/HEAD: the account chip
 //! ```
+//!
+//! The cabinet is no `sa_auth` service and is told nobody, so it is not one of [`ROUTES`]
+//! but a [`Cabinet`] of its own, mounted without the sign-in.
 
 use std::time::Duration;
 
@@ -18,8 +22,9 @@ use axum::{
 	extract::{Request, State},
 	http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, header},
 	response::{IntoResponse, Redirect, Response},
-	routing::any,
+	routing::{any, get},
 };
+use http_body_util::{BodyExt, Limited};
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use sa_auth::{Assertion, Service, Signer};
 use serde_json::json;
@@ -232,9 +237,189 @@ fn strip(headers: &mut HeaderMap, names: &[&str]) {
 	}
 }
 
+/// The cabinet's element bundles, the account chip among them: served from the panel's origin
+/// so the page's `script-src 'self'` admits them. The cabinet answers the same path (its
+/// `next.config.ts` rewrites it onto its `public/mfe/`).
+pub const CABINET_MFE: &str = "/cabinet/mfe";
+
+/// The files handed out, by extension, and the types each must come back as. What the
+/// cabinet's esbuild writes (`cabinet/frontend/mfe/build.mjs`): one `.js`, one `.css`. No
+/// `.map`: the build emits none, and one would publish the cabinet's sources here for nothing
+/// the page needs. A type check, because a `.js` answered with Next's HTML page must not run.
+const BUNDLE: [(&str, &[&str]); 2] = [("js", &["text/javascript", "application/javascript"]), ("css", &["text/css"])];
+
+/// A file has a whole answer by then, or the browser gets a 502: the chip is a few dozen
+/// KiB, and a hung cabinet must not hold the panel's connections.
+const CABINET_TIMEOUT: Duration = Duration::from_secs(10);
+/// The answer is buffered (its type is checked before anything goes down), so it is bounded.
+const CABINET_MAX_BYTES: usize = 4 << 20;
+
+/// An allow-list both ways, not [`DROPPED_UP`]'s deny-list: a static file needs nothing of
+/// the caller's but these, so the session cookie, the CSRF header and whatever comes next
+/// cannot go up by omission; and nothing comes down but what describes the file.
+const CABINET_UP: [HeaderName; 4] = [header::ACCEPT, header::ACCEPT_ENCODING, header::IF_NONE_MATCH, header::IF_MODIFIED_SINCE];
+const CABINET_DOWN: [HeaderName; 6] = [
+	header::CONTENT_TYPE,
+	header::CACHE_CONTROL,
+	header::ETAG,
+	header::LAST_MODIFIED,
+	header::CONTENT_ENCODING,
+	header::VARY,
+];
+
+/// The cabinet behind `/cabinet/mfe` (`PANEL_CABINET_URL`).
+#[derive(Clone)]
+pub struct Cabinet {
+	/// A bare `http://` origin, without the trailing slash.
+	base: std::sync::Arc<str>,
+	client: Client<HttpConnector, Body>,
+}
+
+impl Cabinet {
+	pub fn new(base: &Uri) -> Self {
+		let mut connector = HttpConnector::new();
+		connector.set_connect_timeout(Some(Duration::from_secs(5)));
+		Self {
+			base: base.to_string().trim_end_matches('/').into(),
+			client: Client::builder(hyper_util::rt::TokioExecutor::new()).build(connector),
+		}
+	}
+
+	/// `GET` and `HEAD` of `/cabinet/mfe/*`; any other method is a 405.
+	pub fn routes(self) -> Router {
+		Router::new().route(&format!("{CABINET_MFE}/{{*file}}"), get(cabinet_mfe)).with_state(self)
+	}
+}
+
+/// The types `file` may come back as, if it is a name the bundle could have: segments of
+/// `[A-Za-z0-9._-]`, none empty and none starting with a dot (no `.`, `..` or hidden file),
+/// no `%` at all (nothing encoded, once or twice: no file of the bundle needs it), and an
+/// extension of [`BUNDLE`].
+fn bundle_types(file: &str) -> Option<&'static [&'static str]> {
+	let named = |s: &str| !s.is_empty() && !s.starts_with('.') && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'));
+	if !file.split('/').all(named) {
+		return None;
+	}
+	let last = file.rsplit('/').next()?;
+	let (_, ext) = last.rsplit_once('.')?;
+	BUNDLE.iter().find(|(e, _)| *e == ext).map(|(_, types)| *types)
+}
+
+/// Why the cabinet gave no file: said in the log, never to the browser (it names the address).
+#[derive(Debug, thiserror::Error)]
+enum Unanswered {
+	#[error("no answer within {CABINET_TIMEOUT:?}")]
+	Timeout,
+	#[error("{0}")]
+	Request(#[from] hyper_util::client::legacy::Error),
+	#[error("reading the body (over {CABINET_MAX_BYTES} bytes?): {0}")]
+	Body(tower::BoxError),
+	#[error("status {0}")]
+	Status(StatusCode),
+	#[error("type {0:?} for a file of the bundle")]
+	Type(Option<HeaderValue>),
+}
+
+fn not_found() -> Response {
+	json_error(StatusCode::NOT_FOUND, "not found")
+}
+
+async fn cabinet_mfe(State(c): State<Cabinet>, req: Request) -> Response {
+	let path = req.uri().path();
+	let Some(types) = path.strip_prefix(CABINET_MFE).and_then(|rest| rest.strip_prefix('/')).and_then(bundle_types) else {
+		return not_found();
+	};
+	// The query is dropped: a static file has no use for one.
+	let Ok(uri) = format!("{}{path}", c.base).parse::<Uri>() else {
+		return not_found();
+	};
+	let mut up = axum::http::Request::get(uri);
+	for name in &CABINET_UP {
+		for v in req.headers().get_all(name) {
+			up = up.header(name, v);
+		}
+	}
+	// Built from a parsed URI and headers copied from a request: it cannot fail.
+	let up = up.body(Body::empty()).expect("a GET of a parsed URI");
+	match fetch(&c, up, types).await {
+		Ok(res) => res,
+		Err(Unanswered::Status(StatusCode::NOT_FOUND)) => not_found(),
+		Err(e) => {
+			tracing::warn!(error = %e, path, "the cabinet gave no mfe file");
+			json_error(StatusCode::BAD_GATEWAY, "the cabinet did not answer")
+		}
+	}
+}
+
+/// The file, whole and of its type, or why not. A redirect is not followed and not passed
+/// down: its `Location` would be the cabinet's address inside the cluster.
+async fn fetch(c: &Cabinet, up: Request, types: &[&str]) -> Result<Response, Unanswered> {
+	let (parts, body) = tokio::time::timeout(CABINET_TIMEOUT, async {
+		let (parts, body) = c.client.request(up).await?.into_parts();
+		let body = Limited::new(body, CABINET_MAX_BYTES).collect().await.map_err(Unanswered::Body)?.to_bytes();
+		Ok::<_, Unanswered>((parts, body))
+	})
+	.await
+	.map_err(|_elapsed| Unanswered::Timeout)??;
+	match parts.status {
+		StatusCode::OK => {
+			let ct = parts.headers.get(header::CONTENT_TYPE);
+			let essence = ct.and_then(|v| v.to_str().ok()).map(|v| v.split(';').next().unwrap_or_default().trim().to_ascii_lowercase());
+			if !essence.is_some_and(|e| types.contains(&e.as_str())) {
+				return Err(Unanswered::Type(ct.cloned()));
+			}
+		}
+		StatusCode::NOT_MODIFIED => {}
+		other => return Err(Unanswered::Status(other)),
+	}
+	let mut res = Response::new(Body::from(body));
+	*res.status_mut() = parts.status;
+	let h = res.headers_mut();
+	for name in &CABINET_DOWN {
+		for v in parts.headers.get_all(name) {
+			h.append(name, v.clone());
+		}
+	}
+	// Without a word from the cabinet a browser would guess a lifetime; it asks each time.
+	if !h.contains_key(header::CACHE_CONTROL) {
+		h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+	}
+	h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+	Ok(res)
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn only_the_bundles_plain_file_names_pass() {
+		assert_eq!(bundle_types("account-chip.js"), Some(BUNDLE[0].1));
+		assert_eq!(bundle_types("account-chip.css"), Some(BUNDLE[1].1));
+		assert_eq!(bundle_types("chunks/a_1.min.js"), Some(BUNDLE[0].1));
+		for f in [
+			"",
+			"account-chip.js.map",
+			"account-chip",
+			"index.html",
+			"a.b/c",
+			"../x.js",
+			"a/../x.js",
+			"./x.js",
+			".x.js",
+			"a//x.js",
+			"a/x.js/",
+			"%2e%2e/x.js",
+			"..%2fx.js",
+			"%252e%252e/x.js",
+			"a%2fx.js",
+			"x.js%00",
+			"a\\x.js",
+			"x .js",
+		] {
+			assert_eq!(bundle_types(f), None, "{f:?}");
+		}
+	}
 
 	#[test]
 	fn the_first_route_matching_by_whole_segments_wins() {

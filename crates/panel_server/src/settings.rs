@@ -52,6 +52,10 @@ ev_lib::settings! {
 		/// playbook, from inside the cluster, e.g. `http://playbook-web.personal:59082`.
 		#[required_in("production")]
 		panel_playbook_url: Option<String>,
+		/// The cabinet's front end, from inside the cluster, e.g. `http://ev-banking-cabinet.apps:50061`:
+		/// `/cabinet/mfe/*` (the account chip's bundle) is fetched from it. Unset: not served,
+		/// and `serve` says so. Not required: the panel runs without the chip.
+		panel_cabinet_url: Option<String>,
 		/// The panel's bot (`@evinvest_sa_bot`; not `telegram_token_main`). Unset: no Telegram
 		/// notifications, and `serve` says so. Needs the sign-in configured too.
 		#[secret]
@@ -345,15 +349,7 @@ impl Settings {
 			return Ok(None);
 		}
 		eyre::ensure!(missing.is_empty(), "the forward needs {} too", missing.join(", "));
-		let uri = |name: &str, v: &Option<String>| -> eyre::Result<axum::http::Uri> {
-			let raw = v.as_deref().expect("checked above").trim();
-			let uri: axum::http::Uri = raw.parse().map_err(|e| eyre::eyre!("{name} is not a URL: {e}"))?;
-			eyre::ensure!(
-				uri.scheme_str() == Some("http") && uri.path() == "/" && uri.query().is_none(),
-				"{name} must be a bare http:// origin, not {raw}"
-			);
-			Ok(uri)
-		};
+		let uri = |name: &str, v: &Option<String>| bare_http_origin(name, v.as_deref().expect("checked above"));
 		Ok(Some(panel_server::forward::Upstreams {
 			review_archive: uri("PANEL_REVIEW_ARCHIVE_URL", &self.panel_review_archive_url)?,
 			playbook: uri("PANEL_PLAYBOOK_URL", &self.panel_playbook_url)?,
@@ -366,6 +362,25 @@ impl Settings {
 				.map_err(|e| eyre::eyre!("PANEL_ASSERTION_KEY: {e}"))?,
 		}))
 	}
+
+	/// The cabinet behind `/cabinet/mfe` (docs/ARCHITECTURE.md, Forward): `None` when unset.
+	pub fn cabinet(&self) -> eyre::Result<Option<axum::http::Uri>> {
+		match self.panel_cabinet_url.as_deref().map(str::trim) {
+			None | Some("") => Ok(None),
+			Some(raw) => bare_http_origin("PANEL_CABINET_URL", raw).map(Some),
+		}
+	}
+}
+
+/// An in-cluster peer's address: `http://host[:port]`, nothing after it.
+fn bare_http_origin(name: &str, raw: &str) -> eyre::Result<axum::http::Uri> {
+	let raw = raw.trim();
+	let uri: axum::http::Uri = raw.parse().map_err(|e| eyre::eyre!("{name} is not a URL: {e}"))?;
+	eyre::ensure!(
+		uri.scheme_str() == Some("http") && uri.path() == "/" && uri.query().is_none(),
+		"{name} must be a bare http:// origin, not {raw}"
+	);
+	Ok(uri)
 }
 
 /// `PANEL_DEV_SIGN_IN`, checked: who everyone signs in as, and where.
@@ -497,6 +512,7 @@ mod tests {
 				"PANEL_ASSERTION_KEY",
 				"PANEL_REVIEW_ARCHIVE_URL",
 				"PANEL_PLAYBOOK_URL",
+				"PANEL_CABINET_URL",
 				"TELEGRAM_BOT_TOKEN",
 				"TELEGRAM_BOT_USERNAME",
 				"TELEGRAM_LOCALE",
@@ -757,6 +773,18 @@ mod tests {
 			.unwrap_err()
 		);
 		assert!(e.contains("unset CONCIERGE_GRPC_ADDR"), "{e}");
+	}
+
+	#[test]
+	fn the_cabinet_is_optional_and_a_bare_http_origin() {
+		assert!(from(&[]).unwrap().cabinet().unwrap().is_none());
+		assert!(from(&[("PANEL_CABINET_URL", " ")]).unwrap().cabinet().unwrap().is_none());
+		let on = from(&[("PANEL_CABINET_URL", "http://ev-banking-cabinet.apps:50061")]).unwrap().cabinet().unwrap().unwrap();
+		assert_eq!(on.authority().unwrap().as_str(), "ev-banking-cabinet.apps:50061");
+		for raw in ["https://evinvest.ltd", "http://cabinet:50061/cabinet", "http://cabinet:50061/?a=1", "cabinet:50061"] {
+			let e = format!("{}", from(&[("PANEL_CABINET_URL", raw)]).unwrap().cabinet().unwrap_err());
+			assert!(e.contains("PANEL_CABINET_URL"), "{raw}: {e}");
+		}
 	}
 
 	#[test]
