@@ -42,3 +42,10 @@ export function panelRouteFor(href: unknown): string | null {
   const route = BY_PATH.get(bare(url.pathname));
   return route === undefined ? null : route + url.search + url.hash;
 }
+
+/** `panelRouteFor` of an `ev:navigate` event's `detail.href`; a missing or malformed detail is null. */
+export function routeOfNavigateEvent(event: Event): string | null {
+  const detail: unknown = event instanceof CustomEvent ? event.detail : undefined;
+  const href = typeof detail === "object" && detail !== null && "href" in detail ? detail.href : undefined;
+  return panelRouteFor(href);
+}

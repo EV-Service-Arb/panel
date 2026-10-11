@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { CHIP_ATTRIBUTE_NAMES, CHIP_TAG, type ChipAttributes } from "../model/attributes";
-import { panelRouteFor } from "../model/navigation";
+import { routeOfNavigateEvent } from "../model/navigation";
 
 function applyAttributes(element: HTMLElement, attributes: ChipAttributes): void {
   for (const name of CHIP_ATTRIBUTE_NAMES) {
@@ -34,11 +34,6 @@ export interface ChipHandlers {
   onNavigate: (route: string) => void;
 }
 
-function hrefOf(event: Event): unknown {
-  const detail: unknown = event instanceof CustomEvent ? event.detail : undefined;
-  return typeof detail === "object" && detail !== null && "href" in detail ? detail.href : undefined;
-}
-
 export function useChipElement(ready: boolean, attributes: ChipAttributes, handlers: ChipHandlers, remountKey: string) {
   const hostRef = useRef<HTMLDivElement>(null);
   const elementRef = useRef<HTMLElement | null>(null);
@@ -56,7 +51,7 @@ export function useChipElement(ready: boolean, attributes: ChipAttributes, handl
     applyAttributes(element, latest.current.attributes);
     const forwardSignOut = () => latest.current.handlers.onSignOut();
     const forwardNavigate = (event: Event) => {
-      const route = panelRouteFor(hrefOf(event));
+      const route = routeOfNavigateEvent(event);
       if (route === null) return;
       event.preventDefault();
       latest.current.handlers.onNavigate(route);
