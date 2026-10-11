@@ -9,7 +9,10 @@ use axum::{
 	http::{HeaderMap, Method, Request, StatusCode, header},
 	routing::get,
 };
-use panel_server::web::{self, CSP, Files};
+use panel_server::{
+	forward::{Cabinet, CabinetPins},
+	web::{self, CSP, Files},
+};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -50,10 +53,13 @@ impl Drop for Export {
 }
 
 /// Routes shaped like the real app's: `/health`, and a nested `/api/v1`.
-fn app(dir: &Path) -> Router {
+fn app_routes() -> Router {
 	let api = Router::new().route("/me", get(|| async { "me" }));
-	let routes = Router::new().route("/health", get(|| async { "ok" })).nest("/api/v1", api);
-	web::serve(routes, Files::new(dir).unwrap())
+	Router::new().route("/health", get(|| async { "ok" })).nest("/api/v1", api)
+}
+
+fn app(dir: &Path) -> Router {
+	web::serve(app_routes(), Files::new(dir).unwrap())
 }
 
 async fn send(app: &Router, method: Method, uri: &str, headers: &[(header::HeaderName, &str)]) -> (StatusCode, HeaderMap, String) {
@@ -139,11 +145,52 @@ async fn the_api_side_never_falls_through_to_the_front_end() {
 
 	assert_eq!(get_(&app, "/health").await.2, "ok");
 	assert_eq!(get_(&app, "/api/v1/me").await.2, "me");
-	for uri in ["/api/v1/nope", "/api/ingest/v1/events", "/api", "/auth/login", "/health/", "/grafana", "/grafana/d/abc"] {
+	for uri in [
+		"/api/v1/nope",
+		"/api/ingest/v1/events",
+		"/api",
+		"/auth/login",
+		"/health/",
+		"/grafana",
+		"/grafana/d/abc",
+		"/cabinet",
+		"/cabinet/mfe/account-chip.js",
+	] {
 		let (status, h, body) = get_(&app, uri).await;
 		assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
 		assert!(h[header::CONTENT_TYPE].to_str().unwrap().starts_with("application/json"), "{uri}: {h:?}");
 		assert_eq!(body, r#"{"error":"not found"}"#, "{uri}");
+	}
+}
+
+#[tokio::test]
+async fn the_cabinets_bundle_is_mounted_only_when_configured_and_pinned_and_is_never_a_page() {
+	let export = Export::new();
+	// A port nobody listens on: a 502 tells the route is mounted, and reached the cabinet.
+	let gone = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
+	let url = || Some(format!("http://{gone}").parse().unwrap());
+	let pins = || Some(CabinetPins::parse(&format!("account-chip.js={}", "0".repeat(64))).unwrap());
+	let cabinet = Cabinet::configured(url(), pins()).unwrap();
+	let mounted = web::serve(app_routes().merge(cabinet.routes()), Files::new(&export.web()).unwrap());
+	let (status, _, body) = get_(&mounted, "/cabinet/mfe/account-chip.js").await;
+	assert_eq!((status, body.as_str()), (StatusCode::BAD_GATEWAY, r#"{"error":"the cabinet did not answer"}"#));
+	for uri in ["/cabinet/mfe/", "/cabinet/mfe", "/cabinet/mfe/%2e%2e/x.js", "/cabinet/api/me"] {
+		let (status, h, body) = get_(&mounted, uri).await;
+		assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+		assert!(h[header::CONTENT_TYPE].to_str().unwrap().starts_with("application/json"), "{uri}: {h:?}");
+		assert_eq!(body, r#"{"error":"not found"}"#, "{uri}");
+	}
+	assert_eq!(send(&mounted, Method::POST, "/cabinet/mfe/account-chip.js", &[]).await.0, StatusCode::METHOD_NOT_ALLOWED);
+
+	// Fail closed: the address without the pins mounts nothing, and so does neither.
+	assert_eq!(Cabinet::configured(url(), None).err(), Some(vec!["PANEL_CABINET_MFE_PINS"]));
+	assert_eq!(Cabinet::configured(None, pins()).err(), Some(vec!["PANEL_CABINET_URL"]));
+	assert_eq!(Cabinet::configured(None, None).err(), Some(vec!["PANEL_CABINET_URL", "PANEL_CABINET_MFE_PINS"]));
+	let unmounted = app(&export.web());
+	for uri in ["/cabinet/mfe/account-chip.js", "/cabinet", "/cabinet/elsewhere"] {
+		let (status, h, body) = get_(&unmounted, uri).await;
+		assert_eq!((status, body.as_str()), (StatusCode::NOT_FOUND, r#"{"error":"not found"}"#), "{uri}");
+		assert!(!is_page(&h), "{uri}: not the SPA's 404 page, /cabinet is reserved");
 	}
 }
 
