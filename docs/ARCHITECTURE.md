@@ -219,7 +219,21 @@ it — the front end's reserved paths (`web.rs`) are derived from it.
 /playbook_mcp/authorize          → playbook (same path)         session + assertion; no panel CSRF
 /playbook_mcp/*, /.well-known/oauth-{authorization-server,protected-resource}/playbook_mcp
                                  → playbook (same path)         open: OAuth and bearer clients
+/cabinet/mfe/<name>.{js,css}     → cabinet /cabinet/mfe/*       open, GET/HEAD: the account chip's bundle
 ```
+
+- **The cabinet** (`forward::Cabinet`, `PANEL_CABINET_URL`) is not in the table: it is no
+  `sa_auth` service, gets no assertion and is mounted with or without signing in. It serves
+  the account chip's files only, and is held tighter than the rows above. A name is plain
+  segments of `[A-Za-z0-9._-]` (no empty one, none starting with a dot, no `%` anywhere)
+  ending in `.js` or `.css` — no source maps, the cabinet's sources stay off this origin;
+  anything else is a 404 that never reaches the cabinet. Only `Accept`, `Accept-Encoding`,
+  `If-None-Match` and `If-Modified-Since` go up (GET, no query); only `Content-Type`,
+  `Cache-Control`, `ETag`, `Last-Modified`, `Content-Encoding` and `Vary` come down, with
+  `nosniff`, and `no-cache` when the cabinet sends no `Cache-Control`. The body is read whole
+  (at most 4 MiB, 10 s in all) to check that a `.js` is JavaScript and a `.css` CSS; a 304
+  passes, a 404 is a 404, anything else — a redirect included — is a 502.
+  Unset, `/cabinet` is still reserved: a JSON 404, never the front end's page.
 
 - **Who is calling** is told by an assertion the panel signs for that one request (`sa_auth`,
   header `x-sa-assertion`): Ed25519 (`PANEL_ASSERTION_KEY`), `aud` the service, the caller's
@@ -1040,7 +1054,7 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
 - **One image, one origin.** The image carries the binary and the front end's static
   export, and sets `PANEL_WEB_DIR` to it; `serve` answers `/api`, `/auth` and `/health`
   first, then the forward's prefixes (Forward), then the files (a directory by its
-  `index.html`, anything else `404.html` with a 404). `/grafana` is held: a JSON 404 until the dashboards move there. `/_next/static/*`
+  `index.html`, anything else `404.html` with a 404). `/grafana` is held: a JSON 404 until the dashboards move there; so is `/cabinet` beyond the chip's files (Forward). `/_next/static/*`
   is `immutable` for a year, everything else `no-cache` (the store's 1970 mtimes make
   date revalidation meaningless, so the panel answers none); every page carries a CSP of
   `default-src 'self'` with `'unsafe-inline'` for scripts and styles (Next's inline
@@ -1066,6 +1080,10 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
   must register client `sa` with redirect URI `<PANEL_PUBLIC_ORIGIN>/auth/callback` exactly,
   and hold the hash of `RP_CLIENT_SECRET_SA`; `serve` publishes the `sa` catalog there at
   every boot and does not start if it is refused.
+- **The cabinet within reach.** With `PANEL_CABINET_URL` (a bare `http://` origin, e.g.
+  `http://ev-banking-cabinet.apps:50061`; optional, not a secret) the pods need egress to it,
+  and the cabinet's ingress policy, if it has one, must let the panel in. Unset, `serve`
+  warns and `/cabinet/mfe/*` is a JSON 404.
 - **Telegram, outbound only.** With `TELEGRAM_BOT_TOKEN` (the panel bot's, in sops; not
   `telegram_token_main`) the pods need egress to `api.telegram.org:443`; nothing inbound. No
   webhook is set on the bot (`getUpdates` refuses to run while one is).
