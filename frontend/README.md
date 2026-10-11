@@ -34,6 +34,13 @@ npm run dev          # :3120 — proxies /api and /auth to PANEL_DEV_BACKEND (de
 Against the real backend, point `PANEL_DEV_BACKEND` at `panel serve` with sign-in
 configured and `PANEL_PUBLIC_ORIGIN=http://localhost:3120`, so the callback lands here.
 
+The top bar's account chip is the cabinet's `/cabinet/mfe/account-chip.js`, which
+`panel serve` forwards to `PANEL_CABINET_URL`. In `next dev` it is forwarded only with
+`PANEL_DEV_CABINET` set to an origin serving that path (the cabinet, or banking's
+`cabinet/frontend/public/mfe` after `npm run build:mfe` behind any static server under
+`/cabinet/mfe/`); unset, the script 404s and the chip's fallback shows — as in
+production before the forward is deployed.
+
 Checks: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`.
 
 ## How it is served
