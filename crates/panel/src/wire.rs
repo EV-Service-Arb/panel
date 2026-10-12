@@ -11,7 +11,7 @@ use panel_core::{
 	booking::{self, BookingMatch, Closed},
 	event::{Envelope, Source, SourceKind, Subject, TypeKey, may_write},
 	experiment::{Declaration, Patch, check_declared, label},
-	fact::{AnalyticsId, CallOutcome, ContactChannel, Fact, LeadChannel, LeadLocale, LeadOffer, LeadSuspect, MessageRef, Messenger, bounded, day, instant},
+	fact::{AnalyticsId, CallOutcome, ContactChannel, Fact, LeadChannel, LeadOffer, LeadSuspect, MessageRef, Messenger, bounded, day, instant},
 	ids::{BrandId, JobId, LeadId, LocationId, parse_event_id},
 };
 use serde::de::DeserializeOwned;
@@ -279,7 +279,6 @@ pub fn check(key: &TypeKey, kind: SourceKind, properties: &Value, subject: &Subj
 				offer: LeadOffer::parse(p.flow.as_deref(), p.quoted_cents, p.pricing_valid_from.as_deref(), p.estimate_inputs)?,
 				analytics_id: p.analytics_id.as_deref().map(AnalyticsId::parse).transpose()?,
 				message_ref: p.message_ref.as_deref().map(MessageRef::parse).transpose()?,
-				locale: p.locale.as_deref().map(LeadLocale::parse).transpose()?,
 			})
 		}),
 		("lead.messaged", 1) => props::<v1::LeadMessagedV1>(key, properties).and_then(|p| {
@@ -436,34 +435,8 @@ mod tests {
 				offer: LeadOffer::default(),
 				analytics_id: None,
 				message_ref: None,
-				locale: None,
 			})
 		);
-	}
-
-	#[test]
-	fn a_locale_is_fr_or_en_or_absent() {
-		let judge = |locale: Option<Value>| {
-			let mut e = event();
-			if let Some(l) = locale {
-				e["properties"]["locale"] = l;
-			}
-			let got = decode(e, now()).unwrap();
-			check(&got.envelope.type_key, got.envelope.source.kind, &got.properties, &got.envelope.subject)
-		};
-		for (word, want) in [("fr", Some(LeadLocale::Fr)), ("en", Some(LeadLocale::En))] {
-			let Checked::Registered(Fact::LeadCreated { locale, .. }) = judge(Some(json!(word))) else {
-				panic!("{word} refused")
-			};
-			assert_eq!(locale, want);
-		}
-		let Checked::Registered(Fact::LeadCreated { locale, .. }) = judge(None) else {
-			panic!("no locale refused")
-		};
-		assert_eq!(locale, None);
-		for bad in [json!("de"), json!("EN"), json!("")] {
-			assert_eq!(judge(Some(bad.clone())), Checked::Invalid(Invalid::new("properties.locale is not one of fr, en")), "{bad}");
-		}
 	}
 
 	#[test]
@@ -484,7 +457,6 @@ mod tests {
 					offer: LeadOffer::default(),
 					analytics_id: None,
 					message_ref: None,
-					locale: None,
 				})
 			);
 		}

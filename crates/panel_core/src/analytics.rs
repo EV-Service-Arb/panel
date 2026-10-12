@@ -200,7 +200,6 @@ mod tests {
 			offer: LeadOffer::parse(Some("fixed"), Some(9_900), Some("2026-10-01"), []).unwrap(),
 			analytics_id: None,
 			message_ref: Some(MessageRef::parse("AQ-7K3F").unwrap()),
-			locale: None,
 		}))
 		.unwrap();
 		assert_eq!(created.event, "sa_lead_created");

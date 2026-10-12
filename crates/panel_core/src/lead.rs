@@ -8,7 +8,7 @@ use jiff::Timestamp;
 
 use crate::{
 	event::{SourceKind, Subject},
-	fact::{AnalyticsId, Fact, LeadChannel, LeadLocale, LeadOffer, LeadSuspect, MessageRef, Messenger},
+	fact::{AnalyticsId, Fact, LeadChannel, LeadOffer, LeadSuspect, MessageRef, Messenger},
 	ids::{BrandId, EventId, JobId, LeadId, LocationId},
 };
 
@@ -146,8 +146,6 @@ pub struct LeadState {
 	pub analytics_id: Option<AnalyticsId>,
 	/// The ref the customer carries into a messenger, from its `lead.created`.
 	pub message_ref: Option<MessageRef>,
-	/// The landing's locale from its `lead.created`; `None` reads as French.
-	pub locale: Option<LeadLocale>,
 	/// When the customer first wrote on a messenger (`lead.messaged`), and on which.
 	pub messaged: Option<(Timestamp, Messenger)>,
 	/// Its `lead.created` was typed in by a person (spec §10a).
@@ -193,7 +191,6 @@ pub fn fold(events: &[Recorded]) -> Option<LeadState> {
 		offer: LeadOffer::default(),
 		analytics_id: None,
 		message_ref: None,
-		locale: None,
 		messaged: None,
 		manual: false,
 		last_event_id: first.id,
@@ -214,7 +211,6 @@ pub fn fold(events: &[Recorded]) -> Option<LeadState> {
 			offer,
 			analytics_id,
 			message_ref,
-			locale,
 			..
 		} = &e.fact
 		{
@@ -223,7 +219,6 @@ pub fn fold(events: &[Recorded]) -> Option<LeadState> {
 			state.offer = offer.clone();
 			state.analytics_id = analytics_id.clone();
 			state.message_ref = message_ref.clone();
-			state.locale = *locale;
 			state.manual = e.source_kind.is_manual();
 		}
 		// The first message: the events are in time order, so a later one leaves it.
@@ -285,7 +280,6 @@ mod tests {
 			offer: LeadOffer::default(),
 			analytics_id: None,
 			message_ref: None,
-			locale: None,
 		}
 	}
 
@@ -334,7 +328,6 @@ mod tests {
 					offer: LeadOffer::default(),
 					analytics_id: None,
 					message_ref: None,
-					locale: None,
 				},
 			),
 			ev(5, SourceKind::Panel, Fact::LeadContacted { channel: None }),
@@ -374,7 +367,6 @@ mod tests {
 				offer: LeadOffer::default(),
 				analytics_id: None,
 				message_ref: None,
-				locale: None,
 			},
 		);
 		let mut back_dated = ev(0, SourceKind::Site, created());
@@ -399,7 +391,6 @@ mod tests {
 				offer: LeadOffer::default(),
 				analytics_id: None,
 				message_ref: None,
-				locale: None,
 			},
 		);
 		let s = fold(&[doubted.clone(), ev(5, SourceKind::Panel, Fact::LeadContacted { channel: None })]).unwrap();
@@ -422,7 +413,6 @@ mod tests {
 				offer: estimate.clone(),
 				analytics_id: None,
 				message_ref: None,
-				locale: None,
 			},
 		);
 		let mut again = ev(1, SourceKind::Site, created());
@@ -444,7 +434,6 @@ mod tests {
 					offer: LeadOffer::default(),
 					analytics_id: Some(AnalyticsId::parse(id).unwrap()),
 					message_ref: None,
-					locale: None,
 				},
 			);
 			e.received_at = at(received);
@@ -470,7 +459,6 @@ mod tests {
 				offer: LeadOffer::default(),
 				analytics_id: None,
 				message_ref: Some(MessageRef::parse("AQ-7K3F").unwrap()),
-				locale: None,
 			},
 		);
 		let events = [

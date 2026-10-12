@@ -132,9 +132,6 @@ message LeadCreatedV1 {
   // not unique: `lead.messaged` and the lookup by ref name the brand's newest lead carrying
   // it. Not PII.
   optional string message_ref = 9;
-  // The landing's locale, which language the panel writes to the customer in: `fr` or `en`
-  // (anything else is refused). Absent: `fr`. Not PII.
-  optional string locale = 10;
 }
 
 // lead.messaged@1 — the customer actually wrote the brand on a messenger. Written by a bot or

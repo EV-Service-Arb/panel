@@ -289,30 +289,6 @@ async fn telegram_roles_become_permissions_both_ways() {
 	assert_eq!(token, "admin");
 }
 
-/// The locale column comes and goes with its migration, and `reporting_leads` with it.
-#[tokio::test]
-async fn the_lead_locale_comes_and_goes_with_its_migration() {
-	const LOCALE: i64 = 20261011090000;
-	let db = TestDb::create().await;
-	let pool = db.pool().await;
-	let migrator = sqlx::migrate!("./migrations");
-	let has = || async {
-		let col = |sql: &'static str| {
-			let pool = pool.clone();
-			async move { sqlx::query_scalar::<_, i64>(sql).fetch_one(&pool).await.unwrap() }
-		};
-		(
-			col("SELECT count(*) FROM pragma_table_info('leads') WHERE name = 'locale'").await,
-			col("SELECT count(*) FROM pragma_table_info('reporting_leads') WHERE name = 'locale'").await,
-		)
-	};
-	assert_eq!(has().await, (1, 1));
-	migrator.undo(&pool, LOCALE - 1).await.unwrap();
-	assert_eq!(has().await, (0, 0));
-	migrator.run(&pool).await.unwrap();
-	assert_eq!(has().await, (1, 1));
-}
-
 fn cabinet() -> url::Url {
 	"https://evinvest.test".parse().unwrap()
 }

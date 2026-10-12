@@ -468,9 +468,6 @@ start a lead from a conversation of its own.
 ```text
 lead.created     channel += whatsapp | telegram; message_ref (optional): the ref the landing made,
                  ^[A-Z]{2,4}-[0-9A-HJKMNP-TV-Z]{4,8}$, not PII, not unique
-lead.created     locale (optional): `fr` | `en`, the language of the landing the visitor used;
-                 anything else is refused, absent reads as `fr`. Kept in `leads.locale` and
-                 `reporting_leads.locale`
 lead.messaged@1  {channel: whatsapp|telegram, message_ref?}: the customer actually wrote. Writers
                  bot | panel (a landing only knows a link was opened). Subject: the lead, or
                  none and a ref → the brand's newest lead carrying it, looked up under the
