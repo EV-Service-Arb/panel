@@ -5,7 +5,6 @@ import { ArrowUpRight } from "lucide-react";
 
 import { fetchFunnel } from "@/entities/funnel";
 import { brandsOf, usePlaces } from "@/entities/place";
-import { fetchReviewRequests } from "@/entities/review-request";
 import { FunnelFilters, useFilterParams } from "@/features/funnel-filters";
 import { useT } from "@/shared/i18n";
 import { useResource } from "@/shared/lib/use-resource";
@@ -13,7 +12,6 @@ import { ErrorState } from "@/shared/ui/error-state";
 import { ScreenFrame } from "@/shared/ui/screen-frame";
 
 import { LeadsBlock } from "./leads-block";
-import { ReviewRequestsBlock } from "./review-requests-block";
 
 export function OverviewView() {
   const t = useT();
@@ -22,9 +20,6 @@ export function OverviewView() {
   const key = `funnel:${range.from}:${range.to}:${brand ?? ""}`;
   // The counts move with every lead.
   const funnel = useResource(key, () => fetchFunnel({ ...range, brand }), key, { live: ["leads", "lead"] });
-  // Its own read: the funnel stays on screen if this one fails, and the other way round.
-  const reviewKey = `review-requests:${range.from}:${range.to}:${brand ?? ""}`;
-  const reviews = useResource(reviewKey, () => fetchReviewRequests({ ...range, brand }), reviewKey, { live: ["leads", "lead"] });
 
   return (
     <ScreenFrame title={t("nav.overview")} actions={<FunnelFilters period={period} brand={brand} brands={brandsOf(places, brand)} onChange={update} />}>
@@ -33,9 +28,6 @@ export function OverviewView() {
         {funnel.status === "ok" && (
           <>
             <LeadsBlock funnel={funnel.data} />
-            {reviews.status === "loading" && <Skeleton className="h-40 w-full" />}
-            {reviews.status === "error" && <ErrorState failure={reviews.failure} onRetry={reviews.reload} />}
-            {reviews.status === "ok" && <ReviewRequestsBlock reviews={reviews.data} />}
             <p className="px-1 text-sm text-ink-soft" role="note">
               {t("funnel.site.posthog")}{" "}
               {funnel.data.posthog_url !== null && (

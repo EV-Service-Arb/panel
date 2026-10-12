@@ -1,5 +1,5 @@
 import { IDEMPOTENCY_HEADER, http, ignoreBody } from "@/shared/api";
-import { type Infer, bool, object, str } from "@/shared/lib/parse";
+import { object, str } from "@/shared/lib/parse";
 
 import type { BookingStatus } from "../model/booking";
 import type { Flow } from "../model/pricing";
@@ -86,18 +86,6 @@ export async function moveLead(ref: LeadRef, move: StageMove): Promise<void> {
  */
 export async function markMessaged(ref: LeadRef, channel: Messenger, idempotencyKey: string): Promise<void> {
   await http.send("POST", `${leadPath(ref)}/messaged`, { channel }, ignoreBody, { [IDEMPOTENCY_HEADER]: idempotencyKey });
-}
-
-const reviewRequestedParser = object({ event_id: str, already_requested: bool });
-export type ReviewRequested = Infer<typeof reviewRequestedParser>;
-
-/**
- * A Google review was asked of the customer on `channel` (`review.requested`).
- * Once per lead: 201 `already_requested: false` records it, 200 `true` means an
- * earlier ask stands and nothing was journaled. 409 unless the job was completed or paid.
- */
-export function requestReview(ref: LeadRef, channel: Messenger): Promise<ReviewRequested> {
-  return http.send("POST", `${leadPath(ref)}/review-request`, { channel }, reviewRequestedParser);
 }
 
 export interface PaymentInput {
