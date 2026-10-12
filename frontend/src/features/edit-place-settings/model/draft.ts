@@ -15,7 +15,6 @@ export interface SettingsDraft {
   serviceArea: string[];
   booking: BookingDraft;
   reviewUrl: string;
-  brandName: string;
 }
 
 export function draftOf(edited: EditedFields): SettingsDraft {
@@ -28,7 +27,6 @@ export function draftOf(edited: EditedFields): SettingsDraft {
     serviceArea: [...(edited.serviceArea ?? [])],
     booking: bookingDraftOf(edited.booking),
     reviewUrl: edited.reviewUrl ?? "",
-    brandName: edited.brandName ?? "",
   };
 }
 
@@ -75,15 +73,6 @@ export function looksLikeReviewUrl(raw: string): boolean {
   return m !== null && REVIEW_HOSTS.includes((m[1] ?? "").toLowerCase()) && /[^/?]/.test(m[2] ?? "");
 }
 
-export const BRAND_NAME_MAX = 60;
-
-/** Like `looksLikeReviewUrl`: a hint while typing, the server's 422 says why. Empty is fine — the site keeps its own name. */
-export function looksLikeBrandName(raw: string): boolean {
-  const s = raw.trim();
-  if (s === "") return true;
-  return [...s].length <= BRAND_NAME_MAX && !/[\u0000-\u001f\u007f-\u009f<>@]/.test(s) && !s.includes("://") && !/www\./i.test(s);
-}
-
 /** Only the switches turned off are stored: absent is on, so an all-on place keeps no `messengers` at all. */
 function messengersOf(draft: Record<MessengerSwitch, boolean>): Messengers | null {
   const off: Messengers = {};
@@ -119,8 +108,6 @@ export function editedOf(draft: SettingsDraft): EditedFields {
   if (booking) out.booking = booking;
   const reviewUrl = draft.reviewUrl.trim();
   if (reviewUrl) out.reviewUrl = reviewUrl;
-  const brandName = draft.brandName.trim();
-  if (brandName) out.brandName = brandName;
   return out;
 }
 

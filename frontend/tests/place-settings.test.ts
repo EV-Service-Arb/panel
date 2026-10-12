@@ -5,7 +5,7 @@ import { diffLineText, diffSettings } from "@/entities/place/lib/diff";
 import { formatDays, formatHours, isOpenAt, localTimeOf } from "@/entities/place/lib/hours";
 import { placesParser } from "@/entities/place/model/place";
 import { type HoursRow, type PlaceSettings, historyParser, placeSettingsParser, settingsParser, settingsToWire } from "@/entities/place/model/settings";
-import { addArea, draftChanged, draftOf, editedOf, looksLikeBrandName, looksLikeE164, looksLikeReviewUrl, settingsOf } from "@/features/edit-place-settings/model/draft";
+import { addArea, draftChanged, draftOf, editedOf, looksLikeE164, looksLikeReviewUrl, settingsOf } from "@/features/edit-place-settings/model/draft";
 import { fieldErrorsOf } from "@/features/edit-place-settings/model/field-errors";
 import { addHoursRow, hoursDraftOf, hoursOf, normaliseTime, removeHoursRow, rowNotes, rowProblems, updateHoursRow } from "@/features/edit-place-settings/model/hours-draft";
 import { createHttp } from "@/shared/api/http";
@@ -254,28 +254,5 @@ describe("the review link", () => {
 
   it("puts the server's reason beside its field", () => {
     expect(fieldErrorsOf({ reviewUrl: "must not have a port" }).byField.reviewUrl).toEqual(["must not have a port"]);
-  });
-});
-
-describe("the brand name", () => {
-  it("is an edited field: read, trimmed on save, and shown in the history", () => {
-    const base = settings({ brandName: "Dépannage Aqua", address });
-    expect(base.edited.brandName).toBe("Dépannage Aqua");
-    const draft = draftOf(base.edited);
-    expect(draftChanged(draft, base)).toBe(false);
-    draft.brandName = "  Ёлки ";
-    expect(settingsToWire(settingsOf(draft, base))).toEqual({ address, brandName: "Ёлки" });
-    expect(editedOf({ ...draft, brandName: "  " })).toEqual({});
-    const lines = diffSettings(settings({}), base, en);
-    expect(diffLineText(lines[0]!, en)).toBe("Brand name: set to Dépannage Aqua");
-  });
-
-  it("warns while typing about what the server would refuse", () => {
-    for (const ok of ["", "AquaFix", "Société Dépannage & Fils", "é".repeat(60)]) expect(looksLikeBrandName(ok), ok).toBe(true);
-    for (const bad of ["é".repeat(61), "<b>x</b>", "https://aquafix.fr", "WWW.aquafix.fr", "a@b.fr", "a\nb"]) expect(looksLikeBrandName(bad), bad).toBe(false);
-  });
-
-  it("puts the server's reason beside its field", () => {
-    expect(fieldErrorsOf({ brandName: "must not contain < or >" }).byField.brandName).toEqual(["must not contain < or >"]);
   });
 });

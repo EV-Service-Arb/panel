@@ -22,8 +22,8 @@ use crate::fact::Messenger;
 pub type FieldErrors = BTreeMap<String, String>;
 
 /// Every field a place's settings may set, by its wire name.
-pub const FIELDS: [&str; 14] = [
-	"phone", "whatsapp", "telegram", "messengers", "hours", "serviceArea", "address", "geo", "storefrontPhoto", "landmark", "rating", "booking", "reviewUrl", "brandName",
+pub const FIELDS: [&str; 13] = [
+	"phone", "whatsapp", "telegram", "messengers", "hours", "serviceArea", "address", "geo", "storefrontPhoto", "landmark", "rating", "booking", "reviewUrl",
 ];
 
 /// kitstart's `DayOfWeek`, in week order.
@@ -73,7 +73,6 @@ impl PlaceSettings {
 				// The providers the place offers and its default (`crate::booking`).
 				"booking" => crate::booking::check_config(value),
 				"reviewUrl" => whole(review_url(value)),
-				"brandName" => whole(brand_name(value)),
 				_ => whole(Err(format!("is not a setting; one of {}", FIELDS.join(", ")))),
 			};
 			match checked {
@@ -386,22 +385,6 @@ fn review_url(v: &Value) -> Result<Value, String> {
 	let page = tail.split('#').next().unwrap_or_default();
 	if page.trim_start_matches(['/', '?']).is_empty() {
 		return Err("must be the review page's link, not just the host".into());
-	}
-	Ok(Value::String(s))
-}
-
-const MAX_BRAND: usize = 60;
-
-/// The name a site uses for the business in text it shows a customer ("merci d'avoir fait appel à
-/// …"): one line of at most [`MAX_BRAND`] characters, any script. Never markup and never a link or
-/// an address, since the sentence is served as it was set (the rule banking keeps for labels).
-fn brand_name(v: &Value) -> Result<Value, String> {
-	let s = text(v, MAX_BRAND)?;
-	if s.contains(['<', '>']) {
-		return Err("must not contain < or >".into());
-	}
-	if s.contains("://") || s.contains('@') || s.to_lowercase().contains("www.") {
-		return Err("must be a name, not a link or an address (no ://, www. or @)".into());
 	}
 	Ok(Value::String(s))
 }
@@ -746,35 +729,7 @@ mod tests {
 		}
 		assert_eq!(err(json!({"reviewUrl": 5}))["reviewUrl"], "must be an https:// URL");
 		assert_eq!(PlaceSettings::parse(&json!({"reviewUrl": null})).unwrap().get("reviewUrl"), None);
-		assert!(err(json!({"fax": "x"}))["fax"].ends_with("reviewUrl, brandName"), "the refusal lists the new setting");
-	}
-
-	#[test]
-	fn the_brand_name_is_a_name_and_not_a_link() {
-		let ok = |n: &str| PlaceSettings::parse(&json!({ "brandName": n })).map(|s| s.get("brandName").cloned());
-		let sixty = "é".repeat(60);
-		for good in ["AquaFix", " Aqua Fix Plomberie ", "Société Dépannage & Fils", "Ёлки-палки", "L'Eau d'Or", sixty.as_str()] {
-			assert_eq!(ok(good).unwrap(), Some(json!(good.trim())), "{good}");
-		}
-		for (bad, why) in [
-			("", "must not be blank"),
-			("   ", "must not be blank"),
-			(&"é".repeat(61), "must be at most 60 characters"),
-			("Aqua\nFix", "must be one line, without control characters"),
-			("Aqua\u{7}Fix", "must be one line, without control characters"),
-			("<b>AquaFix</b>", "must not contain < or >"),
-			("Aqua > Fix", "must not contain < or >"),
-			("https://aquafix.fr", "must be a name, not a link or an address (no ://, www. or @)"),
-			("aquafix://x", "must be a name, not a link or an address (no ://, www. or @)"),
-			("WWW.aquafix.fr", "must be a name, not a link or an address (no ://, www. or @)"),
-			("Aqua www.fix", "must be a name, not a link or an address (no ://, www. or @)"),
-			("contact@aquafix.fr", "must be a name, not a link or an address (no ://, www. or @)"),
-		] {
-			assert_eq!(ok(bad).unwrap_err()["brandName"], why, "{bad}");
-		}
-		assert_eq!(err(json!({"brandName": 5}))["brandName"], "must be a string");
-		assert_eq!(PlaceSettings::parse(&json!({"brandName": null})).unwrap().get("brandName"), None);
-		assert!(err(json!({"fax": "x"}))["fax"].ends_with("reviewUrl, brandName"), "the refusal lists the new setting");
+		assert!(err(json!({"fax": "x"}))["fax"].ends_with("booking, reviewUrl"), "the refusal lists the new setting");
 	}
 
 	#[test]

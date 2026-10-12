@@ -290,37 +290,3 @@ async fn a_places_review_link_is_set_served_and_reverted() {
 	panel.revert_place(&Editor::Cli, &brand, &slug, history[0].id, Expected::Any, at).await.unwrap();
 	assert_eq!(panel.live_place(&brand, &slug).await.unwrap(), Live::Settings(settings(json!({ "reviewUrl": short }))));
 }
-
-/// The brand name of a place: served under `brandName` as it was set (trimmed, accents kept),
-/// refused with a reason when it carries a link, kept in the history and put back by a revert.
-#[tokio::test]
-async fn a_places_brand_name_is_set_served_and_reverted() {
-	let db = TestDb::create().await;
-	let panel = panel(&db).await;
-	let (brand, slug) = ids();
-	let put = |name: &str| Map::from_iter([("brandName".to_owned(), json!(name))]);
-
-	panel.patch_place(&Editor::Cli, &brand, &slug, put(" Dépannage Aqua "), &[], now()).await.unwrap();
-	assert_eq!(panel.live_place(&brand, &slug).await.unwrap(), Live::Settings(settings(json!({ "brandName": "Dépannage Aqua" }))));
-
-	let later = now() + SignedDuration::from_mins(1);
-	panel.patch_place(&Editor::Cli, &brand, &slug, put("Ёлки"), &[], later).await.unwrap();
-
-	for bad in ["", "<b>x</b>", "https://aquafix.fr", "www.aquafix.fr", "a@b.fr", "line\nbreak"] {
-		let Err(PlaceError::Invalid(fields)) = panel.patch_place(&Editor::Cli, &brand, &slug, put(bad), &[], later).await else {
-			panic!("{bad:?} passed")
-		};
-		assert_eq!(fields.keys().collect::<Vec<_>>(), ["brandName"], "{bad:?}");
-	}
-	assert_eq!(
-		panel.live_place(&brand, &slug).await.unwrap(),
-		Live::Settings(settings(json!({ "brandName": "Ёлки" }))),
-		"a refusal changes nothing"
-	);
-
-	let history = panel.place_history(&brand, &slug).await.unwrap();
-	assert_eq!(history[0].before, settings(json!({ "brandName": "Dépannage Aqua" })));
-	let at = later + SignedDuration::from_mins(1);
-	panel.revert_place(&Editor::Cli, &brand, &slug, history[0].id, Expected::Any, at).await.unwrap();
-	assert_eq!(panel.live_place(&brand, &slug).await.unwrap(), Live::Settings(settings(json!({ "brandName": "Dépannage Aqua" }))));
-}
