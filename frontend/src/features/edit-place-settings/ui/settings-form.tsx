@@ -15,7 +15,6 @@ import { HoursEditor } from "./hours-editor";
 import { KeptFields } from "./kept-fields";
 import { MessengerSwitches, TelegramField } from "./messenger-fields";
 import { PhoneField } from "./phone-field";
-import { ReviewUrlField } from "./review-url-field";
 
 export interface SettingsFormProps {
   place: PlaceSettingsView;
@@ -74,7 +73,6 @@ export function SettingsForm({ place, onSaved, onReload, fresher, onTakeFresh }:
       <HoursEditor rows={draft.hours} onChange={(hours) => set({ hours })} errors={errors.byField.hours} />
       <AreaChips names={draft.serviceArea} onChange={(serviceArea) => set({ serviceArea })} errors={errors.byField.serviceArea} />
       <BookingFields draft={draft.booking} onChange={(booking) => set({ booking })} serverErrors={errors.byKey} />
-      <ReviewUrlField value={draft.reviewUrl} onChange={(reviewUrl) => set({ reviewUrl })} errors={errors.byField.reviewUrl} />
       <KeptFields rest={base.rest} />
       <ChannelPreview fields={editedOf(draft)} />
       <div className="flex flex-wrap gap-2">

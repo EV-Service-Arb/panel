@@ -44,11 +44,9 @@ export interface EditedFields {
   serviceArea?: string[];
   /** The booking providers the place offers and its default. */
   booking?: BookingConfig;
-  /** Where a customer leaves a Google review: an https link on g.page or search.google.com. */
-  reviewUrl?: string;
 }
 
-export const EDITED_KEYS = ["phone", "whatsapp", "telegram", "messengers", "hours", "serviceArea", "booking", "reviewUrl"] as const satisfies readonly (keyof EditedFields)[];
+export const EDITED_KEYS = ["phone", "whatsapp", "telegram", "messengers", "hours", "serviceArea", "booking"] as const satisfies readonly (keyof EditedFields)[];
 
 export interface PlaceSettings {
   edited: EditedFields;
@@ -69,7 +67,6 @@ export const settingsParser: Parser<PlaceSettings> = (v, path) => {
   // A booking the server would now refuse (its rules grew) is not the form's to edit: it rides in `rest`.
   const booking = o.booking === undefined ? null : bookingConfigOf(o.booking);
   if (booking) edited.booking = booking;
-  if (o.reviewUrl !== undefined) edited.reviewUrl = str(o.reviewUrl, `${path}.reviewUrl`);
   const rest = Object.fromEntries(Object.entries(o).filter(([k]) => !(k in edited)));
   return { edited, rest };
 };

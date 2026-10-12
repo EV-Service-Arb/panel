@@ -568,8 +568,7 @@ panel answers for it (kitstart's `createPlaceSource`, `PlaceLive`): `phone`, `wh
 (E.164), `telegram` (the place's bot, its username without the `@`:
 `^[A-Za-z][A-Za-z0-9_]{1,28}[Bb][Oo][Tt]$`, 5–32 characters ending in bot), `messengers` (`{whatsapp?: bool, telegram?: bool}`, the
 landing's messenger buttons switched off; absent is on, another key refused as
-`messengers.<key>`), `hours` (`[{days, opens, closes}]`), `serviceArea` (commune names), `reviewUrl` (the Google
-review page: https on exactly `g.page` or `search.google.com`, no user-info, no port), and for
+`messengers.<key>`), `hours` (`[{days, opens, closes}]`), `serviceArea` (commune names), and for
 storefronts `address`, `geo`, `storefrontPhoto` (https), `landmark` (a text per locale),
 `rating`. Hours are the place's local time, Europe/Paris for every place in v1 (no
 time zone per place). kitstart fetches every 10 minutes at most, times out after 3 s, and keeps its baked

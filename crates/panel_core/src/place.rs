@@ -22,8 +22,8 @@ use crate::fact::Messenger;
 pub type FieldErrors = BTreeMap<String, String>;
 
 /// Every field a place's settings may set, by its wire name.
-pub const FIELDS: [&str; 13] = [
-	"phone", "whatsapp", "telegram", "messengers", "hours", "serviceArea", "address", "geo", "storefrontPhoto", "landmark", "rating", "booking", "reviewUrl",
+pub const FIELDS: [&str; 12] = [
+	"phone", "whatsapp", "telegram", "messengers", "hours", "serviceArea", "address", "geo", "storefrontPhoto", "landmark", "rating", "booking",
 ];
 
 /// kitstart's `DayOfWeek`, in week order.
@@ -72,7 +72,6 @@ impl PlaceSettings {
 				"rating" => whole(rating(value)),
 				// The providers the place offers and its default (`crate::booking`).
 				"booking" => crate::booking::check_config(value),
-				"reviewUrl" => whole(review_url(value)),
 				_ => whole(Err(format!("is not a setting; one of {}", FIELDS.join(", ")))),
 			};
 			match checked {
@@ -353,40 +352,6 @@ fn https_url(v: &Value) -> Result<Value, String> {
 	let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
 	let ok = !host.is_empty() && !host.starts_with([':', '@', '.']) && !s.contains(char::is_whitespace);
 	if ok { Ok(Value::String(s)) } else { Err(MSG.into()) }
-}
-
-/// The hosts a place's Google review page may be on: the short `g.page/<name>/review` link a
-/// business profile hands out and the `search.google.com/local/writereview?placeid=…` form.
-pub const REVIEW_HOSTS: [&str; 2] = ["g.page", "search.google.com"];
-
-/// The page where a customer leaves a Google review: an `https://` URL on one of
-/// [`REVIEW_HOSTS`], exactly, with a path or a query, and neither user-info nor a port. The
-/// site links to it, so a host that is not Google's is a phishing link served from the panel.
-fn review_url(v: &Value) -> Result<Value, String> {
-	let s = text(v, MAX_URL).map_err(|_| "must be an https:// URL".to_owned())?;
-	let rest = s.strip_prefix("https://").ok_or("must be an https:// URL")?;
-	if !s.is_ascii() {
-		return Err("must be plain ASCII; write other characters percent-encoded".into());
-	}
-	if s.contains(char::is_whitespace) || s.contains('\\') {
-		return Err("must not contain spaces or backslashes".into());
-	}
-	let (authority, tail) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
-	if authority.contains('@') {
-		return Err("must not have a user or password in it".into());
-	}
-	if authority.contains(':') {
-		return Err("must not have a port".into());
-	}
-	if !REVIEW_HOSTS.iter().any(|h| authority.eq_ignore_ascii_case(h)) {
-		return Err(format!("must be a Google review link on {}", REVIEW_HOSTS.join(" or ")));
-	}
-	// A fragment is not part of the page: `g.page/#x` still names no review page.
-	let page = tail.split('#').next().unwrap_or_default();
-	if page.trim_start_matches(['/', '?']).is_empty() {
-		return Err("must be the review page's link, not just the host".into());
-	}
-	Ok(Value::String(s))
 }
 
 /// `{fr: "…", en: "…"}`: a text per locale (two lowercase letters). kitstart keeps it only
@@ -691,45 +656,6 @@ mod tests {
 		let current = PlaceSettings::parse(&json!({"telegram": "aquafix_devis_bot", "messengers": {"telegram": false}})).unwrap();
 		let next = current.patched(Map::new(), &["telegram".to_owned(), "messengers".to_owned()]).unwrap();
 		assert!(next.is_empty(), "both are fields the CLI clears");
-	}
-
-	#[test]
-	fn the_review_url_is_googles_and_nobody_elses() {
-		let ok = |url: &str| PlaceSettings::parse(&json!({ "reviewUrl": url })).map(|s| s.get("reviewUrl").cloned());
-		for good in [
-			"https://g.page/r/CabcDEF123/review",
-			"https://search.google.com/local/writereview?placeid=ChIJN1t_tDeuEmsRUsoyG83frY4",
-			" https://G.PAGE/aquafix/review ",
-		] {
-			assert_eq!(ok(good).unwrap(), Some(json!(good.trim())), "{good}");
-		}
-		for (bad, why) in [
-			("http://g.page/r/x/review", "must be an https:// URL"),
-			("javascript:alert(1)", "must be an https:// URL"),
-			("//g.page/r/x", "must be an https:// URL"),
-			("https://", "must be a Google review link on g.page or search.google.com"),
-			("https://evil.example/r/x", "must be a Google review link on g.page or search.google.com"),
-			("https://g.page.evil.example/r/x", "must be a Google review link on g.page or search.google.com"),
-			("https://evil.example/?u=https://g.page/x", "must be a Google review link on g.page or search.google.com"),
-			("https://www.google.com/maps", "must be a Google review link on g.page or search.google.com"),
-			("https://g.page@evil.example/r/x", "must not have a user or password in it"),
-			("https://user:pw@g.page/r/x", "must not have a user or password in it"),
-			("https://g.page:8443/r/x", "must not have a port"),
-			("https://g.page", "must be the review page's link, not just the host"),
-			("https://g.page/#x", "must be the review page's link, not just the host"),
-			("https://search.google.com/#anything", "must be the review page's link, not just the host"),
-			("https://g.page?#", "must be the review page's link, not just the host"),
-			("https://g.page/r/x\u{200b}", "must be plain ASCII; write other characters percent-encoded"),
-			("https://g.page/r/\u{202e}x", "must be plain ASCII; write other characters percent-encoded"),
-			("https://g.page/", "must be the review page's link, not just the host"),
-			("https://g.page/r/a b", "must not contain spaces or backslashes"),
-			("https://g.page\\@evil.example/", "must not contain spaces or backslashes"),
-		] {
-			assert_eq!(ok(bad).unwrap_err()["reviewUrl"], why, "{bad}");
-		}
-		assert_eq!(err(json!({"reviewUrl": 5}))["reviewUrl"], "must be an https:// URL");
-		assert_eq!(PlaceSettings::parse(&json!({"reviewUrl": null})).unwrap().get("reviewUrl"), None);
-		assert!(err(json!({"fax": "x"}))["fax"].ends_with("booking, reviewUrl"), "the refusal lists the new setting");
 	}
 
 	#[test]
