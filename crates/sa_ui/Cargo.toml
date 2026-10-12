@@ -1,0 +1,16 @@
+[package]
+name = "sa_ui"
+description = "Dioxus components every Service-Arb frontend shares, over ev_lib's uikit"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[dependencies]
+dioxus = { workspace = true }
+ev_lib = { version = "0.25.0", default-features = false, features = ["uikit"] } # not the workspace's: the apps that use this are on 0.25
+
+[lints]
+workspace = true
