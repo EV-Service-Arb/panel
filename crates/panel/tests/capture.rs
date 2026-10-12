@@ -249,34 +249,3 @@ async fn a_conversation_is_told_once() {
 	assert_eq!(messaged[0].1["channel"], "telegram");
 	assert!(!messaged[0].1.to_string().contains("AQ-7K3F"), "never the ref");
 }
-
-/// A review asked of a customer is told to PostHog under the lead's person, with the brand, the
-/// place and the messenger and nothing of the customer; a second request is not told again.
-#[tokio::test]
-async fn a_review_request_is_told_without_the_customer() {
-	let db = TestDb::create().await;
-	let panel = panel(&db).await.with_capture(true);
-	let secret = site(&panel).await;
-	let now = Timestamp::now();
-	let at = |m| now - SignedDuration::from_mins(m);
-	let ann = Actor(uuid::Uuid::now_v7());
-	let mut landing = created("L-1", at(30), Some("visitor-7"));
-	landing["pii"] = json!({"name": "Jeanne Martin", "phone": "+33 6 12 34 56 78"});
-	panel.ingest(sign("aquafix-site", &secret, &[landing], now).batch(), now).await.unwrap();
-	let brand = BrandId::parse("aquafix").unwrap();
-	let lead = LeadId::parse("L-1").unwrap();
-	panel.move_lead(ann, &brand, &lead, StageMove::Won { job_id: None }, at(20)).await.unwrap();
-	panel.move_lead(ann, &brand, &lead, StageMove::Completed, at(10)).await.unwrap();
-	panel.request_review_once(ann, &brand, &lead, panel_core::fact::Messenger::Whatsapp, at(5)).await.unwrap();
-	panel.request_review_once(ann, &brand, &lead, panel_core::fact::Messenger::Telegram, at(4)).await.unwrap();
-
-	let sent = outbox(&panel).await;
-	let asked: Vec<_> = sent.iter().filter(|(e, ..)| e == "sa_review_requested").collect();
-	assert_eq!(asked.len(), 1, "{sent:?}");
-	assert_eq!(asked[0].1, "visitor-7", "under the person the visit made");
-	let properties = asked[0].2.as_object().unwrap();
-	assert_eq!(properties.keys().map(String::as_str).collect::<Vec<_>>(), ["brand_id", "channel", "location_id", "manual"]);
-	assert_eq!(properties["channel"], "whatsapp");
-	let all = asked[0].2.to_string();
-	assert!(!all.contains("Jeanne") && !all.contains("+33") && !all.contains("L-1"), "{all}");
-}

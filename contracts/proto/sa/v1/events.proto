@@ -154,16 +154,6 @@ message LeadMessagedV1 {
   optional string message_ref = 2;
 }
 
-// review.requested@1 — a request for a Google review was sent to the customer. Written by the
-// panel alone, when an operator sends it from a completed or paid lead. subject.lead_id
-// required. It moves no stage. A lead has one: the first journaled stands, a later one changes
-// nothing. The text of the message (the customer's name, their phone) is built by the browser
-// and never reaches the panel; this is only the fact that it was sent.
-message ReviewRequestedV1 {
-  // whatsapp | telegram
-  string channel = 1;
-}
-
 // lead.contacted@1 — subject.lead_id required.
 message LeadContactedV1 {
   // phone | whatsapp | email | telegram | other

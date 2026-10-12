@@ -435,11 +435,6 @@ pub enum Fact {
 		channel: Messenger,
 		message_ref: Option<MessageRef>,
 	},
-	/// A Google review was asked of the customer on a messenger (`review.requested`). The
-	/// first one of a lead stands.
-	ReviewRequested {
-		channel: Messenger,
-	},
 	LeadContacted {
 		channel: Option<ContactChannel>,
 	},
@@ -637,7 +632,6 @@ impl Fact {
 			| Self::LeadQuoted { .. }
 			| Self::LeadLost { .. }
 			| Self::PaymentReceived { .. }
-			| Self::ReviewRequested { .. }
 			| Self::CallAttempted
 			| Self::CallLogged { .. }
 			| Self::BookingRequested { .. }

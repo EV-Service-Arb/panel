@@ -325,17 +325,6 @@ POST   /leads/{brand}/{lead}/stage                {stage: contacted, channel?} |
                                                   → 201 {event_id}
 POST   /leads/{brand}/{lead}/messaged             {channel: whatsapp|telegram} → 201 {event_id}:
                                                   the customer wrote (lead.messaged); idempotent
-POST   /leads/{brand}/{lead}/review-request       {channel: whatsapp|telegram} → 201 {event_id,
-                                                  already_requested: false}; a lead already asked →
-                                                  200 {…, already_requested: true}, nothing
-                                                  journaled; lead that never reached completed|paid → 409 "a
-                                                  review can be asked only once the job is
-                                                  was completed or paid". Needs sa:work:leads:edit
-GET    /review-requests?from&to&brand             {from, to, brand, min_sample, total: Share, weeks:
-                                                  [{week (the Monday, UTC), brand, location|null,
-                                                  share: {n, of, percent|null, small_sample}}]}:
-                                                  of the leads that reached completed (paid with no
-                                                  completed) that week, n were asked for a review
 POST   /leads/{brand}/{lead}/calls/attempt        → 201 {attempt_id}
 POST   /leads/{brand}/{lead}/calls/{attempt}/outcome
                                                   {outcome: answered|no_answer|wrong_number|later}
@@ -491,12 +480,6 @@ lead.messaged@1  {channel: whatsapp|telegram, message_ref?}: the customer actual
                  "unknown_ref: …" (409 + Retry-After, not journaled; the bot sends it again);
                  resolved by ref, it takes the lead's location when it named none. A leadId
                  with no lead yet: deferred "unknown_lead: …" the same way, never a phantom lead
-review.requested@1 {channel: whatsapp|telegram}: a Google review was asked of the customer, from
-                 the operator's own messenger. Writer panel only; subject.lead_id required; moves
-                 no stage. The text sent is built by the browser (it carries the customer's name)
-                 and never reaches the panel. A lead is asked once: the first journaled stands
-                 (`leads.review_requested_at` / `review_requested_channel`, both or neither, and
-                 `reporting_leads`), a rebuild keeps the first by time
 source kind bot  a key per bot (`panel source add … --kind bot`): lead.created with a messenger's
                  channel only, lead.messaged, and the lookup by ref (the only kind that may)
 ```
@@ -510,13 +493,6 @@ hand (`POST /leads {channel}`) and says a customer wrote (`POST …/messaged`).
 PostHog is told `sa_lead_messaged {channel}` once per lead, for the first message the panel
 journaled, never the ref. An operator's `POST …/messaged` on a lead that has a message already
 journals nothing and answers `200` with that message's id.
-
-The review request (`POST …/review-request`) is once per lead for good, with no undo and no
-idempotency key: its event id is derived from the brand and the lead alone, so two requests at
-once, even from two users, meet at the journal's primary key and the loser is answered with the
-winner's event (`200`, `already_requested`). PostHog is told `sa_review_requested {channel}`
-(and the brand, the place, manual), never the message. `/api/v1` `Lead` carries
-`review_requested_at`, `review_requested_channel` and `locale`.
 
 The place's `telegram` (its bot's username) and `messengers` (kill switches) are place
 settings, below.
@@ -857,7 +833,7 @@ funnel there (`panel_core::analytics`):
 ```text
 queued       Panel::journal, in the event's own transaction, when POSTHOG_PROJECT_API_KEY is
              set: a new lead.created (the one that counts), lead.messaged, lead.contacted, lead.quoted,
-             job.won, lead.lost, job.completed, payment.received, review.requested, call.logged, every booking.*
+             job.won, lead.lost, job.completed, payment.received, call.logged, every booking.*
              → posthog_outbox
              never: the rebuild (it projects without passing there), a duplicate, a second
              lead.created, call.attempted, what names no lead (a provider's booking.created or

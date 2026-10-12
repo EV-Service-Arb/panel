@@ -51,12 +51,6 @@ pub fn capture_of(e: &Recorded) -> Option<Capture> {
 			p.insert("channel", json!(channel.as_str()));
 			"sa_lead_messaged"
 		}
-		// The messenger it was asked on and nothing of the message: its text carries the
-		// customer's name.
-		Fact::ReviewRequested { channel } => {
-			p.insert("channel", json!(channel.as_str()));
-			"sa_review_requested"
-		}
 		Fact::LeadContacted { channel } => {
 			if let Some(c) = channel {
 				p.insert("channel", json!(c.as_str()));
@@ -230,10 +224,6 @@ mod tests {
 		assert_eq!(messaged.event, "sa_lead_messaged");
 		assert_eq!(messaged.properties.keys().copied().collect::<Vec<_>>(), ["brand_id", "channel", "location_id", "manual"]);
 		assert_eq!(messaged.properties["channel"], "whatsapp");
-		let asked = capture_of(&rec(Fact::ReviewRequested { channel: Messenger::Telegram })).unwrap();
-		assert_eq!(asked.event, "sa_review_requested");
-		assert_eq!(asked.properties.keys().copied().collect::<Vec<_>>(), ["brand_id", "channel", "location_id", "manual"]);
-		assert_eq!(asked.properties["channel"], "telegram");
 	}
 
 	fn created(matched: Option<BookingMatch>, booked_at: Option<Timestamp>) -> Fact {

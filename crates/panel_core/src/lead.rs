@@ -53,12 +53,10 @@ impl Stage {
 			Fact::LeadLost { .. } => Some(Self::Lost),
 			// A booking is beside the stages, not one of them: a lead booked and never
 			// contacted is still waiting for its call.
-			// Writing on a messenger is the customer's move, not the operator's contact; asking for
-			// a review is after the job, and moves nothing.
+			// Writing on a messenger is the customer's move, not the operator's contact.
 			Fact::CallAttempted
 			| Fact::CallLogged { .. }
 			| Fact::LeadMessaged { .. }
-			| Fact::ReviewRequested { .. }
 			| Fact::RetiredCount
 			| Fact::ExperimentsDeclared(_)
 			| Fact::ExperimentConfigured { .. }
@@ -152,9 +150,6 @@ pub struct LeadState {
 	pub locale: Option<LeadLocale>,
 	/// When the customer first wrote on a messenger (`lead.messaged`), and on which.
 	pub messaged: Option<(Timestamp, Messenger)>,
-	/// When a Google review was first asked of the customer (`review.requested`), and on which
-	/// messenger.
-	pub review_requested: Option<(Timestamp, Messenger)>,
 	/// Its `lead.created` was typed in by a person (spec §10a).
 	pub manual: bool,
 	pub last_event_id: EventId,
@@ -200,7 +195,6 @@ pub fn fold(events: &[Recorded]) -> Option<LeadState> {
 		message_ref: None,
 		locale: None,
 		messaged: None,
-		review_requested: None,
 		manual: false,
 		last_event_id: first.id,
 		last_event_at: first.occurred_at,
@@ -235,10 +229,6 @@ pub fn fold(events: &[Recorded]) -> Option<LeadState> {
 		// The first message: the events are in time order, so a later one leaves it.
 		if let Fact::LeadMessaged { channel, .. } = &e.fact {
 			state.messaged.get_or_insert((e.occurred_at, *channel));
-		}
-		// Asked once: the events are in time order, so the first stands and a later one leaves it.
-		if let Fact::ReviewRequested { channel } = &e.fact {
-			state.review_requested.get_or_insert((e.occurred_at, *channel));
 		}
 		if let Some(reached) = Stage::of(&e.fact) {
 			state.times.reach(reached, e.occurred_at);
@@ -493,20 +483,6 @@ mod tests {
 		assert_eq!(s.channel, Some(LeadChannel::Whatsapp));
 		assert_eq!(s.message_ref.unwrap().as_str(), "AQ-7K3F");
 		assert_eq!(s.messaged, Some((at(4), Messenger::Telegram)), "the first, whatever the order they arrived in");
-	}
-
-	#[test]
-	fn the_first_review_request_stands_and_moves_no_stage() {
-		let asked = |channel| Fact::ReviewRequested { channel };
-		assert_eq!(Stage::of(&asked(Messenger::Whatsapp)), None);
-		let s = fold(&[
-			ev(9, SourceKind::Panel, asked(Messenger::Whatsapp)),
-			ev(2, SourceKind::Panel, Fact::JobCompleted),
-			ev(4, SourceKind::Panel, asked(Messenger::Telegram)),
-		])
-		.unwrap();
-		assert_eq!(s.stage, Stage::Completed, "asking for a review is not a stage");
-		assert_eq!(s.review_requested, Some((at(4), Messenger::Telegram)), "the first, whatever the order they arrived in");
 	}
 
 	#[test]

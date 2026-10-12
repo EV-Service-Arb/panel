@@ -313,62 +313,6 @@ async fn the_lead_locale_comes_and_goes_with_its_migration() {
 	assert_eq!(has().await, (1, 1));
 }
 
-/// The review request's two columns come and go with their migration, and `reporting_leads`
-/// with them; the pair CHECK refuses one without the other and a channel that is not a messenger.
-#[tokio::test]
-async fn the_review_request_comes_and_goes_with_its_migration() {
-	const REVIEW: i64 = 20261011100000;
-	let db = TestDb::create().await;
-	let pool = db.pool().await;
-	let migrator = sqlx::migrate!("./migrations");
-	let count = |sql: &'static str| {
-		let pool = pool.clone();
-		async move { sqlx::query_scalar::<_, i64>(sql).fetch_one(&pool).await.unwrap() }
-	};
-	let has = || async {
-		(
-			count("SELECT count(*) FROM pragma_table_info('leads') WHERE name LIKE 'review_requested%'").await,
-			count("SELECT count(*) FROM pragma_table_info('reporting_leads') WHERE name LIKE 'review_requested%'").await,
-		)
-	};
-	assert_eq!(has().await, (2, 2));
-
-	let event = uuid::Uuid::now_v7();
-	sqlx::query(
-		"INSERT INTO events (id, schema, type, type_version, occurred_at, received_at, source_kind, source_id, brand_id, properties, content_mac, status) \
-		 VALUES ($1, 'sa.funnel.v1', 'lead.created', 1, 0, 0, 'panel', 'x', 'aquafix', '{}', zeroblob(32), 'registered')",
-	)
-	.bind(event)
-	.execute(&pool)
-	.await
-	.expect("an event row for the lead to name");
-	let lead = |at: Option<i64>, channel: Option<&'static str>| {
-		let pool = pool.clone();
-		async move {
-			sqlx::query(
-				"INSERT INTO leads (brand_id, lead_id, stage, manual, last_event_id, last_event_at, review_requested_at, review_requested_channel) \
-				 VALUES ('aquafix', $1, 'created', 0, $2, 0, $3, $4)",
-			)
-			.bind(uuid::Uuid::now_v7().to_string())
-			.bind(event)
-			.bind(at)
-			.bind(channel)
-			.execute(&pool)
-			.await
-		}
-	};
-	assert!(lead(None, None).await.is_ok(), "a lead never asked");
-	assert!(lead(Some(1), Some("whatsapp")).await.is_ok());
-	assert!(lead(Some(1), None).await.is_err(), "a time without a channel");
-	assert!(lead(None, Some("telegram")).await.is_err(), "a channel without a time");
-	assert!(lead(Some(1), Some("phone")).await.is_err(), "not a messenger");
-
-	migrator.undo(&pool, REVIEW - 1).await.unwrap();
-	assert_eq!(has().await, (0, 0));
-	migrator.run(&pool).await.unwrap();
-	assert_eq!(has().await, (2, 2));
-}
-
 fn cabinet() -> url::Url {
 	"https://evinvest.test".parse().unwrap()
 }

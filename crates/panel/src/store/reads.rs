@@ -49,11 +49,6 @@ pub struct LeadRow {
 	pub message_ref: Option<String>,
 	/// When the customer first wrote on a messenger (`lead.messaged`), and on which.
 	pub messaged: Option<(Timestamp, Messenger)>,
-	/// The landing's locale (`fr` | `en`); `None` reads as French.
-	pub locale: Option<String>,
-	/// When a Google review was first asked of the customer (`review.requested`), and on which
-	/// messenger.
-	pub review_requested: Option<(Timestamp, Messenger)>,
 	/// Its booking: none, asked for, booked, …
 	pub booking: BookingState,
 	pub last_event_at: Timestamp,
@@ -103,9 +98,6 @@ struct Row {
 	message_ref: Option<String>,
 	messaged_at: Option<i64>,
 	messaged_channel: Option<String>,
-	locale: Option<String>,
-	review_requested_at: Option<i64>,
-	review_requested_channel: Option<String>,
 	last_event_at: i64,
 	sort_at: i64,
 	creation_id: Option<Uuid>,
@@ -136,18 +128,9 @@ impl TryFrom<Row> for LeadRow {
 			)),
 			_ => None,
 		};
-		let review_requested = match (r.review_requested_at, r.review_requested_channel.as_deref()) {
-			(Some(at), Some(channel)) => Some((
-				from_db(at)?,
-				Messenger::parse(channel).wrap_err_with(|| format!("stored review request channel of lead {}/{}", r.brand_id, r.lead_id))?,
-			)),
-			_ => None,
-		};
 		Ok(Self {
 			booking,
 			messaged,
-			review_requested,
-			locale: r.locale,
 			message_ref: r.message_ref,
 			flow: r.flow,
 			quoted_cents: r.quoted_cents,
@@ -187,7 +170,6 @@ macro_rules! lead_select {
 		 l.flow, l.quoted_cents, l.pricing_valid_from, l.estimate_inputs, \
 		 l.booking_status, l.booking_provider, l.booking_start_at, l.booking_end_at, l.booking_external_ref, l.booking_match, \
 		 l.booking_preferred_date, l.booking_preferred_part, l.message_ref, l.messaged_at, l.messaged_channel, \
-		 l.locale, l.review_requested_at, l.review_requested_channel, \
 		 COALESCE(l.created_at, l.last_event_at) AS sort_at, \
 		 c.id AS creation_id, c.pii_sealed, c.data_key_fp \
 		 FROM leads l \
@@ -306,20 +288,6 @@ pub async fn first_message(conn: &mut SqliteConnection, brand: &BrandId, lead: &
 	.fetch_optional(&mut *conn)
 	.await
 	.wrap_err_with(|| format!("finding the first message of lead {brand}/{lead}"))
-}
-
-/// The lead's first `review.requested` the panel journaled: what an operator asking again is
-/// answered with.
-pub async fn first_review_request(conn: &mut SqliteConnection, brand: &BrandId, lead: &LeadId) -> eyre::Result<Option<Uuid>> {
-	sqlx::query_scalar(
-		"SELECT id FROM events WHERE brand_id = $1 AND lead_id = $2 AND type = 'review.requested' AND status = 'registered' \
-		 ORDER BY received_at, id LIMIT 1",
-	)
-	.bind(brand.as_str())
-	.bind(lead.as_str())
-	.fetch_optional(&mut *conn)
-	.await
-	.wrap_err_with(|| format!("finding the first review request of lead {brand}/{lead}"))
 }
 
 /// One event of a lead, as its card shows it.
@@ -457,51 +425,6 @@ pub async fn funnel_rows(conn: &mut SqliteConnection, from: Date, to: Date, bran
 					lost: count(s.8)?,
 					manual: count(s.9)?,
 				},
-			})
-		})
-		.collect()
-}
-
-/// One week of one place: the finished jobs and how many of them were asked for a review.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReviewWeek {
-	/// The Monday (UTC) of the week the leads reached completed.
-	pub week: Date,
-	pub brand_id: String,
-	pub location_id: Option<String>,
-	/// Leads that reached completed (or, with no completed on record, paid) that week — whatever
-	/// stage they are at now: a job done is done even if the lead was lost since.
-	pub completed: u64,
-	/// Of those, the ones with a review request.
-	pub requested: u64,
-}
-
-/// The review requests against the finished jobs, per week (UTC, Monday to Sunday) of the day the
-/// lead first reached completed and per place, for the days `from` to `to` both included; for one
-/// brand or all. A week the window cuts is partial, whichever of its days are inside. Oldest week
-/// first.
-pub async fn review_weeks(conn: &mut SqliteConnection, from: Date, to: Date, brand: Option<&BrandId>) -> eyre::Result<Vec<ReviewWeek>> {
-	type Sums = (String, String, Option<String>, i64, i64);
-	let rows: Vec<Sums> = sqlx::query_as(
-		"SELECT date(done / 1000000, 'unixepoch', '-6 days', 'weekday 1'), brand_id, location_id, count(*), count(review_requested_at) \
-		 FROM (SELECT brand_id, location_id, review_requested_at, COALESCE(completed_at, paid_at) AS done FROM leads) \
-		 WHERE done IS NOT NULL AND date(done / 1000000, 'unixepoch') BETWEEN $1 AND $2 AND ($3 IS NULL OR brand_id = $3) \
-		 GROUP BY 1, 2, 3 ORDER BY 1, 2, 3 NULLS LAST",
-	)
-	.bind(day_to_db(from))
-	.bind(day_to_db(to))
-	.bind(brand.map(BrandId::as_str))
-	.fetch_all(&mut *conn)
-	.await
-	.wrap_err("counting the review requests per week")?;
-	rows.into_iter()
-		.map(|(week, brand_id, location_id, completed, requested)| {
-			Ok(ReviewWeek {
-				week: super::day_from_db(&week)?,
-				brand_id,
-				location_id,
-				completed: count(completed)?,
-				requested: count(requested)?,
 			})
 		})
 		.collect()

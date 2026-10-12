@@ -167,8 +167,7 @@ impl Envelope {
 /// type the panel does not know is open to every kind (§3.2): it is stored, not projected,
 /// and judged again once it is registered. A messenger bot starts a lead from a conversation
 /// (its channel a messenger's: the registry checks that) and says when a customer wrote; an
-/// operator may say the latter too, a landing never — it only knows a link was opened. That a
-/// review was asked of a customer is the operator's to say, and the panel's alone.
+/// operator may say the latter too, a landing never — it only knows a link was opened.
 pub fn may_write(kind: SourceKind, type_name: &str) -> bool {
 	use SourceKind::{Booking, Bot, Panel, Posthog, Site, Telephony};
 	match type_name {
@@ -181,7 +180,7 @@ pub fn may_write(kind: SourceKind, type_name: &str) -> bool {
 		"experiments.declared" => matches!(kind, Site),
 		"experiment.configured" => matches!(kind, Panel),
 		"lead.contacted" | "call.attempted" | "call.logged" => matches!(kind, Panel | Telephony),
-		"lead.quoted" | "job.won" | "lead.lost" | "job.completed" | "payment.received" | "review.requested" => matches!(kind, Panel),
+		"lead.quoted" | "job.won" | "lead.lost" | "job.completed" | "payment.received" => matches!(kind, Panel),
 		_ => true,
 	}
 }
@@ -258,7 +257,7 @@ mod tests {
 	#[test]
 	fn who_writes_what() {
 		use SourceKind::*;
-		let table: [(&str, &[SourceKind]); 23] = [
+		let table: [(&str, &[SourceKind]); 22] = [
 			("lead.created", &[Site, Panel, Bot]),
 			("lead.messaged", &[Bot, Panel]),
 			("lead.contacted", &[Panel, Telephony]),
@@ -267,7 +266,6 @@ mod tests {
 			("lead.lost", &[Panel]),
 			("job.completed", &[Panel]),
 			("payment.received", &[Panel]),
-			("review.requested", &[Panel]),
 			("call.attempted", &[Panel, Telephony]),
 			("call.logged", &[Panel, Telephony]),
 			("site.metrics", &[Posthog]),
