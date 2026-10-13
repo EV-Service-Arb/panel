@@ -69,10 +69,6 @@ interface StubLead {
   /** The messenger ref the landing made (`AQ-7K3F`), and the customer's first message. */
   message_ref: string | null;
   messaged: { at: string; channel: string } | null;
-  /** The landing's language; null on leads from before it. */
-  locale: string | null;
-  /** The Google review asked of the customer, once. */
-  review: { at: string; channel: string } | null;
 }
 
 function makeLead(i: number, stage: string, minutes: number, pii: Json, location: string | null = "lyon-3", brand = "aquafix"): StubLead {
@@ -80,7 +76,7 @@ function makeLead(i: number, stage: string, minutes: number, pii: Json, location
   const order = ["created", "contacted", "quoted", "won", "completed", "paid"];
   const times: Record<string, string> = { created_at: created };
   for (const s of order.slice(1, order.indexOf(stage) + 1)) times[`${s}_at`] = minsAgo(minutes - 10);
-  return { brand, lead_id: `stub-${i}`, location, stage, manual: false, times, lost_reason: null, suspect: null, pii, events: [event("lead.created", { channel: "form" }, "site", created)], payments: [], deal: null, channel: "form", message_ref: null, messaged: null, locale: null, review: null };
+  return { brand, lead_id: `stub-${i}`, location, stage, manual: false, times, lost_reason: null, suspect: null, pii, events: [event("lead.created", { channel: "form" }, "site", created)], payments: [], deal: null, channel: "form", message_ref: null, messaged: null };
 }
 
 function event(type: string, properties: Json, kind = "panel", at = iso(now())): Json {
@@ -105,15 +101,6 @@ leads.push({ ...makeLead(11, "contacted", 60 * 5, { need: "asdf (stub)", localit
 leads.push({ ...makeLead(12, "created", 9, { need: "Leak behind the washing machine (stub)", locality: "69003" }), channel: "whatsapp", message_ref: "AQ-7K3F" });
 leads.push({ ...makeLead(13, "contacted", 60 * 3, { need: "Office cleaning, weekly (stub)" }, "paris-11", "vifnet"), channel: "telegram", message_ref: "VF-Q9MZ", messaged: { at: minsAgo(60 * 3 - 2), channel: "telegram" } });
 leads[12]!.events.push(event("lead.messaged", { channel: "telegram", message_ref: "VF-Q9MZ" }, "bot", minsAgo(60 * 3 - 2)));
-// Finished jobs for asking a review: an English customer with a number, and one lost after the job was done, reachable on Telegram.
-leads.push({ ...makeLead(14, "completed", 60 * 70, { name: "Olivia Stub", phone: "+33 6 00 00 00 14", need: "Boiler service" }), locale: "en" });
-const lostAfterJob = { ...makeLead(15, "completed", 60 * 90, { name: "Théo Stub", need: "Gutter repair" }), channel: "telegram", locale: "fr" };
-lostAfterJob.stage = "lost";
-lostAfterJob.times.lost_at = minsAgo(60 * 60);
-lostAfterJob.lost_reason = "other";
-lostAfterJob.messaged = { at: minsAgo(60 * 89), channel: "telegram" };
-lostAfterJob.events.push({ ...event("lead.messaged", { channel: "telegram" }, "bot", minsAgo(60 * 89)), pii: { handle: "@theo_stub" } });
-leads.push(lostAfterJob);
 seedDeals(leads);
 leads[5]!.payments.push({ billed: 23_100, commission: 2_310, currency: "EUR" });
 leads[7]!.payments.push({ billed: 208_000, commission: 20_800, currency: "EUR" }, { billed: 9_050, commission: 0, currency: "GBP" });
@@ -127,7 +114,6 @@ function leadDto(l: StubLead): Json {
   const secs = Math.floor((now().getTime() - Date.parse(since)) / 1000);
   return {
     brand: l.brand, lead_id: l.lead_id, location: l.location, job_id: null, stage: l.stage, channel: l.channel, manual: l.manual,
-    locale: l.locale, review_requested_at: l.review?.at ?? null, review_requested_channel: l.review?.channel ?? null,
     message_ref: l.message_ref, messaged_at: l.messaged?.at ?? null, messaged_channel: l.messaged?.channel ?? null,
     created_at: t("created_at"), contacted_at: t("contacted_at"), quoted_at: t("quoted_at"), won_at: t("won_at"),
     completed_at: t("completed_at"), paid_at: t("paid_at"), lost_at: t("lost_at"), lost_reason: l.lost_reason, suspect: l.suspect,
@@ -174,28 +160,6 @@ function funnel(brand: string | null, by: string | null): Json {
     return { brand: b, location: loc || null, ...slice(ls.filter((l) => l.brand === b && (l.location ?? "") === loc)) };
   });
   return { ...head, by: "location", locations };
-}
-
-/** `GET /review-requests`: per place and UTC week (Monday) of completion, the finished jobs and how many were asked for a review. */
-function reviewRequests(from: string, to: string, brand: string | null): Json {
-  const mondayOf = (at: string) => {
-    const d = new Date(at);
-    return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - ((d.getUTCDay() + 6) % 7)))).slice(0, 10);
-  };
-  const cells = new Map<string, { week: string; brand: string; location: string | null; n: number; of: number }>();
-  for (const l of leads) {
-    const done = l.times.completed_at ?? l.times.paid_at;
-    if (!done || (brand && l.brand !== brand) || !inDays(done, from, to)) continue;
-    const week = mondayOf(done);
-    const key = `${week}/${l.brand}/${l.location ?? ""}`;
-    const cell = cells.get(key) ?? { week, brand: l.brand, location: l.location, n: 0, of: 0 };
-    cell.of += 1;
-    if (l.review) cell.n += 1;
-    cells.set(key, cell);
-  }
-  const rows = [...cells.values()];
-  const sum = (k: "n" | "of") => rows.reduce((acc, r) => acc + r[k], 0);
-  return { from, to, brand, min_sample: MIN_SAMPLE, total: share(sum("n"), sum("of")), weeks: rows.map((r) => ({ week: r.week, brand: r.brand, location: r.location, share: share(r.n, r.of) })) };
 }
 
 /** Every location a lead names, with the time of its latest lead, and those added by hand; each with its site-data flags. */
@@ -267,11 +231,6 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL): Promise
     const made = { need, requested_at: new Date().toISOString() };
     accessRequests.push(made);
     return send(res, 201, made);
-  }
-  if (path === "/review-requests") {
-    const to = url.searchParams.get("to") ?? iso(now()).slice(0, 10);
-    const from = url.searchParams.get("from") ?? iso(new Date(now().getTime() - 29 * 86_400_000)).slice(0, 10);
-    return send(res, 200, reviewRequests(from, to, url.searchParams.get("brand")));
   }
   if (path === "/funnel") return send(res, 200, funnel(url.searchParams.get("brand"), url.searchParams.get("by")));
   if (path.startsWith("/experiments")) {
@@ -387,19 +346,6 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL): Promise
       lead.events.push(e);
     }
     return send(res, 201, { event_id: randomUUID() });
-  }
-  if (rest === "/review-request") {
-    const b = await readJson(req);
-    const channel = String(b.channel);
-    if (channel !== "whatsapp" && channel !== "telegram") return send(res, 400, { error: "channel is one of whatsapp, telegram" });
-    if (!lead.times.completed_at && !lead.times.paid_at) return send(res, 409, { error: "a review can be asked only once the job was completed or paid" });
-    // Once per lead: a repeat is the first one's event and journals nothing.
-    const first = lead.events.find((e) => e.type === "review.requested");
-    if (lead.review && first) return send(res, 200, { event_id: first.id, already_requested: true });
-    const e = event("review.requested", { channel });
-    lead.review = { at: String(e.occurred_at), channel };
-    lead.events.push(e);
-    return send(res, 201, { event_id: e.id, already_requested: false });
   }
   if (rest === "/calls/attempt") {
     const e = event("call.attempted", {});

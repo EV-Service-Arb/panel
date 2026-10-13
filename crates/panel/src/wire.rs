@@ -11,7 +11,7 @@ use panel_core::{
 	booking::{self, BookingMatch, Closed},
 	event::{Envelope, Source, SourceKind, Subject, TypeKey, may_write},
 	experiment::{Declaration, Patch, check_declared, label},
-	fact::{AnalyticsId, CallOutcome, ContactChannel, Fact, LeadChannel, LeadLocale, LeadOffer, LeadSuspect, MessageRef, Messenger, bounded, day, instant},
+	fact::{AnalyticsId, CallOutcome, ContactChannel, Fact, LeadChannel, LeadOffer, LeadSuspect, MessageRef, Messenger, bounded, day, instant},
 	ids::{BrandId, JobId, LeadId, LocationId, parse_event_id},
 };
 use serde::de::DeserializeOwned;
@@ -231,7 +231,6 @@ pub enum Checked {
 pub const REGISTERED: &[(&str, u32, &str)] = &[
 	("lead.created", 1, "sa.v1.LeadCreatedV1"),
 	("lead.messaged", 1, "sa.v1.LeadMessagedV1"),
-	("review.requested", 1, "sa.v1.ReviewRequestedV1"),
 	("lead.contacted", 1, "sa.v1.LeadContactedV1"),
 	("lead.quoted", 1, "sa.v1.LeadQuotedV1"),
 	("job.won", 1, "sa.v1.JobWonV1"),
@@ -280,18 +279,12 @@ pub fn check(key: &TypeKey, kind: SourceKind, properties: &Value, subject: &Subj
 				offer: LeadOffer::parse(p.flow.as_deref(), p.quoted_cents, p.pricing_valid_from.as_deref(), p.estimate_inputs)?,
 				analytics_id: p.analytics_id.as_deref().map(AnalyticsId::parse).transpose()?,
 				message_ref: p.message_ref.as_deref().map(MessageRef::parse).transpose()?,
-				locale: p.locale.as_deref().map(LeadLocale::parse).transpose()?,
 			})
 		}),
 		("lead.messaged", 1) => props::<v1::LeadMessagedV1>(key, properties).and_then(|p| {
 			Ok(Fact::LeadMessaged {
 				channel: Messenger::parse(&p.channel)?,
 				message_ref: p.message_ref.as_deref().map(MessageRef::parse).transpose()?,
-			})
-		}),
-		("review.requested", 1) => props::<v1::ReviewRequestedV1>(key, properties).and_then(|p| {
-			Ok(Fact::ReviewRequested {
-				channel: Messenger::parse(&p.channel)?,
 			})
 		}),
 		("lead.contacted", 1) => props::<v1::LeadContactedV1>(key, properties).and_then(|p| {
@@ -442,34 +435,8 @@ mod tests {
 				offer: LeadOffer::default(),
 				analytics_id: None,
 				message_ref: None,
-				locale: None,
 			})
 		);
-	}
-
-	#[test]
-	fn a_locale_is_fr_or_en_or_absent() {
-		let judge = |locale: Option<Value>| {
-			let mut e = event();
-			if let Some(l) = locale {
-				e["properties"]["locale"] = l;
-			}
-			let got = decode(e, now()).unwrap();
-			check(&got.envelope.type_key, got.envelope.source.kind, &got.properties, &got.envelope.subject)
-		};
-		for (word, want) in [("fr", Some(LeadLocale::Fr)), ("en", Some(LeadLocale::En))] {
-			let Checked::Registered(Fact::LeadCreated { locale, .. }) = judge(Some(json!(word))) else {
-				panic!("{word} refused")
-			};
-			assert_eq!(locale, want);
-		}
-		let Checked::Registered(Fact::LeadCreated { locale, .. }) = judge(None) else {
-			panic!("no locale refused")
-		};
-		assert_eq!(locale, None);
-		for bad in [json!("de"), json!("EN"), json!("")] {
-			assert_eq!(judge(Some(bad.clone())), Checked::Invalid(Invalid::new("properties.locale is not one of fr, en")), "{bad}");
-		}
 	}
 
 	#[test]
@@ -490,7 +457,6 @@ mod tests {
 					offer: LeadOffer::default(),
 					analytics_id: None,
 					message_ref: None,
-					locale: None,
 				})
 			);
 		}
@@ -599,47 +565,6 @@ mod tests {
 			Checked::Invalid(Invalid::new("a site source may not write lead.messaged")),
 			"a landing knows a link was opened, not that a message was sent"
 		);
-	}
-
-	#[test]
-	fn a_review_request_is_the_panels_and_says_a_messenger() {
-		let judge = |kind: SourceKind, props: Value, lead: Option<&str>| {
-			let mut e = event();
-			e["type"] = json!("review.requested");
-			e["properties"] = props;
-			match lead {
-				Some(l) => e["subject"]["leadId"] = json!(l),
-				None => _ = e["subject"].as_object_mut().unwrap().remove("leadId"),
-			}
-			let got = decode(e, now()).unwrap();
-			check(&got.envelope.type_key, kind, &got.properties, &got.envelope.subject)
-		};
-		assert!(REGISTERED.iter().any(|(name, version, _)| (*name, *version) == ("review.requested", 1)));
-		for channel in [Messenger::Whatsapp, Messenger::Telegram] {
-			assert_eq!(
-				judge(SourceKind::Panel, json!({"channel": channel.as_str()}), Some("L-1")),
-				Checked::Registered(Fact::ReviewRequested { channel })
-			);
-		}
-		for bad in [json!({"channel": "phone"}), json!({"channel": "sms"}), json!({"channel": "WhatsApp"})] {
-			assert_eq!(
-				judge(SourceKind::Panel, bad.clone(), Some("L-1")),
-				Checked::Invalid(Invalid::new("properties.channel is not one of whatsapp, telegram")),
-				"{bad}"
-			);
-		}
-		assert!(matches!(judge(SourceKind::Panel, json!({}), Some("L-1")), Checked::Invalid(_)), "the channel is required");
-		assert_eq!(
-			judge(SourceKind::Panel, json!({"channel": "whatsapp"}), None),
-			Checked::Invalid(Invalid::new("subject.lead_id is required for this type"))
-		);
-		for kind in SourceKind::ALL.into_iter().filter(|k| *k != SourceKind::Panel) {
-			assert_eq!(
-				judge(kind, json!({"channel": "whatsapp"}), Some("L-1")),
-				Checked::Invalid(Invalid::new(format!("a {kind} source may not write review.requested"))),
-				"only the panel says a review was asked"
-			);
-		}
 	}
 
 	#[test]

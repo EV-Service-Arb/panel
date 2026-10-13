@@ -5,7 +5,7 @@ import { diffLineText, diffSettings } from "@/entities/place/lib/diff";
 import { formatDays, formatHours, isOpenAt, localTimeOf } from "@/entities/place/lib/hours";
 import { placesParser } from "@/entities/place/model/place";
 import { type HoursRow, type PlaceSettings, historyParser, placeSettingsParser, settingsParser, settingsToWire } from "@/entities/place/model/settings";
-import { addArea, draftChanged, draftOf, editedOf, looksLikeBrandName, looksLikeE164, looksLikeReviewUrl, settingsOf } from "@/features/edit-place-settings/model/draft";
+import { addArea, draftChanged, draftOf, editedOf, looksLikeE164, settingsOf } from "@/features/edit-place-settings/model/draft";
 import { fieldErrorsOf } from "@/features/edit-place-settings/model/field-errors";
 import { addHoursRow, hoursDraftOf, hoursOf, normaliseTime, removeHoursRow, rowNotes, rowProblems, updateHoursRow } from "@/features/edit-place-settings/model/hours-draft";
 import { createHttp } from "@/shared/api/http";
@@ -229,53 +229,5 @@ describe("the channel preview", () => {
     // 2026-10-05 is a Monday; 06:30 UTC is 08:30 in Paris (summer time).
     expect(localTimeOf(new Date("2026-10-05T06:30:00Z"), "Europe/Paris")).toEqual({ day: "Monday", minutes: 8 * 60 + 30 });
     expect(localTimeOf(new Date("2026-10-04T23:30:00Z"), "Europe/Paris")).toEqual({ day: "Monday", minutes: 90 });
-  });
-});
-
-describe("the review link", () => {
-  const short = "https://g.page/r/CabcDEF123/review";
-
-  it("is an edited field: read, trimmed on save, and shown in the history", () => {
-    const base = settings({ reviewUrl: short, address });
-    expect(base.edited.reviewUrl).toBe(short);
-    const draft = draftOf(base.edited);
-    expect(draftChanged(draft, base)).toBe(false);
-    draft.reviewUrl = ` ${short}x `;
-    expect(settingsToWire(settingsOf(draft, base))).toEqual({ address, reviewUrl: `${short}x` });
-    expect(editedOf({ ...draft, reviewUrl: "  " })).toEqual({});
-    const lines = diffSettings(settings({}), base, en);
-    expect(diffLineText(lines[0]!, en)).toBe(`Google review link: set to ${short}`);
-  });
-
-  it("warns while typing about what the server would refuse", () => {
-    for (const ok of ["", short, "https://search.google.com/local/writereview?placeid=ChIJ", "https://G.PAGE/x"]) expect(looksLikeReviewUrl(ok), ok).toBe(true);
-    for (const bad of ["http://g.page/x", "javascript:alert(1)", "https://evil.example/x", "https://g.page", "https://g.page@evil.example/x", "https://g.page:81/x", "https://g.page/#x", "https://search.google.com/#anything", "https://g.page/r/x\u200b", "https://g.page/r/\u202ex"]) expect(looksLikeReviewUrl(bad), bad).toBe(false);
-  });
-
-  it("puts the server's reason beside its field", () => {
-    expect(fieldErrorsOf({ reviewUrl: "must not have a port" }).byField.reviewUrl).toEqual(["must not have a port"]);
-  });
-});
-
-describe("the brand name", () => {
-  it("is an edited field: read, trimmed on save, and shown in the history", () => {
-    const base = settings({ brandName: "Dépannage Aqua", address });
-    expect(base.edited.brandName).toBe("Dépannage Aqua");
-    const draft = draftOf(base.edited);
-    expect(draftChanged(draft, base)).toBe(false);
-    draft.brandName = "  Ёлки ";
-    expect(settingsToWire(settingsOf(draft, base))).toEqual({ address, brandName: "Ёлки" });
-    expect(editedOf({ ...draft, brandName: "  " })).toEqual({});
-    const lines = diffSettings(settings({}), base, en);
-    expect(diffLineText(lines[0]!, en)).toBe("Brand name: set to Dépannage Aqua");
-  });
-
-  it("warns while typing about what the server would refuse", () => {
-    for (const ok of ["", "AquaFix", "Société Dépannage & Fils", "é".repeat(60)]) expect(looksLikeBrandName(ok), ok).toBe(true);
-    for (const bad of ["é".repeat(61), "<b>x</b>", "https://aquafix.fr", "WWW.aquafix.fr", "a@b.fr", "a\nb"]) expect(looksLikeBrandName(bad), bad).toBe(false);
-  });
-
-  it("puts the server's reason beside its field", () => {
-    expect(fieldErrorsOf({ brandName: "must not contain < or >" }).byField.brandName).toEqual(["must not contain < or >"]);
   });
 });

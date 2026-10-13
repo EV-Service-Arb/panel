@@ -128,7 +128,6 @@ pub async fn insert_row(conn: &mut SqliteConnection, e: &Recorded) -> eyre::Resu
 		| Fact::BookingAttached { .. } => bookings::insert_event_row(conn, e).await?,
 		Fact::LeadCreated { .. }
 		| Fact::LeadMessaged { .. }
-		| Fact::ReviewRequested { .. }
 		| Fact::LeadContacted { .. }
 		| Fact::LeadQuoted { .. }
 		| Fact::JobWon
@@ -218,10 +217,9 @@ async fn upsert_lead(conn: &mut SqliteConnection, s: &LeadState, b: &BookingStat
 		"INSERT INTO leads (brand_id, lead_id, location_id, job_id, stage, channel, manual, \
 		 created_at, contacted_at, quoted_at, won_at, completed_at, paid_at, lost_at, lost_reason, last_event_id, last_event_at, suspect, \
 		 flow, quoted_cents, pricing_valid_from, estimate_inputs, booking_status, booking_provider, booking_start_at, booking_end_at, \
-		 booking_external_ref, booking_match, booking_preferred_date, booking_preferred_part, message_ref, messaged_at, messaged_channel, locale, \
-		 review_requested_at, review_requested_channel) \
+		 booking_external_ref, booking_match, booking_preferred_date, booking_preferred_part, message_ref, messaged_at, messaged_channel) \
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, \
-		 $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36) \
+		 $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33) \
 		 ON CONFLICT (brand_id, lead_id) DO UPDATE SET \
 		 location_id = EXCLUDED.location_id, job_id = EXCLUDED.job_id, stage = EXCLUDED.stage, channel = EXCLUDED.channel, manual = EXCLUDED.manual, \
 		 created_at = EXCLUDED.created_at, contacted_at = EXCLUDED.contacted_at, quoted_at = EXCLUDED.quoted_at, won_at = EXCLUDED.won_at, \
@@ -232,8 +230,7 @@ async fn upsert_lead(conn: &mut SqliteConnection, s: &LeadState, b: &BookingStat
 		 booking_start_at = EXCLUDED.booking_start_at, booking_end_at = EXCLUDED.booking_end_at, booking_external_ref = EXCLUDED.booking_external_ref, \
 		 booking_match = EXCLUDED.booking_match, booking_preferred_date = EXCLUDED.booking_preferred_date, \
 		 booking_preferred_part = EXCLUDED.booking_preferred_part, message_ref = EXCLUDED.message_ref, \
-		 messaged_at = EXCLUDED.messaged_at, messaged_channel = EXCLUDED.messaged_channel, locale = EXCLUDED.locale, \
-		 review_requested_at = EXCLUDED.review_requested_at, review_requested_channel = EXCLUDED.review_requested_channel",
+		 messaged_at = EXCLUDED.messaged_at, messaged_channel = EXCLUDED.messaged_channel",
 	)
 	.bind(s.brand_id.as_str())
 	.bind(s.lead_id.as_str())
@@ -268,9 +265,6 @@ async fn upsert_lead(conn: &mut SqliteConnection, s: &LeadState, b: &BookingStat
 	.bind(s.message_ref.as_ref().map(|r| r.as_str()))
 	.bind(t(s.messaged.map(|(at, _)| at)))
 	.bind(s.messaged.map(|(_, m)| m.as_str()))
-	.bind(s.locale.map(|l| l.as_str()))
-	.bind(t(s.review_requested.map(|(at, _)| at)))
-	.bind(s.review_requested.map(|(_, m)| m.as_str()))
 	.execute(&mut *conn)
 	.await
 	.wrap_err_with(|| format!("writing lead {}/{}", s.brand_id, s.lead_id))?;

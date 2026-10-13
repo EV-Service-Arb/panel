@@ -1,10 +1,10 @@
 import { type Infer, arrayOf, bool, cents, dictOf, isoDay, nullable, num, object, oneOf, oneOfOr, record, recordOf, str } from "@/shared/lib/parse";
 
 import { leadBookingParser } from "./booking";
-import { CHANNELS, CONTACT_SLA_SECONDS, FLOWS, LEAD_LOCALES, MESSENGERS, type Channel, type Messenger, STAGES, SUSPECTS, type Stage } from "./generated";
+import { CHANNELS, CONTACT_SLA_SECONDS, FLOWS, MESSENGERS, type Channel, type Messenger, STAGES, SUSPECTS, type Stage } from "./generated";
 
-export { CHANNELS, CONTACT_SLA_SECONDS, LEAD_LOCALES, MANUAL_CHANNELS, MESSENGERS, STAGES, SUSPECTS } from "./generated";
-export type { Channel, LeadLocale, ManualChannel, Messenger, Stage, Suspect } from "./generated";
+export { CHANNELS, CONTACT_SLA_SECONDS, MANUAL_CHANNELS, MESSENGERS, STAGES, SUSPECTS } from "./generated";
+export type { Channel, ManualChannel, Messenger, Stage, Suspect } from "./generated";
 
 /** A lead's channel as read: one the panel knows, or `other` for one a newer backend added. */
 export type LeadChannel = Channel | "other";
@@ -24,11 +24,6 @@ export const leadParser = object({
   /** When the customer first wrote on a messenger, and on which (null too for a messenger newer than this build). */
   messaged_at: nullable(str),
   messaged_channel: nullable(oneOfOr(MESSENGERS, null)),
-  /** The landing's language, which any text to the customer is in; null (and any newer one) reads as French. */
-  locale: nullable(oneOfOr(LEAD_LOCALES, null)),
-  /** When a Google review was first asked of the customer, and on which messenger: asked once, so neither changes. */
-  review_requested_at: nullable(str),
-  review_requested_channel: nullable(oneOfOr(MESSENGERS, null)),
   manual: bool,
   created_at: nullable(str),
   contacted_at: nullable(str),

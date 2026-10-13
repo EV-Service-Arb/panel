@@ -345,49 +345,6 @@ impl Panel {
 		Ok(self.act(by, id, "lead.messaged", subject_of(&current), properties, None, now).await?.map(|(_, e)| e))
 	}
 
-	/// A Google review was asked of the customer (`review.requested`), as the operator sent it
-	/// from their own messenger: the message is built by the browser (it carries the customer's
-	/// name), the panel only records that it went. Only a lead that reached completed or paid, whatever its stage now.
-	///
-	/// Once per lead, for good: no idempotency key, and no one undoes it. The event's id is made
-	/// of the lead alone, so two requests at once — even by two users — meet at the journal's
-	/// primary key: one is journaled, the other is answered with it (`replayed`). The check
-	/// before is only to answer without trying.
-	pub async fn request_review_once(&self, by: Actor, brand: &BrandId, lead: &LeadId, channel: Messenger, now: Timestamp) -> Result<Done<EventId>, ActionError> {
-		let current = self.lead_row(brand, lead).await?.ok_or(ActionError::NotFound)?;
-		if let Some(done) = self.review_asked(brand, lead).await? {
-			return Ok(done);
-		}
-		// By the job done, not the stage now: a lead lost after its work (refunded, say) is asked all
-		// the same, or the asking would pick the customers who were pleased.
-		if current.completed_at.is_none() && current.paid_at.is_none() {
-			return Err(ActionError::Conflict("a review can be asked only once the job was completed or paid"));
-		}
-		let id = crate::derived_id(b"sa-panel/review-request/v1/", &[brand.as_str().as_bytes(), lead.as_str().as_bytes()]);
-		let properties = json!({"channel": channel.as_str()});
-		match self.write_action(by, Some(id), "review.requested", subject_of(&current), properties, None, now).await? {
-			(crate::Outcome::Accepted { .. }, env) => {
-				tracing::info!(user_id = %by.0, brand = %brand, "review request recorded");
-				Ok(Done { value: env.id, replayed: false })
-			}
-			// The other request got there first, with its own `occurredAt`: what it journaled is
-			// the answer.
-			(crate::Outcome::Duplicate | crate::Outcome::Rejected(_) | crate::Outcome::Deferred(_), _) => self
-				.review_asked(brand, lead)
-				.await?
-				.ok_or_else(|| ActionError::Internal(eyre::eyre!("the id of the review request of {brand}/{lead} is taken by another event"))),
-		}
-	}
-
-	/// The lead's review request, answered as a repeat, if it has one.
-	async fn review_asked(&self, brand: &BrandId, lead: &LeadId) -> Result<Option<Done<EventId>>, ActionError> {
-		let mut conn = self.store.pool().acquire().await.wrap_err("a connection")?;
-		Ok(reads::first_review_request(&mut conn, brand, lead).await?.map(|first| Done {
-			value: EventId::from_raw(first),
-			replayed: true,
-		}))
-	}
-
 	/// An outgoing call started from the panel (`call.attempted`); its event id is the attempt
 	/// id the outcome names.
 	pub async fn attempt_call(&self, by: Actor, brand: &BrandId, lead: &LeadId, now: Timestamp) -> Result<EventId, ActionError> {
@@ -471,7 +428,20 @@ impl Panel {
 		pii: Option<Value>,
 		now: Timestamp,
 	) -> Result<Done<(LeadId, EventId)>, ActionError> {
-		let (outcome, env) = self.write_action(by, id, r#type, subject, properties, pii, now).await?;
+		let mut raw = json!({
+			"id": id.unwrap_or_else(|| new_uuid(now)).to_string(),
+			"schema": SCHEMA,
+			"type": r#type,
+			"typeVersion": 1,
+			"occurredAt": now.to_string(),
+			"source": {"kind": "panel", "id": by.0.to_string()},
+			"subject": subject,
+			"properties": properties,
+		});
+		if let Some(pii) = pii {
+			raw["pii"] = pii;
+		}
+		let (outcome, env) = self.write_own(raw, now).await?.map_err(ActionError::Invalid)?;
 		match outcome {
 			crate::Outcome::Accepted { .. } => {
 				tracing::info!(user_id = %by.0, r#type, brand = %env.subject.brand_id, "operator action recorded");
@@ -491,35 +461,6 @@ impl Panel {
 				},
 			},
 		}
-	}
-
-	/// Builds the operator's event and journals it as ingest would, answering what the journal
-	/// made of it and the envelope sent.
-	#[expect(clippy::too_many_arguments, reason = "an event's fields, each named at the call site")]
-	async fn write_action(
-		&self,
-		by: Actor,
-		id: Option<Uuid>,
-		r#type: &str,
-		subject: Value,
-		properties: Value,
-		pii: Option<Value>,
-		now: Timestamp,
-	) -> Result<(crate::Outcome, panel_core::event::Envelope), ActionError> {
-		let mut raw = json!({
-			"id": id.unwrap_or_else(|| new_uuid(now)).to_string(),
-			"schema": SCHEMA,
-			"type": r#type,
-			"typeVersion": 1,
-			"occurredAt": now.to_string(),
-			"source": {"kind": "panel", "id": by.0.to_string()},
-			"subject": subject,
-			"properties": properties,
-		});
-		if let Some(pii) = pii {
-			raw["pii"] = pii;
-		}
-		self.write_own(raw, now).await?.map_err(ActionError::Invalid)
 	}
 
 	pub(crate) async fn lead_row(&self, brand: &BrandId, lead: &LeadId) -> eyre::Result<Option<LeadRow>> {
@@ -619,13 +560,6 @@ impl Panel {
 			slice.payments.push(p);
 		}
 		Ok(slices)
-	}
-
-	/// The review requests against the finished jobs per week and place: see
-	/// [`reads::review_weeks`].
-	pub async fn review_weeks(&self, from: Date, to: Date, brand: Option<&BrandId>) -> eyre::Result<Vec<reads::ReviewWeek>> {
-		let mut conn = self.store.pool().acquire().await.wrap_err("a connection")?;
-		reads::review_weeks(&mut conn, from, to, brand).await
 	}
 
 	/// Every place the panel knows, by brand: see [`reads::places`].

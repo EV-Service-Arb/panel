@@ -30,10 +30,6 @@ function editedText(key: EditedKey, fields: EditedFields, t: T): string | null {
       return fields.serviceArea ? fields.serviceArea.join(", ") : null;
     case "booking":
       return fields.booking ? bookingText(fields.booking, t) : null;
-    case "reviewUrl":
-      return fields.reviewUrl ?? null;
-    case "brandName":
-      return fields.brandName ?? null;
   }
 }
 

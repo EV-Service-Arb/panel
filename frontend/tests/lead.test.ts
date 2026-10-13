@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import { dialable, slaAt } from "@/entities/lead/model/lead";
-import { parse } from "@/shared/lib/parse";
 
 describe("the number a call dials", () => {
   it("keeps only + and digits", () => {
@@ -54,21 +53,5 @@ describe("the suspect mark", () => {
     expect(parse(leadParser, row).suspect).toBeNull();
     expect(parse(leadParser, { ...row, suspect: "too_fast" }).suspect).toBe("too_fast");
     expect(() => parse(leadParser, { ...row, suspect: "maybe" })).toThrow(/suspect/);
-  });
-});
-
-describe("the review request on a lead", () => {
-  const row = { brand: "aquafix", lead_id: "l1", stage: "paid", manual: false, last_event_at: "2026-10-11T10:00:00Z" };
-
-  it("reads a lead from before it, the fields absent, as not asked and in no language", async () => {
-    const { leadParser } = await import("@/entities/lead/model/lead");
-    expect(parse(leadParser, row)).toMatchObject({ locale: null, review_requested_at: null, review_requested_channel: null });
-  });
-
-  it("reads the language and the ask, and a language or messenger newer than this build as none", async () => {
-    const { leadParser } = await import("@/entities/lead/model/lead");
-    const asked = { ...row, locale: "en", review_requested_at: "2026-10-11T09:00:00Z", review_requested_channel: "telegram" };
-    expect(parse(leadParser, asked)).toMatchObject({ locale: "en", review_requested_at: "2026-10-11T09:00:00Z", review_requested_channel: "telegram" });
-    expect(parse(leadParser, { ...asked, locale: "de", review_requested_channel: "sms" })).toMatchObject({ locale: null, review_requested_channel: null });
   });
 });

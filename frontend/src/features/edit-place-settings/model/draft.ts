@@ -14,8 +14,6 @@ export interface SettingsDraft {
   hours: HoursDraftRow[];
   serviceArea: string[];
   booking: BookingDraft;
-  reviewUrl: string;
-  brandName: string;
 }
 
 export function draftOf(edited: EditedFields): SettingsDraft {
@@ -27,8 +25,6 @@ export function draftOf(edited: EditedFields): SettingsDraft {
     hours: hoursDraftOf(edited.hours),
     serviceArea: [...(edited.serviceArea ?? [])],
     booking: bookingDraftOf(edited.booking),
-    reviewUrl: edited.reviewUrl ?? "",
-    brandName: edited.brandName ?? "",
   };
 }
 
@@ -60,28 +56,6 @@ const BOT = /^[A-Za-z][A-Za-z0-9_]{1,28}[Bb][Oo][Tt]$/;
 export function looksLikeBot(raw: string): boolean {
   const s = normaliseBot(raw);
   return s === "" || BOT.test(s);
-}
-
-/** The hosts `panel_core::place` takes a review link on. */
-const REVIEW_HOSTS = ["g.page", "search.google.com"];
-
-/** Like `looksLikeBot`: a hint while typing, the server's 422 says why. Empty is fine — the site keeps its own link. */
-export function looksLikeReviewUrl(raw: string): boolean {
-  const s = raw.trim();
-  if (s === "") return true;
-  // Plain ASCII only, and a fragment is not a page: `https://g.page/#x` names nothing.
-  if ([...s].some((c) => c.charCodeAt(0) > 127)) return false;
-  const m = /^https:\/\/([^/?#]*)([^#]*)/i.exec(s);
-  return m !== null && REVIEW_HOSTS.includes((m[1] ?? "").toLowerCase()) && /[^/?]/.test(m[2] ?? "");
-}
-
-export const BRAND_NAME_MAX = 60;
-
-/** Like `looksLikeReviewUrl`: a hint while typing, the server's 422 says why. Empty is fine — the site keeps its own name. */
-export function looksLikeBrandName(raw: string): boolean {
-  const s = raw.trim();
-  if (s === "") return true;
-  return [...s].length <= BRAND_NAME_MAX && !/[\u0000-\u001f\u007f-\u009f<>@]/.test(s) && !s.includes("://") && !/www\./i.test(s);
 }
 
 /** Only the switches turned off are stored: absent is on, so an all-on place keeps no `messengers` at all. */
@@ -117,10 +91,6 @@ export function editedOf(draft: SettingsDraft): EditedFields {
   if (draft.serviceArea.length > 0) out.serviceArea = [...draft.serviceArea];
   const booking = bookingOf(draft.booking);
   if (booking) out.booking = booking;
-  const reviewUrl = draft.reviewUrl.trim();
-  if (reviewUrl) out.reviewUrl = reviewUrl;
-  const brandName = draft.brandName.trim();
-  if (brandName) out.brandName = brandName;
   return out;
 }
 

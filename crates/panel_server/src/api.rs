@@ -92,12 +92,10 @@ pub(crate) fn routes() -> Vec<ApiRoute> {
 		ApiRoute::new(M::GET, "/leads/{brand}/{lead}", work, Cached, lead),
 		ApiRoute::new(M::POST, "/leads/{brand}/{lead}/stage", work, Cached, stage),
 		ApiRoute::new(M::POST, "/leads/{brand}/{lead}/messaged", work, Cached, messaged),
-		ApiRoute::new(M::POST, "/leads/{brand}/{lead}/review-request", work, Cached, review_request),
 		ApiRoute::new(M::POST, "/leads/{brand}/{lead}/calls/attempt", work, Cached, attempt_call),
 		ApiRoute::new(M::POST, "/leads/{brand}/{lead}/calls/{attempt}/outcome", work, Cached, call_outcome),
 		ApiRoute::new(M::POST, "/leads/{brand}/{lead}/payments", work, Cached, payment),
 		ApiRoute::new(M::GET, "/funnel", work, Cached, funnel),
-		ApiRoute::new(M::GET, "/review-requests", work, Cached, review_requests),
 		ApiRoute::new(M::GET, "/places", work, Cached, places),
 		ApiRoute::new(M::GET, "/sources", admin, Cached, sources),
 		// A key must not be minted or revoked on a permission revoked a moment ago.
@@ -243,13 +241,6 @@ struct LeadDto {
 	/// while they have not.
 	messaged_at: Option<String>,
 	messaged_channel: Option<&'static str>,
-	/// The landing's locale, which language any text to the customer is in: `fr` | `en`. Null
-	/// reads as French.
-	locale: Option<String>,
-	/// When a Google review was first asked of the customer, and on which messenger (whatsapp |
-	/// telegram); both null while it has not been. It is asked once, so these never change.
-	review_requested_at: Option<String>,
-	review_requested_channel: Option<&'static str>,
 	/// `rate_limited` | `too_fast` when the landing's antispam doubted it; null otherwise.
 	suspect: Option<String>,
 	manual: bool,
@@ -322,9 +313,6 @@ fn lead_dto(v: LeadView, now: Timestamp) -> LeadDto {
 		message_ref: r.message_ref,
 		messaged_at: ts(r.messaged.map(|(at, _)| at)),
 		messaged_channel: r.messaged.map(|(_, m)| m.as_str()),
-		locale: r.locale,
-		review_requested_at: ts(r.review_requested.map(|(at, _)| at)),
-		review_requested_channel: r.review_requested.map(|(_, m)| m.as_str()),
 		suspect: r.suspect,
 		manual: r.manual,
 		created_at: ts(r.created_at),
@@ -585,31 +573,6 @@ async fn messaged(
 	Ok(recorded(done.replayed, json!({ "event_id": done.value.raw().to_string() })))
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReviewRequestBody {
-	/// whatsapp | telegram
-	channel: String,
-}
-
-/// A Google review was asked of the customer: the browser built the message and opened the
-/// messenger, this records that it went (`review.requested` from the panel). Once per lead:
-/// `201` when recorded now, `200` with `already_requested: true` when the lead had been asked
-/// (the event is the first one's, and nothing is journaled); `409` for a lead whose job is not
-/// completed or paid, whatever its stage since (lost included).
-async fn review_request(
-	State(panel): State<Panel>,
-	Extension(caller): Extension<Caller>,
-	Path((brand, lead)): Path<(String, String)>,
-	b: Result<Json<ReviewRequestBody>, JsonRejection>,
-) -> ApiResult<Response> {
-	allow(caller.permissions.may(Leads::Edit))?;
-	let (brand, lead) = ids(&brand, &lead)?;
-	let channel = Messenger::parse(&body(b)?.channel).map_err(|_| ApiError::BadRequest("channel is one of whatsapp, telegram".into()))?;
-	let done = panel.request_review_once(Actor(caller.user_id), &brand, &lead, channel, Timestamp::now()).await?;
-	Ok(recorded(done.replayed, json!({ "event_id": done.value.raw().to_string(), "already_requested": done.replayed })))
-}
-
 async fn attempt_call(State(panel): State<Panel>, Extension(caller): Extension<Caller>, Path((brand, lead)): Path<(String, String)>) -> ApiResult<Response> {
 	allow(caller.permissions.may(Leads::Edit))?;
 	let (brand, lead) = ids(&brand, &lead)?;
@@ -786,54 +749,6 @@ async fn funnel(State(panel): State<Panel>, q: Result<Query<FunnelQuery>, axum::
 		}
 	}
 	Ok(Json(body))
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReviewWeeksQuery {
-	from: Option<String>,
-	to: Option<String>,
-	brand: Option<String>,
-}
-
-#[derive(Serialize)]
-struct ReviewWeekDto {
-	/// The Monday (UTC) of the week the jobs were completed, `2026-10-05`.
-	week: String,
-	brand: String,
-	/// Null for the leads that name no place.
-	location: Option<String>,
-	/// `n`: of the `of` leads that reached completed (or paid) that week, how many were asked for
-	/// a review.
-	share: ShareDto,
-}
-
-/// How many of the jobs finished each week were asked for a Google review, per place: the
-/// numerator and the denominator of the share, never only the percent. The window is in days
-/// like the funnel's (a week it cuts is partial); the default is the last 30 days.
-async fn review_requests(State(panel): State<Panel>, q: Result<Query<ReviewWeeksQuery>, axum::extract::rejection::QueryRejection>) -> ApiResult<Json<Value>> {
-	let Query(q) = q.map_err(|e| ApiError::BadRequest(e.body_text()))?;
-	let (from, to) = window(q.from.as_deref(), q.to.as_deref())?;
-	let brand = q.brand.as_deref().map(BrandId::parse).transpose()?;
-	let weeks = panel.review_weeks(from, to, brand.as_ref()).await?;
-	let total = weeks.iter().fold((0, 0), |(requested, completed), w| (requested + w.requested, completed + w.completed));
-	let weeks: Vec<ReviewWeekDto> = weeks
-		.into_iter()
-		.map(|w| ReviewWeekDto {
-			week: w.week.to_string(),
-			brand: w.brand_id,
-			location: w.location_id,
-			share: Share::new(w.requested, w.completed).into(),
-		})
-		.collect();
-	Ok(Json(json!({
-		"from": from.to_string(),
-		"to": to.to_string(),
-		"brand": brand.as_ref().map(BrandId::as_str),
-		"min_sample": MIN_SAMPLE,
-		"total": ShareDto::from(Share::new(total.0, total.1)),
-		"weeks": weeks,
-	})))
 }
 
 // ── places, counts ──────────────────────────────────────────────────────────────────────

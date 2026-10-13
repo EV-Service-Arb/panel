@@ -7,7 +7,7 @@ use ev_lib::ts_gen::Ts;
 use panel_core::{
 	booking::{BookingMatch, BookingStatus, DayPart, Provider},
 	event::SourceKind,
-	fact::{LeadChannel, LeadFlow, LeadLocale, LeadSuspect, Messenger},
+	fact::{LeadChannel, LeadFlow, LeadSuspect, Messenger},
 	funnel::CONTACT_SLA,
 	lead::Stage,
 	pricing,
@@ -53,11 +53,6 @@ fn main() {
 				name: "MESSENGERS",
 				ty: "Messenger",
 				items: Messenger::ALL.map(Messenger::as_str).into(),
-			},
-			Ts::Union {
-				name: "LEAD_LOCALES",
-				ty: "LeadLocale",
-				items: LeadLocale::ALL.map(LeadLocale::as_str).into(),
 			},
 			Ts::Union {
 				name: "FLOWS",

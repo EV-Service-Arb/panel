@@ -51,8 +51,6 @@ const places = new Map<string, StubPlace>([
           { days: ["Saturday"], opens: "09:00", closes: "12:00" },
         ],
         serviceArea: ["Lyon 3e", "Villeurbanne", "Bron"],
-        reviewUrl: "https://g.page/r/stub-aquafix-lyon-3/review",
-        brandName: "Aquafix Plomberie",
         booking: { default: "google_calendar", providers: { google_calendar: { url: "https://calendar.app.google/StubLyon3" }, link: { url: "https://book.example.fr/lyon-3" } } },
         address: { street: "12 rue Paul Bert", postalCode: "69003", locality: "Lyon" },
       },

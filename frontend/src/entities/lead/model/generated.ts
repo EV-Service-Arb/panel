@@ -15,9 +15,6 @@ export type ManualChannel = (typeof MANUAL_CHANNELS)[number];
 export const MESSENGERS = ["whatsapp", "telegram"] as const;
 export type Messenger = (typeof MESSENGERS)[number];
 
-export const LEAD_LOCALES = ["fr", "en"] as const;
-export type LeadLocale = (typeof LEAD_LOCALES)[number];
-
 export const FLOWS = ["quote", "estimate", "fixed"] as const;
 export type Flow = (typeof FLOWS)[number];
 

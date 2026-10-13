@@ -182,41 +182,6 @@ async fn the_callback_migration_keeps_the_leads_both_ways() {
 	assert_eq!(rows().await[1], ("L-2".to_owned(), Some("callback".to_owned())), "the journal still has it");
 }
 
-/// A landing may say its locale: `fr` and `en` are kept on the lead, another is refused, and a
-/// lead that says nothing has none (read as French); the rebuild agrees.
-#[tokio::test]
-async fn a_lead_keeps_the_locale_of_its_landing() {
-	let db = TestDb::create().await;
-	let (panel, secret, _) = setup(&db).await;
-	let events = [
-		event("lead.created", at(0), "site", lead("L-1"), json!({"channel": "form", "locale": "en"})),
-		event("lead.created", at(1), "site", lead("L-2"), json!({"channel": "form", "locale": "fr"})),
-		event("lead.created", at(2), "site", lead("L-3"), json!({"channel": "form", "locale": "de"})),
-		event("lead.created", at(3), "site", lead("L-4"), json!({"channel": "form"})),
-	];
-	let got = panel.ingest(sign("aquafix-site", &secret, &events, now()).batch(), now()).await.unwrap();
-	assert_eq!(
-		outcomes(&got),
-		[
-			ACCEPTED,
-			ACCEPTED,
-			Outcome::Rejected(panel_core::Invalid::new("properties.locale is not one of fr, en")),
-			ACCEPTED
-		]
-	);
-	let pool = db.pool().await;
-	let locales = || async {
-		sqlx::query_as::<_, (String, Option<String>)>("SELECT lead_id, locale FROM reporting_leads ORDER BY lead_id")
-			.fetch_all(&pool)
-			.await
-			.unwrap()
-	};
-	let want = [("L-1".to_owned(), Some("en".to_owned())), ("L-2".to_owned(), Some("fr".to_owned())), ("L-4".to_owned(), None)];
-	assert_eq!(locales().await, want);
-	panel.rebuild_projections().await.unwrap();
-	assert_eq!(locales().await, want, "and the rebuild agrees");
-}
-
 /// A landing's antispam marks a lead it doubted but kept: either word is taken and kept on the
 /// lead, any other is refused, and an unmarked lead stays unmarked.
 #[tokio::test]

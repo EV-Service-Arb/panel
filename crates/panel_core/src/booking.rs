@@ -364,8 +364,6 @@ macro_rules! wire_enum {
 	};
 }
 
-pub(crate) use wire_enum;
-
 /// When in the day the visitor would like their slot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DayPart {

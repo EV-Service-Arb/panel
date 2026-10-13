@@ -117,14 +117,6 @@ enum PlaceCmd {
 		/// Messengers switched on or off, split by commas: 'whatsapp=on,telegram=off'.
 		#[arg(long)]
 		messengers: Option<String>,
-		/// Where a customer leaves a Google review: an https link on g.page or
-		/// search.google.com.
-		#[arg(long = "review-url")]
-		review_url: Option<String>,
-		/// The business's name in text shown to a customer: one line, up to 60 characters, no
-		/// link or address.
-		#[arg(long = "brand-name")]
-		brand_name: Option<String>,
 		/// A field to clear (the site's baked value takes over); repeat for several.
 		#[arg(long = "clear", value_name = "FIELD")]
 		clear: Vec<String>,
@@ -389,8 +381,6 @@ async fn place(panel: &Panel, cmd: PlaceCmd) -> eyre::Result<()> {
 			service_area,
 			telegram,
 			messengers,
-			review_url,
-			brand_name,
 			clear,
 		} => {
 			let (brand, slug) = ids(&brand, &slug)?;
@@ -412,12 +402,6 @@ async fn place(panel: &Panel, cmd: PlaceCmd) -> eyre::Result<()> {
 			}
 			if let Some(m) = messengers {
 				set.insert("messengers".into(), place::messengers_from_spec(&m).map_err(|e| eyre::eyre!("--messengers {e}"))?);
-			}
-			if let Some(u) = review_url {
-				set.insert("reviewUrl".into(), u.into());
-			}
-			if let Some(n) = brand_name {
-				set.insert("brandName".into(), n.into());
 			}
 			eyre::ensure!(!set.is_empty() || !clear.is_empty(), "nothing to set: give a field, or --clear one");
 			panel.patch_place(&cli, &brand, &slug, set, &clear, now).await.map_err(refused)?
