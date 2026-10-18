@@ -24,7 +24,6 @@ panel_contracts = { path = "crates/panel_contracts", version = "0.1.0" }
 panel_core = { path = "crates/panel_core", version = "0.1.0" }
 panel_server = { path = "crates/panel_server", version = "0.1.0" }
 sa_auth = { path = "crates/sa_auth", version = "0.1.0" }
-sa_ui = { path = "crates/sa_ui", version = "0.1.0" }
 
 axum = "0.8"
 base64 = "0.22"
