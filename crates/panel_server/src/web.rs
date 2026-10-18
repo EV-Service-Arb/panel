@@ -45,9 +45,16 @@ pub const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'wa
 /// The platform's origin, where the hosts load its micro-frontends from.
 const PLATFORM_ORIGIN: &str = "https://evinvest.ltd";
 
+/// Cloudflare's Turnstile: the sign-in element loads its `api.js` and draws the challenge in
+/// an iframe, both from this origin.
+const TURNSTILE_ORIGIN: &str = "https://challenges.cloudflare.com";
+
 /// The policy for the pages: [`CSP`], and with `platform_mfe` also the platform's MFE
 /// directories (concierge's `/api/auth/mfe/`, the wallet's `/wallet/mfe/`) in `script-src`
-/// and its origin in `connect-src` (the elements call its API, cross-origin).
+/// and its origin in `connect-src` (the elements call its API, cross-origin), plus Turnstile's
+/// origin in `script-src` and a `frame-src` of it alone (without one the frame would fall back
+/// to `default-src 'self'` and the sign-in dialog would show "Captcha failed to load").
+/// Turnstile needs no `connect-src` entry, as in the invest and admin policies.
 ///
 /// Directories, never the origin: a `script-src` of the whole origin would let any script
 /// the platform serves run in the panel's session, which is the very thing the pins on
@@ -61,9 +68,9 @@ pub fn csp(platform_mfe: bool) -> String {
 	let widened = CSP
 		.replace(
 			"'wasm-unsafe-eval';",
-			&format!("'wasm-unsafe-eval' {PLATFORM_ORIGIN}/api/auth/mfe/ {PLATFORM_ORIGIN}/wallet/mfe/;"),
+			&format!("'wasm-unsafe-eval' {PLATFORM_ORIGIN}/api/auth/mfe/ {PLATFORM_ORIGIN}/wallet/mfe/ {TURNSTILE_ORIGIN};"),
 		)
-		.replace("connect-src 'self';", &format!("connect-src 'self' {PLATFORM_ORIGIN};"));
+		.replace("connect-src 'self';", &format!("connect-src 'self' {PLATFORM_ORIGIN}; frame-src {TURNSTILE_ORIGIN};"));
 	debug_assert_ne!(widened, CSP, "the base policy changed shape; update the two anchors");
 	widened
 }
@@ -184,7 +191,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_platform_widens_two_script_directories_and_connect_src_only() {
+	fn the_platform_widens_script_connect_and_frame_sources_only() {
 		let on = csp(true);
 		let off = CSP;
 		assert_eq!(
@@ -194,20 +201,22 @@ mod tests {
 				"'unsafe-inline'",
 				"'wasm-unsafe-eval'",
 				"https://evinvest.ltd/api/auth/mfe/",
-				"https://evinvest.ltd/wallet/mfe/"
+				"https://evinvest.ltd/wallet/mfe/",
+				"https://challenges.cloudflare.com"
 			]
 		);
+		assert_eq!(sources(&on, "frame-src"), ["https://challenges.cloudflare.com"]);
 		assert_eq!(sources(&on, "connect-src"), ["'self'", "https://evinvest.ltd"]);
 		assert!(!sources(&on, "script-src").contains(&"https://evinvest.ltd"), "the bare origin is never a script source");
 		// every other directive, in the same order, is untouched
 		let rest = |p: &str| {
 			p.split("; ")
-				.filter(|d| !d.starts_with("script-src") && !d.starts_with("connect-src"))
+				.filter(|d| !d.starts_with("script-src") && !d.starts_with("connect-src") && !d.starts_with("frame-src"))
 				.map(str::to_owned)
 				.collect::<Vec<_>>()
 		};
 		assert_eq!(rest(&on), rest(off));
-		assert_eq!(on.split("; ").count(), off.split("; ").count());
+		assert_eq!(on.split("; ").count(), off.split("; ").count() + 1);
 		HeaderValue::from_str(&on).unwrap();
 	}
 

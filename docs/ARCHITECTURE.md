@@ -1087,8 +1087,12 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
 - **The platform's MFE bundles (`PANEL_CSP_PLATFORM_MFE`).** `0` (default, also unset) leaves
   the CSP above exactly as it was; `1` (anything else fails the boot) adds to `script-src` the
   two directories `https://evinvest.ltd/api/auth/mfe/` and `https://evinvest.ltd/wallet/mfe/`,
-  and to `connect-src` the origin `https://evinvest.ltd` (the elements call its API); styles,
-  images and fonts do not change. The string is built once at boot (`web::csp`, kept in
+  and to `connect-src` the origin `https://evinvest.ltd` (the elements call its API); it also
+  adds `https://challenges.cloudflare.com` to `script-src` and a `frame-src` of it alone
+  (the sign-in element's Turnstile loads `api.js` and draws its challenge in a Cloudflare
+  iframe; without them the dialog shows "Captcha failed to load"; no `connect-src` entry is
+  needed, as in invest and admin). The Turnstile widget's hostnames in Cloudflare must list
+  the panel's host. Styles, images and fonts do not change. The string is built once at boot (`web::csp`, kept in
   `web::Files`). Directories, not the origin, on purpose: the pins on `/auth/mfe` and
   `/cabinet/mfe` (Forward) vouch for the bytes, and a `script-src` of the whole origin would
   get around them for any script that origin serves, so the pins are not to be bypassed that
