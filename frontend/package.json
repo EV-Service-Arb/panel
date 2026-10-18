@@ -16,6 +16,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@evinvest/concierge": "^0.1.1",
+    "@evinvest/mfe": "^0.1.0",
     "@evinvest/uikit": "^0.27.0",
     "lucide-react": "^0.453.0",
     "next": "16.3.6",

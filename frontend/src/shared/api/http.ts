@@ -1,6 +1,7 @@
 import { type Parser, parse } from "@/shared/lib/parse";
 
 import { CSRF_HEADER, readCsrf } from "./csrf";
+import { requestSignInOverlay } from "./signin-overlay";
 
 /**
  * Why a call failed, in the words the screens act on. The backend's gate
@@ -151,13 +152,19 @@ export function switchAccountPath(returnTo: string): string {
   return `${SIGN_IN_PATH}?prompt=select_account&return_to=${encodeURIComponent(returnTo)}`;
 }
 
-/** The session is gone (an HTTP 401, the live socket's 4401): off to the backend's sign-in, and back here. */
-export function goToSignIn(): void {
+/** The full-page way to sign in: off to the backend's sign-in, and back here. */
+export function redirectToSignIn(): void {
   if (typeof window === "undefined") return;
   const here = window.location.pathname + window.location.search;
   // /auth/login is the Rust backend's route, not a page of this app: only a full navigation reaches it.
   // eslint-disable-next-line @next/next/no-location-assign-relative-destination
   window.location.assign(`${SIGN_IN_PATH}?return_to=${encodeURIComponent(here)}`);
+}
+
+/** The session is gone (an HTTP 401, the live socket's 4401): the overlay when it is on, else the redirect. */
+export function goToSignIn(): void {
+  if (requestSignInOverlay()) return;
+  redirectToSignIn();
 }
 
 export const http: Http = createHttp({
