@@ -253,6 +253,13 @@ it — the front end's reserved paths (`web.rs`) are derived from it.
   origin, not its gRPC). `PANEL_CHIP_SOURCE` is `cabinet` (default) or `concierge`; the cabinet's
   route stays mounted either way, and the three variables are read only under `concierge`, so
   a half-done rollout cannot fail the boot of a panel still serving the chip from the cabinet.
+  Differences from the cabinet's route: nothing of the browser goes up, so concierge never
+  answers 304 and the pin is checked on every byte it sends; the checked bytes of each file
+  are kept in memory until restart (the pin is fixed by the environment), so concierge is
+  asked once per file and concurrent first requests wait on one fetch; the panel's own `ETag`
+  is the pin and it answers a matching `If-None-Match` with a 304 itself; a file is at most
+  1 MiB; any failure of concierge (a 404 included) is a 502, a 404 is only for a name that
+  is not served or not pinned.
   Under `concierge`, a URL without pins (or the reverse) mounts nothing and `serve` warns;
   malformed values fail the boot. *Updating:* the build of concierge's `web/` prints the pins;
   set them in the deploy together with (or before) rolling concierge, as for the cabinet.
@@ -1106,7 +1113,9 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
   need egress to `PANEL_CONCIERGE_URL` (concierge's web port, beside its gRPC one), and
   `PANEL_CONCIERGE_MFE_PINS` (Forward; not a secret). Open question before this is switched
   on in production: the page's CSP has `connect-src 'self'` (via `default-src`), while the
-  chip's `/api/auth/session` call goes to concierge's origin, cross-domain.
+  chip's `/api/auth/session` call goes to concierge's origin, cross-domain. Only
+  `connect-src` may be widened for it, never `script-src`: the pin is what vouches for the
+  scripts, and a wider `script-src` would let any script from that origin around it.
 - **Telegram, outbound only.** With `TELEGRAM_BOT_TOKEN` (the panel bot's, in sops; not
   `telegram_token_main`) the pods need egress to `api.telegram.org:443`; nothing inbound. No
   webhook is set on the bot (`getUpdates` refuses to run while one is).
