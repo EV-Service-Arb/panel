@@ -117,6 +117,16 @@
           npmDepsHash = "sha256-Ns7DpEsd4Dy5XNlre7clKtKuqHvrkNbUgi65T+56JFw=";
           env = {
             NEXT_TELEMETRY_DISABLED = "1";
+            # NEXT_PUBLIC_* values are inlined by `next build`, so these are compile-time:
+            # the image carries the choice, no runtime switch. They turn on the platform path:
+            # the sign-in dialog over the panel, the platform's account chip and sign-in, and
+            # the wallet page. The bundles come from the platform origin (concierge's from
+            # /api/auth/mfe/*, the wallet's from /wallet/mfe/*), which the server's CSP names
+            # only with PANEL_CSP_PLATFORM_MFE=1 (devops panelEnv). Rollback: run the v0.11.0
+            # image, which was built with all three off.
+            NEXT_PUBLIC_SIGNIN_OVERLAY = "1";
+            NEXT_PUBLIC_MFE_PLATFORM = "1";
+            NEXT_PUBLIC_WALLET_PAGE = "1";
           };
           # Turbopack talks to its node workers over a loopback socket, which the Darwin
           # sandbox refuses unless asked.
