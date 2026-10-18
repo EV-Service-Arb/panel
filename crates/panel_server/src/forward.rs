@@ -437,6 +437,16 @@ fn bundle_types(file: &str) -> Option<&'static [&'static str]> {
 	BUNDLE.iter().find(|(e, _)| *e == ext).map(|(_, types)| *types)
 }
 
+/// A header value or file name from the far side as it may go into a log line or an error:
+/// printable ASCII, at most 80 bytes of it.
+fn short(raw: &[u8]) -> String {
+	let mut out: String = raw.iter().take(80).map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '?' }).collect();
+	if raw.len() > 80 {
+		out.push_str("...");
+	}
+	out
+}
+
 /// Why the cabinet gave no file: said in the log, never to the browser (it names the address).
 #[derive(Debug, thiserror::Error)]
 enum Unanswered {
@@ -444,14 +454,14 @@ enum Unanswered {
 	Timeout,
 	#[error("{0}")]
 	Request(#[from] hyper_util::client::legacy::Error),
-	#[error("reading the body (over {CABINET_MAX_BYTES} bytes?): {0}")]
+	#[error("reading the body (too large?): {0}")]
 	Body(tower::BoxError),
 	#[error("status {0}")]
 	Status(StatusCode),
 	#[error("type {0:?} for a file of the bundle")]
-	Type(Option<HeaderValue>),
+	Type(Option<String>),
 	#[error("encoded {0:?}, though asked for none")]
-	Encoded(HeaderValue),
+	Encoded(String),
 	#[error("sha256 {got} is not the pinned one")]
 	Pin { got: String },
 	#[error("the manifest: {0}")]
@@ -490,31 +500,7 @@ async fn cabinet_mfe(State(c): State<Cabinet>, req: Request) -> Response {
 /// not passed down: its `Location` would be the cabinet's address inside the cluster. A 304
 /// passes unchecked: it carries no bytes, and the browser's copy came from here, checked.
 async fn fetch(client: &Client<HttpConnector, Body>, up: Request, types: &[&str], pin: &[u8; 32]) -> Result<Response, Unanswered> {
-	let (parts, body) = tokio::time::timeout(CABINET_TIMEOUT, async {
-		let (parts, body) = client.request(up).await?.into_parts();
-		let body = Limited::new(body, CABINET_MAX_BYTES).collect().await.map_err(Unanswered::Body)?.to_bytes();
-		Ok::<_, Unanswered>((parts, body))
-	})
-	.await
-	.map_err(|_elapsed| Unanswered::Timeout)??;
-	match parts.status {
-		StatusCode::OK => {
-			let ct = parts.headers.get(header::CONTENT_TYPE);
-			let essence = ct.and_then(|v| v.to_str().ok()).map(|v| v.split(';').next().unwrap_or_default().trim().to_ascii_lowercase());
-			if !essence.is_some_and(|e| types.contains(&e.as_str())) {
-				return Err(Unanswered::Type(ct.cloned()));
-			}
-			if let Some(enc) = parts.headers.get(header::CONTENT_ENCODING).filter(|v| *v != "identity") {
-				return Err(Unanswered::Encoded(enc.clone()));
-			}
-			let got = Sha256::digest(&body);
-			if got.as_slice() != pin.as_slice() {
-				return Err(Unanswered::Pin { got: encode_digest(&got) });
-			}
-		}
-		StatusCode::NOT_MODIFIED => {}
-		other => return Err(Unanswered::Status(other)),
-	}
+	let (parts, body) = fetch_body(client, up, types, pin, CABINET_MAX_BYTES).await?;
 	let mut res = Response::new(Body::from(body));
 	*res.status_mut() = parts.status;
 	let h = res.headers_mut();
@@ -526,6 +512,43 @@ async fn fetch(client: &Client<HttpConnector, Body>, up: Request, types: &[&str]
 	h.insert(header::CACHE_CONTROL, HeaderValue::from_static(CABINET_CACHE));
 	h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
 	Ok(res)
+}
+
+/// The checks of [`fetch`], and the bytes they were made of (empty for a 304), at most
+/// `max_bytes` of them.
+async fn fetch_body(
+	client: &Client<HttpConnector, Body>,
+	up: Request,
+	types: &[&str],
+	pin: &[u8; 32],
+	max_bytes: usize,
+) -> Result<(axum::http::response::Parts, axum::body::Bytes), Unanswered> {
+	let (parts, body) = tokio::time::timeout(CABINET_TIMEOUT, async {
+		let (parts, body) = client.request(up).await?.into_parts();
+		let body = Limited::new(body, max_bytes).collect().await.map_err(Unanswered::Body)?.to_bytes();
+		Ok::<_, Unanswered>((parts, body))
+	})
+	.await
+	.map_err(|_elapsed| Unanswered::Timeout)??;
+	match parts.status {
+		StatusCode::OK => {
+			let ct = parts.headers.get(header::CONTENT_TYPE);
+			let essence = ct.and_then(|v| v.to_str().ok()).map(|v| v.split(';').next().unwrap_or_default().trim().to_ascii_lowercase());
+			if !essence.is_some_and(|e| types.contains(&e.as_str())) {
+				return Err(Unanswered::Type(ct.map(|v| short(v.as_bytes()))));
+			}
+			if let Some(enc) = parts.headers.get(header::CONTENT_ENCODING).filter(|v| *v != "identity") {
+				return Err(Unanswered::Encoded(short(enc.as_bytes())));
+			}
+			let got = Sha256::digest(&body);
+			if got.as_slice() != pin.as_slice() {
+				return Err(Unanswered::Pin { got: encode_digest(&got) });
+			}
+		}
+		StatusCode::NOT_MODIFIED => {}
+		other => return Err(Unanswered::Status(other)),
+	}
+	Ok((parts, body))
 }
 
 /// What concierge serves under `/auth/mfe/` (its `web/scripts/build.mjs`) and the panel hands
@@ -540,6 +563,8 @@ const CONCIERGE_MANIFEST: &str = "registry.json";
 /// A few entries; far over what it takes.
 const CONCIERGE_MANIFEST_MAX_BYTES: usize = 64 << 10;
 const CONCIERGE_MANIFEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// An element is one script with its stylesheet inlined; held in memory, so held small.
+const CONCIERGE_MAX_BYTES: usize = 1 << 20;
 
 /// `PANEL_CONCIERGE_MFE_PINS`: [`CabinetPins`] naming only what [`CONCIERGE_ELEMENTS`] serves,
 /// so a pin for a name that never matches (a typo) fails the boot, not the chip.
@@ -563,6 +588,10 @@ pub struct ConciergeMfe {
 	base: std::sync::Arc<str>,
 	pins: std::sync::Arc<CabinetPins>,
 	client: Client<HttpConnector, Body>,
+	/// The checked bytes of each served file, kept until restart: the pin is fixed by the
+	/// environment, so bytes that matched it once are the only bytes there will be. Concurrent
+	/// first requests wait on one fetch.
+	verified: std::sync::Arc<std::collections::HashMap<&'static str, tokio::sync::OnceCell<axum::body::Bytes>>>,
 }
 
 impl ConciergeMfe {
@@ -573,6 +602,7 @@ impl ConciergeMfe {
 			base: base.to_string().trim_end_matches('/').into(),
 			pins: std::sync::Arc::new(pins),
 			client: Client::builder(hyper_util::rt::TokioExecutor::new()).build(connector),
+			verified: std::sync::Arc::new(CONCIERGE_ELEMENTS.iter().map(|(file, _)| (*file, tokio::sync::OnceCell::new())).collect()),
 		}
 	}
 
@@ -596,12 +626,6 @@ impl ConciergeMfe {
 	/// The file concierge's manifest names for `element` today. Only its last segment is
 	/// used, and only if it is a plain `.js` name: the path asked for is built here.
 	async fn current(&self, element: &str) -> Result<String, Unanswered> {
-		#[derive(serde::Deserialize)]
-		struct Entry {
-			name: String,
-			#[serde(rename = "scriptUrl")]
-			script_url: String,
-		}
 		let uri: Uri = format!("{}{CONCIERGE_MFE}/{CONCIERGE_MANIFEST}", self.base)
 			.parse()
 			.map_err(|_| Unanswered::Manifest("not a URL".into()))?;
@@ -615,33 +639,70 @@ impl ConciergeMfe {
 		if parts.status != StatusCode::OK {
 			return Err(Unanswered::Status(parts.status));
 		}
-		let entries: Vec<Entry> = serde_json::from_slice(&body).map_err(|e| Unanswered::Manifest(e.to_string()))?;
-		let entry = entries.iter().find(|e| e.name == element).ok_or_else(|| Unanswered::Manifest(format!("no entry `{element}`")))?;
-		let file = entry.script_url.rsplit('/').next().unwrap_or_default();
-		if bundle_types(file) != Some(BUNDLE[0].1) || file.contains('/') {
-			return Err(Unanswered::Manifest(format!("`{file}` is no script of the bundle")));
+		// Values, not a typed list: an entry of another shape is not ours to refuse.
+		let entries: Vec<serde_json::Value> = serde_json::from_slice(&body).map_err(|e| Unanswered::Manifest(short(e.to_string().as_bytes())))?;
+		let entry = entries
+			.iter()
+			.find(|e| e.get("name").and_then(serde_json::Value::as_str) == Some(element))
+			.ok_or_else(|| Unanswered::Manifest(format!("no entry `{element}`")))?;
+		let url = entry
+			.get("scriptUrl")
+			.and_then(serde_json::Value::as_str)
+			.ok_or_else(|| Unanswered::Manifest(format!("entry `{element}` has no scriptUrl")))?;
+		let file = url.rsplit('/').next().unwrap_or_default();
+		if bundle_types(file) != Some(BUNDLE[0].1) {
+			return Err(Unanswered::Manifest(format!("`{}` is no script of the bundle", short(file.as_bytes()))));
 		}
 		Ok(file.to_owned())
 	}
 }
 
-async fn concierge_mfe(State(c): State<ConciergeMfe>, axum::extract::Path(file): axum::extract::Path<String>, req: Request) -> Response {
+async fn concierge_mfe(State(c): State<ConciergeMfe>, axum::extract::Path(file): axum::extract::Path<String>, from: HeaderMap) -> Response {
 	// Before concierge is asked: a name that is not served or not pinned is no file of ours.
-	let (Some((_, element)), Some(pin)) = (CONCIERGE_ELEMENTS.iter().find(|(served, _)| *served == file), c.pins.get(&file)) else {
+	let (Some((_, element)), Some(pin), Some(cell)) = (CONCIERGE_ELEMENTS.iter().find(|(served, _)| *served == file), c.pins.get(&file), c.verified.get(file.as_str())) else {
 		return not_found();
 	};
-	// Copied out before the first await: a request body is not `Sync`, so a borrow of `req`
-	// held across one would make the handler's future unsendable.
-	let headers = req.headers().clone();
-	let served = async {
-		let current = c.current(element).await?;
-		// The query is dropped: a static file has no use for one.
-		let uri: Uri = format!("{}{CONCIERGE_MFE}/{current}", c.base).parse().map_err(|_| Unanswered::Manifest("not a URL".into()))?;
-		fetch(&c.client, upstream_get(uri, &headers), BUNDLE[0].1, pin).await
+	// The pin names the bytes, so it names the file: a browser that holds this tag holds the
+	// verified bytes, and concierge is not asked for it.
+	let etag = format!("\"{}\"", encode_digest(pin));
+	let etag_value = HeaderValue::from_str(&etag).expect("hex digits between quotes are a header value");
+	let framed = |mut res: Response| {
+		let h = res.headers_mut();
+		h.insert(header::ETAG, etag_value.clone());
+		h.insert(header::CACHE_CONTROL, HeaderValue::from_static(CABINET_CACHE));
+		h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+		res
 	};
-	match served.await {
-		Ok(res) => res,
-		Err(Unanswered::Status(StatusCode::NOT_FOUND)) => not_found(),
+	let mut held = from
+		.get_all(header::IF_NONE_MATCH)
+		.iter()
+		.filter_map(|v| v.to_str().ok())
+		.flat_map(|v| v.split(','))
+		.map(str::trim);
+	if held.any(|t| t == "*" || t.strip_prefix("W/").unwrap_or(t) == etag) {
+		return framed(StatusCode::NOT_MODIFIED.into_response());
+	}
+	// Nothing of the browser goes up (so concierge never answers 304 and the pin is checked on
+	// what it sends); the first success is kept.
+	let served = cell
+		.get_or_try_init(|| async {
+			let current = c.current(element).await?;
+			// The query is dropped: a static file has no use for one.
+			let uri: Uri = format!("{}{CONCIERGE_MFE}/{current}", c.base).parse().map_err(|_| Unanswered::Manifest("not a URL".into()))?;
+			let (parts, body) = fetch_body(&c.client, upstream_get(uri, &HeaderMap::new()), BUNDLE[0].1, pin, CONCIERGE_MAX_BYTES).await?;
+			if parts.status != StatusCode::OK {
+				return Err(Unanswered::Status(parts.status));
+			}
+			Ok(body)
+		})
+		.await;
+	match served {
+		Ok(body) => {
+			let mut res = Response::new(Body::from(body.clone()));
+			res.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/javascript; charset=utf-8"));
+			framed(res)
+		}
+		// Whatever concierge did, 404 included, is not the browser's to learn: the name was ours.
 		Err(e) => {
 			tracing::warn!(error = %e, file, "concierge gave no mfe file");
 			json_error(StatusCode::BAD_GATEWAY, "concierge did not answer")
