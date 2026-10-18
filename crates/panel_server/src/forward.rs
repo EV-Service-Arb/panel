@@ -566,7 +566,7 @@ const CONCIERGE_MANIFEST_TIMEOUT: Duration = Duration::from_secs(5);
 /// An element is one script with its stylesheet inlined; held in memory, so held small.
 const CONCIERGE_MAX_BYTES: usize = 1 << 20;
 
-/// `PANEL_CONCIERGE_MFE_PINS`: [`CabinetPins`] naming only what [`CONCIERGE_ELEMENTS`] serves,
+/// `PANEL_CONCIERGE_MFE_PINS`: [`CabinetPins`] naming only what `CONCIERGE_ELEMENTS` serves,
 /// so a pin for a name that never matches (a typo) fails the boot, not the chip.
 pub fn concierge_pins(raw: &str) -> Result<CabinetPins, BadPins> {
 	let pins = CabinetPins::parse(raw)?;
@@ -618,7 +618,7 @@ impl ConciergeMfe {
 		}
 	}
 
-	/// `GET` and `HEAD` of `/auth/mfe/<name>.js` for the names of [`CONCIERGE_ELEMENTS`].
+	/// `GET` and `HEAD` of `/auth/mfe/<name>.js` for the names of `CONCIERGE_ELEMENTS`.
 	pub fn routes(self) -> Router {
 		bounded_get(&format!("{CONCIERGE_MFE}/{{file}}"), concierge_mfe, self)
 	}
