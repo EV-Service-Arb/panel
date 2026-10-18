@@ -11,7 +11,7 @@ use axum::{
 };
 use panel_server::{
 	forward::{Cabinet, CabinetPins, ConciergeMfe, concierge_pins},
-	web::{self, CSP, Files},
+	web::{self, CSP, Files, csp},
 };
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -114,6 +114,21 @@ async fn pages_directories_and_the_404_page() {
 
 	let (status, _, _) = send(&app, Method::POST, "/", &[]).await;
 	assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+}
+
+#[tokio::test]
+async fn the_platform_policy_is_sent_only_when_switched_on() {
+	let export = Export::new();
+	for (on, want) in [(false, CSP.to_owned()), (true, csp(true))] {
+		let app = web::serve(app_routes(), Files::new(&export.web()).unwrap().platform_mfe(on));
+		for uri in ["/", "/no/such/screen/"] {
+			let (_, h, _) = get_(&app, uri).await;
+			assert_eq!(h[header::CONTENT_SECURITY_POLICY], want.as_str(), "{uri}, platform_mfe={on}");
+		}
+		let (_, h, _) = get_(&app, "/favicon.ico").await;
+		assert!(!h.contains_key(header::CONTENT_SECURITY_POLICY));
+	}
+	assert_ne!(csp(true), CSP);
 }
 
 #[tokio::test]

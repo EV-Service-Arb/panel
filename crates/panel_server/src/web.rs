@@ -38,7 +38,35 @@ use tower_http::{
 /// are the system's, the kit's CSS is bundled), and the pages talk to this origin alone. The
 /// cabinet's account chip is on this origin too (`/cabinet/mfe`, Forward), its script and its
 /// stylesheet alike, and loads no font.
+///
+/// This is the policy with `PANEL_CSP_PLATFORM_MFE` off, the default; [`csp`] builds the other.
 pub const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
+/// The platform's origin, where the hosts load its micro-frontends from.
+const PLATFORM_ORIGIN: &str = "https://evinvest.ltd";
+
+/// The policy for the pages: [`CSP`], and with `platform_mfe` also the platform's MFE
+/// directories (concierge's `/api/auth/mfe/`, the wallet's `/wallet/mfe/`) in `script-src`
+/// and its origin in `connect-src` (the elements call its API, cross-origin).
+///
+/// Directories, never the origin: a `script-src` of the whole origin would let any script
+/// the platform serves run in the panel's session, which is the very thing the pins on
+/// `/auth/mfe` and `/cabinet/mfe` rule out. Those pins and routes stay the fallback until the
+/// platform's bundles are proven in production; a separate change removes them. Nothing else
+/// widens: styles, images and fonts stay on this origin.
+pub fn csp(platform_mfe: bool) -> String {
+	if !platform_mfe {
+		return CSP.to_owned();
+	}
+	let widened = CSP
+		.replace(
+			"'wasm-unsafe-eval';",
+			&format!("'wasm-unsafe-eval' {PLATFORM_ORIGIN}/api/auth/mfe/ {PLATFORM_ORIGIN}/wallet/mfe/;"),
+		)
+		.replace("connect-src 'self';", &format!("connect-src 'self' {PLATFORM_ORIGIN};"));
+	debug_assert_ne!(widened, CSP, "the base policy changed shape; update the two anchors");
+	widened
+}
 
 /// Where the build puts what it names by content hash.
 const HASHED: &str = "/_next/static/";
@@ -53,6 +81,8 @@ const RESERVED: [&str; 5] = ["/api", "/auth", "/health", "/grafana", "/cabinet"]
 #[derive(Clone, Debug)]
 pub struct Files {
 	dir: ServeDir<SetStatus<ServeFile>>,
+	/// Built once at boot, so a page costs no allocation for it.
+	csp: HeaderValue,
 }
 
 impl Files {
@@ -64,7 +94,17 @@ impl Files {
 			eyre::ensure!(path.is_file(), "PANEL_WEB_DIR {} has no {page}: not a build of frontend/", dir.display());
 		}
 		let dir = ServeDir::new(dir).append_index_html_on_directories(true).not_found_service(ServeFile::new(dir.join("404.html")));
-		Ok(Self { dir })
+		Ok(Self {
+			dir,
+			csp: HeaderValue::from_static(CSP),
+		})
+	}
+
+	/// The pages' policy with or without the platform's MFE directories ([`csp`]).
+	#[must_use]
+	pub fn platform_mfe(mut self, on: bool) -> Self {
+		self.csp = HeaderValue::from_str(&csp(on)).expect("the policy is ASCII without control characters");
+		self
 	}
 }
 
@@ -88,7 +128,7 @@ fn dashboard_view(path: &str) -> bool {
 
 async fn page(mut files: Files, mut req: Request) -> Response {
 	if reserved(req.uri().path()) {
-		return dressed((StatusCode::NOT_FOUND, Json(json!({ "error": "not found" }))).into_response(), false);
+		return dressed((StatusCode::NOT_FOUND, Json(json!({ "error": "not found" }))).into_response(), false, &files.csp);
 	}
 	if dashboard_view(req.uri().path()) {
 		*req.uri_mut() = axum::http::Uri::from_static("/review_archive/");
@@ -103,17 +143,17 @@ async fn page(mut files: Files, mut req: Request) -> Response {
 	}
 	let res = match files.dir.try_call(req).await {
 		Ok(res) => res.map(Body::new),
-		Err(e) => return failed(&e),
+		Err(e) => return failed(&e, &files.csp),
 	};
-	dressed(res, hashed)
+	dressed(res, hashed, &files.csp)
 }
 
-fn failed(e: &io::Error) -> Response {
+fn failed(e: &io::Error, csp: &HeaderValue) -> Response {
 	crate::report(&eyre::eyre!("{e}"), "serving the front end");
-	dressed(StatusCode::INTERNAL_SERVER_ERROR.into_response(), false)
+	dressed(StatusCode::INTERNAL_SERVER_ERROR.into_response(), false, csp)
 }
 
-fn dressed(mut res: Response, hashed: bool) -> Response {
+fn dressed(mut res: Response, hashed: bool, csp: &HeaderValue) -> Response {
 	let ok = res.status().is_success();
 	let h = res.headers_mut();
 	h.remove(header::LAST_MODIFIED);
@@ -123,7 +163,7 @@ fn dressed(mut res: Response, hashed: bool) -> Response {
 	let cache = if hashed && ok && !html { "public, max-age=31536000, immutable" } else { "no-cache" };
 	h.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
 	if html {
-		h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(CSP));
+		h.insert(header::CONTENT_SECURITY_POLICY, csp.clone());
 	}
 	res
 }
@@ -131,6 +171,45 @@ fn dressed(mut res: Response, hashed: bool) -> Response {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	/// The directive's sources, split on spaces.
+	fn sources<'a>(policy: &'a str, directive: &str) -> Vec<&'a str> {
+		let d = policy.split("; ").find(|d| d.split(' ').next() == Some(directive)).unwrap();
+		d.split(' ').skip(1).collect()
+	}
+
+	#[test]
+	fn the_policy_is_the_old_one_byte_for_byte_when_off() {
+		assert_eq!(csp(false), CSP);
+	}
+
+	#[test]
+	fn the_platform_widens_two_script_directories_and_connect_src_only() {
+		let on = csp(true);
+		let off = CSP;
+		assert_eq!(
+			sources(&on, "script-src"),
+			[
+				"'self'",
+				"'unsafe-inline'",
+				"'wasm-unsafe-eval'",
+				"https://evinvest.ltd/api/auth/mfe/",
+				"https://evinvest.ltd/wallet/mfe/"
+			]
+		);
+		assert_eq!(sources(&on, "connect-src"), ["'self'", "https://evinvest.ltd"]);
+		assert!(!sources(&on, "script-src").contains(&"https://evinvest.ltd"), "the bare origin is never a script source");
+		// every other directive, in the same order, is untouched
+		let rest = |p: &str| {
+			p.split("; ")
+				.filter(|d| !d.starts_with("script-src") && !d.starts_with("connect-src"))
+				.map(str::to_owned)
+				.collect::<Vec<_>>()
+		};
+		assert_eq!(rest(&on), rest(off));
+		assert_eq!(on.split("; ").count(), off.split("; ").count());
+		HeaderValue::from_str(&on).unwrap();
+	}
 
 	#[test]
 	fn reserved_prefixes_are_whole_segments() {

@@ -177,12 +177,17 @@
           # web port, a bare http origin), only with PANEL_CONCIERGE_MFE_PINS
           # (`account-chip.js=<sha256 hex>,sign-in.js=<sha256 hex>`, printed by the build of
           # concierge's web/; public). Not read at all under `cabinet`.
+          # PANEL_CSP_PLATFORM_MFE: `0` (default) or `1`. With `1` the pages' CSP also allows the
+          # platform's MFE directories (https://evinvest.ltd/api/auth/mfe/ and /wallet/mfe/) in
+          # script-src and the origin in connect-src; set with the front end's
+          # NEXT_PUBLIC_MFE_PLATFORM=1.
           optionalEnv = [
             "PANEL_CABINET_URL"
             "PANEL_CABINET_MFE_PINS"
             "PANEL_CHIP_SOURCE"
             "PANEL_CONCIERGE_URL"
             "PANEL_CONCIERGE_MFE_PINS"
+            "PANEL_CSP_PLATFORM_MFE"
             "SENTRY_DSN"
             "TELEGRAM_BOT_TOKEN"
             "TELEGRAM_BOT_USERNAME"
