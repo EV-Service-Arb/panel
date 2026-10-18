@@ -1,8 +1,9 @@
 import { NavDot, type NavGroup, type NavItem } from "@evinvest/uikit";
-import { Archive, ArrowUpRight, BarChart3, Ellipsis, FlaskConical, Inbox, KeyRound, LayoutGrid, MapPin, Tags } from "lucide-react";
+import { Archive, ArrowUpRight, BarChart3, Ellipsis, FlaskConical, Inbox, KeyRound, LayoutGrid, MapPin, Tags, Wallet } from "lucide-react";
 
 import { type Caller, may } from "@/entities/session";
 import { ROUTES } from "@/shared/config/routes";
+import { WALLET_PAGE_ENABLED } from "@/shared/config/wallet-page";
 import type { T } from "@/shared/i18n";
 
 import type { Marks } from "../model/use-marks";
@@ -18,7 +19,8 @@ export interface PanelNav {
  * standing in for the rest (Pricing among them: daily for nobody). Marks ride on
  * both: a count where there is one, a dot where "something changed" is all there is.
  */
-export function panelNav(t: T, caller: Caller, marks: Marks): PanelNav {
+/** `wallet`: whether the wallet entry is offered (the build flag by default; a parameter so a test can turn it on). */
+export function panelNav(t: T, caller: Caller, marks: Marks, wallet: boolean = WALLET_PAGE_ENABLED): PanelNav {
   const work = may(caller, "sa:work:read");
   const analysis = may(caller, "sa:analysis:read");
   const admin = may(caller, "sa:admin:sources:manage");
@@ -41,18 +43,19 @@ export function panelNav(t: T, caller: Caller, marks: Marks): PanelNav {
     trailing: <ArrowUpRight aria-hidden className="size-4 text-ink-soft" />,
   };
   const reviewArchive: NavItem = { id: "review_archive", href: ROUTES.reviewArchive, label: t("nav.reviewArchive"), icon: Archive };
+  const walletItem: NavItem = { id: "wallet", href: ROUTES.wallet, label: t("nav.wallet"), icon: Wallet };
   const elsewhere = (analysis && marks.experiments) || (admin && marks.sources);
   const more: NavItem = {
     id: "more",
     href: ROUTES.more,
     label: t("nav.more"),
     icon: Ellipsis,
-    also: [...(work ? [ROUTES.reviewArchive, ROUTES.pricing] : []), ...(analysis ? [ROUTES.experiments] : []), ...(admin ? [ROUTES.sources] : [])],
+    also: [...(work ? [ROUTES.reviewArchive, ROUTES.pricing, ...(wallet ? [ROUTES.wallet] : [])] : []), ...(analysis ? [ROUTES.experiments] : []), ...(admin ? [ROUTES.sources] : [])],
     ...(elsewhere ? { badge: dot(true) } : {}),
   };
 
   const groups: NavGroup[] = [];
-  if (work) groups.push({ id: "work", label: t("nav.group.work"), items: [overview, leads, places, pricing] });
+  if (work) groups.push({ id: "work", label: t("nav.group.work"), items: [overview, leads, places, pricing, ...(wallet ? [walletItem] : [])] });
   if (analysis) groups.push({ id: "analysis", label: t("nav.group.analysis"), items: [experiments, grafana] });
   if (admin) groups.push({ id: "admin", label: t("nav.group.admin"), items: [sources] });
   groups.push({ id: "archive", label: t("nav.group.archive"), items: [reviewArchive] });

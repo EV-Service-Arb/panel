@@ -1,13 +1,14 @@
 "use client";
 
 import { Button, Item, ItemActions, ItemContent, ItemGroup, ItemTitle, NavDot } from "@evinvest/uikit";
-import { Archive, ArrowUpRight, CircleUser, FlaskConical, KeyRound, LayoutGrid, type LucideIcon, Tags, Users } from "lucide-react";
+import { Archive, ArrowUpRight, CircleUser, FlaskConical, KeyRound, LayoutGrid, type LucideIcon, Tags, Users, Wallet } from "lucide-react";
 import Link from "next/link";
 
 import { DevSignInBadge, may, useMe } from "@/entities/session";
 import { useSignOut } from "@/features/sign-out";
 import { switchAccountPath } from "@/shared/api";
 import { ROUTES } from "@/shared/config/routes";
+import { WALLET_PAGE_ENABLED } from "@/shared/config/wallet-page";
 import { type MessageKey, useT } from "@/shared/i18n";
 import { useNavMark } from "@/shared/lib/nav-marks";
 import { LiveStatusIndicator } from "@/shared/ui/live-status";
@@ -33,6 +34,7 @@ export function MoreView() {
         {may(me, "sa:review_archive:members:act_as") && <MoreLink href={ROUTES.reviewArchiveActAs} icon={Users} label="account.actAs" />}
         {may(me, "sa:work:read") && <MoreLink href={ROUTES.reviewArchive} icon={Archive} label="nav.reviewArchive" />}
         {may(me, "sa:work:read") && <MoreLink href={ROUTES.pricing} icon={Tags} label="nav.pricing" />}
+        {WALLET_PAGE_ENABLED && may(me, "sa:work:read") && <MoreLink href={ROUTES.wallet} icon={Wallet} label="nav.wallet" />}
         {may(me, "sa:analysis:read") && <MoreLink href={ROUTES.experiments} icon={FlaskConical} label="nav.experiments" />}
         {may(me, "sa:admin:sources:manage") && <MoreLink href={ROUTES.sources} icon={KeyRound} label="nav.sources" />}
         <Item variant="outline" size="sm" asChild>
