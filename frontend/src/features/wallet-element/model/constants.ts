@@ -9,8 +9,9 @@ export const WALLET_API_VERSION = 2;
  * Not served by the panel on purpose: the element talks to the origin it was loaded from
  * (balances, history, action pages), so a copy under the panel's origin would ask the panel for
  * `/api/wallet`. Cross-origin means the panel's CSP must name this directory in `script-src`
- * and the origin in `connect-src`; until it does the browser refuses the script and the page
- * shows its "unavailable" state.
+ * and the origin in `connect-src`; the server does that when it runs with
+ * PANEL_CSP_PLATFORM_MFE=1. Without it the browser refuses the script and the page shows its
+ * "unavailable" state.
  */
 export const WALLET_SCRIPT = "https://evinvest.ltd/wallet/mfe/wallet.js";
 

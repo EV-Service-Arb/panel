@@ -10,6 +10,7 @@ import {
   dismissOverlay,
   openOverlay,
   overlayState,
+  platformMfe,
   redirectToSignIn,
   registerOverlayHost,
   subscribeOverlay,
@@ -21,19 +22,22 @@ import { useButtonSize } from "@/shared/ui/touch";
 const BUNDLE_BUDGET_MS = 5000;
 
 /**
- * Same-origin on purpose: the panel's CSP is `script-src 'self'; connect-src 'self'`, so neither
- * evinvest.ltd's registry nor its bundle can be fetched from here. The panel server proxies the
- * bundle at this path.
+ * Same-origin unless the platform source is on (`NEXT_PUBLIC_MFE_PLATFORM=1`, which needs the
+ * server's PANEL_CSP_PLATFORM_MFE=1 too): the CSP is then `'self'` only, so the panel server
+ * proxies the bundle at this path.
  */
 const SIGN_IN_SCRIPT = "/auth/mfe/sign-in.js";
 
-/** True once the sign-in element is defined and new enough; false: script unreachable, blocked, too old or slow. */
-async function loadSignIn(): Promise<boolean> {
+/** The bundle URL once the sign-in element is defined and new enough; null: script unreachable, blocked, too old or slow. */
+async function loadSignIn(): Promise<string | null> {
   try {
-    return await loadElement(SIGN_IN_TAG, SIGN_IN_SCRIPT, { minApiVersion: API_VERSION, timeoutMs: BUNDLE_BUDGET_MS });
+    const scriptUrl = await platformMfe.scriptUrl("signIn", SIGN_IN_SCRIPT, BUNDLE_BUDGET_MS);
+    if (scriptUrl === null) return null;
+    const ok = await loadElement(SIGN_IN_TAG, scriptUrl, { minApiVersion: API_VERSION, timeoutMs: BUNDLE_BUDGET_MS });
+    return ok ? scriptUrl : null;
   } catch {
     // The same answer as a timeout: the old redirect.
-    return false;
+    return null;
   }
 }
 
@@ -47,29 +51,29 @@ export function SignInOverlay() {
   const t = useT();
   const button = useButtonSize();
   const state = useSyncExternalStore(subscribeOverlay, overlayState, () => "idle");
-  const [ready, setReady] = useState(false);
+  const [scriptUrl, setScriptUrl] = useState<string | null>(null);
 
   useEffect(() => registerOverlayHost(), []);
 
   useEffect(() => {
-    if (state !== "open" || ready) return;
+    if (state !== "open" || scriptUrl !== null) return;
     let stale = false;
-    void loadSignIn().then(ok => {
+    void loadSignIn().then(url => {
       if (stale) return;
-      if (ok) setReady(true);
+      if (url !== null) setScriptUrl(url);
       else redirectToSignIn();
     });
     return () => {
       stale = true;
     };
-  }, [state, ready]);
+  }, [state, scriptUrl]);
 
   if (state === "idle") return null;
   return (
     <>
-      {ready && (
+      {scriptUrl !== null && (
         <SignInDialog
-          scriptUrl={SIGN_IN_SCRIPT}
+          scriptUrl={scriptUrl}
           open={state === "open"}
           onOpenChange={open => {
             if (!open) dismissOverlay();

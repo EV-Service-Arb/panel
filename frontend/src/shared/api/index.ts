@@ -4,3 +4,5 @@ export type { ApiFailure, Http, HttpDeps, Query } from "./http";
 export { CSRF_HEADER, readCsrf } from "./csrf";
 export { IDEMPOTENCY_HEADER, attemptFor, newIdempotencyKey } from "./idempotency";
 export type { Attempt } from "./idempotency";
+export { PLATFORM_MFE_ENABLED, createPlatformMfe, platformMfe } from "./platform-mfe";
+export type { PlatformMfe, PlatformMfeOptions } from "./platform-mfe";

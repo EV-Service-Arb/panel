@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { CHIP_ATTRIBUTE_NAMES, CHIP_TAG, type ChipAttributes } from "../model/attributes";
+import { CHIP_ATTRIBUTE_NAMES, type ChipAttributes } from "../model/attributes";
 import { routeOfNavigateEvent } from "../model/navigation";
 
 function applyAttributes(element: HTMLElement, attributes: ChipAttributes): void {
@@ -34,7 +34,7 @@ export interface ChipHandlers {
   onNavigate: (route: string) => void;
 }
 
-export function useChipElement(ready: boolean, attributes: ChipAttributes, handlers: ChipHandlers, remountKey: string) {
+export function useChipElement(tag: string, ready: boolean, attributes: ChipAttributes, handlers: ChipHandlers, remountKey: string) {
   const hostRef = useRef<HTMLDivElement>(null);
   const elementRef = useRef<HTMLElement | null>(null);
   const latest = useRef({ attributes, handlers });
@@ -47,7 +47,7 @@ export function useChipElement(ready: boolean, attributes: ChipAttributes, handl
   useEffect(() => {
     const host = hostRef.current;
     if (!ready || !host) return;
-    const element = document.createElement(CHIP_TAG);
+    const element = document.createElement(tag);
     applyAttributes(element, latest.current.attributes);
     const forwardSignOut = () => latest.current.handlers.onSignOut();
     const forwardNavigate = (event: Event) => {
@@ -71,7 +71,7 @@ export function useChipElement(ready: boolean, attributes: ChipAttributes, handl
       element.remove();
       elementRef.current = null;
     };
-  }, [ready, remountKey]);
+  }, [tag, ready, remountKey]);
 
   // Serialised so a fresh but equal object (every render) does not touch the element.
   const attributesKey = JSON.stringify(attributes);
