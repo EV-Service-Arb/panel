@@ -7,6 +7,7 @@ export const ROUTES = {
   sources: "/sources",
   more: "/more",
   account: "/account",
+  wallet: "/wallet",
   reviewArchive: "/review_archive/",
   /** The review archive's own views: full navigations into its page. */
   reviewArchiveTokens: "/review_archive/tokens",

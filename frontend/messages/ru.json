@@ -688,5 +688,11 @@
   "placeSettings.preview.telegram": "Telegram",
   "sources.kind.bot": "Бот (WhatsApp/Telegram)",
   "channel.other": "Другой канал",
-  "messenger.doneOther": "Написал · {at}"
+  "messenger.doneOther": "Написал · {at}",
+  "nav.wallet": "Кошелёк",
+  "wallet.title": "Кошелёк",
+  "wallet.description": "Балансы и последние операции отсека Service-Arb.",
+  "wallet.unavailable.title": "Кошелёк недоступен",
+  "wallet.unavailable.body": "Не удалось загрузить кошелёк. Попробуйте позже.",
+  "wallet.off.body": "Кошелёк для этой панели ещё не включён."
 }

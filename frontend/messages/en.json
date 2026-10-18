@@ -688,5 +688,11 @@
   "placeSettings.preview.telegram": "Telegram",
   "sources.kind.bot": "Bot (WhatsApp/Telegram)",
   "channel.other": "Another channel",
-  "messenger.doneOther": "Messaged · {at}"
+  "messenger.doneOther": "Messaged · {at}",
+  "nav.wallet": "Wallet",
+  "wallet.title": "Wallet",
+  "wallet.description": "Balances and recent activity of the Service-Arb compartment.",
+  "wallet.unavailable.title": "Wallet is unavailable",
+  "wallet.unavailable.body": "The wallet could not be loaded. Try again later.",
+  "wallet.off.body": "The wallet is not enabled for this panel yet."
 }
