@@ -1,6 +1,9 @@
 //! Composition root: settings, error monitoring and logs, then the CLI over the engine's
 //! `Panel`.
 
+// `ev_lib::settings!` expands once per field and recurses; the settings outgrew the default 128.
+#![recursion_limit = "256"]
+
 mod settings;
 
 use std::{collections::BTreeSet, net::SocketAddr};
@@ -242,6 +245,7 @@ async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSign
 			let front_end = Edge {
 				files: settings.web()?,
 				cabinet: settings.cabinet()?,
+				concierge_mfe: settings.concierge_mfe()?,
 			};
 			let capture = settings.capture()?.map(|c| CaptureApi::new(&c.host, &c.key)).transpose()?;
 			let google = google(&settings)?;
@@ -507,6 +511,8 @@ struct Edge {
 	files: Option<Files>,
 	/// `PANEL_CABINET_URL` and its pins, behind `/cabinet/mfe`.
 	cabinet: settings::CabinetSettings,
+	/// `PANEL_CHIP_SOURCE=concierge`: concierge's elements behind `/auth/mfe`.
+	concierge_mfe: Option<settings::ConciergeMfeSettings>,
 }
 
 /// Who signs people in.
@@ -638,6 +644,19 @@ async fn serve(
 			tracing::warn!(unset = unset.join(", "), "no /cabinet/mfe, the account chip is not served");
 			app
 		}
+	};
+	let app = match front_end.concierge_mfe {
+		None => app,
+		Some(settings::ConciergeMfeSettings { url, pins }) => match panel_server::forward::ConciergeMfe::configured(url, pins) {
+			Ok(concierge) => {
+				tracing::info!("serving concierge's /auth/mfe, pinned (PANEL_CHIP_SOURCE=concierge)");
+				app.merge(concierge.routes())
+			}
+			Err(unset) => {
+				tracing::warn!(unset = unset.join(", "), "PANEL_CHIP_SOURCE=concierge, but no /auth/mfe: the chip is not served from concierge");
+				app
+			}
+		},
 	};
 	let app = match front_end.files {
 		Some(files) => web::serve(app, files),

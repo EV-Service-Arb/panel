@@ -10,10 +10,14 @@
 //! /playbook_mcp/*, two .well-known → playbook (same path)       open: OAuth and bearer, no cookie
 //! /cabinet/mfe/<file>.{js,css}     → cabinet (same path)        open, GET/HEAD: the account chip,
 //!                                                               each file pinned by its SHA-256
+//! /auth/mfe/{account-chip,sign-in}.js → concierge /auth/mfe/<hashed file>
+//!                                                               open, GET/HEAD, only with
+//!                                                               PANEL_CHIP_SOURCE=concierge; pinned
 //! ```
 //!
-//! The cabinet is no `sa_auth` service and is told nobody, so it is not one of `ROUTES`
-//! but a [`Cabinet`] of its own, mounted without the sign-in.
+//! The cabinet and concierge are no `sa_auth` services and are told nobody, so they are not
+//! among `ROUTES` but a [`Cabinet`] and a [`ConciergeMfe`] of their own, mounted without the
+//! sign-in.
 
 use std::time::Duration;
 
@@ -246,6 +250,9 @@ fn strip(headers: &mut HeaderMap, names: &[&str]) {
 /// so the page's `script-src 'self'` admits them. The cabinet answers the same path (its
 /// `next.config.ts` rewrites it onto its `public/mfe/`).
 pub const CABINET_MFE: &str = "/cabinet/mfe";
+/// Where the panel serves concierge's elements: concierge's own path (publicly under
+/// `/api`, which the panel has no use for), on the panel's origin.
+pub const CONCIERGE_MFE: &str = "/auth/mfe";
 
 /// The files handed out, by extension, and the types each must come back as. What the
 /// cabinet's esbuild writes (`cabinet/frontend/mfe/build.mjs`): one `.js`, one `.css`. No
@@ -296,6 +303,8 @@ pub enum BadPins {
 	Digest(String),
 	#[error("`{0}` is pinned twice")]
 	Twice(String),
+	#[error("`{0}` is not served from concierge (only {CONCIERGE_FILES})")]
+	Unserved(String),
 }
 
 impl CabinetPins {
@@ -381,14 +390,37 @@ impl Cabinet {
 	/// `GET` and `HEAD` of `/cabinet/mfe/*`; any other method is a 405. At most
 	/// `CABINET_CONCURRENT` at once, past it a 503 rather than a queue.
 	pub fn routes(self) -> Router {
-		let layers = ServiceBuilder::new()
-			// The only error the layers below raise is the shed: everything else is a response.
-			.layer(HandleErrorLayer::new(|_: tower::BoxError| async { json_error(StatusCode::SERVICE_UNAVAILABLE, "busy, try again") }))
-			.load_shed()
-			.layer(GlobalConcurrencyLimitLayer::with_semaphore(std::sync::Arc::new(tokio::sync::Semaphore::new(CABINET_CONCURRENT))))
-			.layer(TimeoutLayer::with_status_code(StatusCode::SERVICE_UNAVAILABLE, CABINET_ROUTE_TIMEOUT));
-		Router::new().route(&format!("{CABINET_MFE}/{{*file}}"), get(cabinet_mfe).layer(layers)).with_state(self)
+		bounded_get(&format!("{CABINET_MFE}/{{*file}}"), cabinet_mfe, self)
 	}
+}
+
+/// `GET` (and so `HEAD`) of `path` alone, under the limits every mfe route shares: at most
+/// `CABINET_CONCURRENT` at once and [`CABINET_ROUTE_TIMEOUT`] in all, each a 503.
+fn bounded_get<H, T, S>(path: &str, handler: H, state: S) -> Router
+where
+	H: axum::handler::Handler<T, S>,
+	T: 'static,
+	S: Clone + Send + Sync + 'static, {
+	let layers = ServiceBuilder::new()
+		// The only error the layers below raise is the shed: everything else is a response.
+		.layer(HandleErrorLayer::new(|_: tower::BoxError| async { json_error(StatusCode::SERVICE_UNAVAILABLE, "busy, try again") }))
+		.load_shed()
+		.layer(GlobalConcurrencyLimitLayer::with_semaphore(std::sync::Arc::new(tokio::sync::Semaphore::new(CABINET_CONCURRENT))))
+		.layer(TimeoutLayer::with_status_code(StatusCode::SERVICE_UNAVAILABLE, CABINET_ROUTE_TIMEOUT));
+	Router::new().route(path, get(handler).layer(layers)).with_state(state)
+}
+
+/// The one request an mfe file is asked for: [`CABINET_UP`] of the browser's headers and
+/// nothing else.
+fn upstream_get(uri: Uri, from: &HeaderMap) -> Request {
+	let mut up = axum::http::Request::get(uri);
+	for name in &CABINET_UP {
+		for v in from.get_all(name) {
+			up = up.header(name, v);
+		}
+	}
+	// Built from a parsed URI and headers copied from a request: it cannot fail.
+	up.body(Body::empty()).expect("a GET of a parsed URI")
 }
 
 /// The types `file` may come back as, if it is a name the bundle could have: segments of
@@ -422,6 +454,8 @@ enum Unanswered {
 	Encoded(HeaderValue),
 	#[error("sha256 {got} is not the pinned one")]
 	Pin { got: String },
+	#[error("the manifest: {0}")]
+	Manifest(String),
 }
 
 fn not_found() -> Response {
@@ -441,15 +475,8 @@ async fn cabinet_mfe(State(c): State<Cabinet>, req: Request) -> Response {
 	let Ok(uri) = format!("{}{path}", c.base).parse::<Uri>() else {
 		return not_found();
 	};
-	let mut up = axum::http::Request::get(uri);
-	for name in &CABINET_UP {
-		for v in req.headers().get_all(name) {
-			up = up.header(name, v);
-		}
-	}
-	// Built from a parsed URI and headers copied from a request: it cannot fail.
-	let up = up.body(Body::empty()).expect("a GET of a parsed URI");
-	match fetch(&c, up, types, pin).await {
+	let up = upstream_get(uri, req.headers());
+	match fetch(&c.client, up, types, pin).await {
 		Ok(res) => res,
 		Err(Unanswered::Status(StatusCode::NOT_FOUND)) => not_found(),
 		Err(e) => {
@@ -462,9 +489,9 @@ async fn cabinet_mfe(State(c): State<Cabinet>, req: Request) -> Response {
 /// The file, whole, of its type and of its pin, or why not. A redirect is not followed and
 /// not passed down: its `Location` would be the cabinet's address inside the cluster. A 304
 /// passes unchecked: it carries no bytes, and the browser's copy came from here, checked.
-async fn fetch(c: &Cabinet, up: Request, types: &[&str], pin: &[u8; 32]) -> Result<Response, Unanswered> {
+async fn fetch(client: &Client<HttpConnector, Body>, up: Request, types: &[&str], pin: &[u8; 32]) -> Result<Response, Unanswered> {
 	let (parts, body) = tokio::time::timeout(CABINET_TIMEOUT, async {
-		let (parts, body) = c.client.request(up).await?.into_parts();
+		let (parts, body) = client.request(up).await?.into_parts();
 		let body = Limited::new(body, CABINET_MAX_BYTES).collect().await.map_err(Unanswered::Body)?.to_bytes();
 		Ok::<_, Unanswered>((parts, body))
 	})
@@ -499,6 +526,127 @@ async fn fetch(c: &Cabinet, up: Request, types: &[&str], pin: &[u8; 32]) -> Resu
 	h.insert(header::CACHE_CONTROL, HeaderValue::from_static(CABINET_CACHE));
 	h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
 	Ok(res)
+}
+
+/// What concierge serves under `/auth/mfe/` (its `web/scripts/build.mjs`) and the panel hands
+/// out, by the stable name the front end loads: the entry of the manifest that names the
+/// current, content-hashed file. Not the cabinet's `<file>.css`: concierge inlines each
+/// element's stylesheet into its script. Account page and the like stay off this origin.
+const CONCIERGE_ELEMENTS: [(&str, &str); 2] = [("account-chip.js", "concierge.account-chip"), ("sign-in.js", "concierge.sign-in")];
+/// For [`BadPins::Unserved`].
+const CONCIERGE_FILES: &str = "account-chip.js and sign-in.js";
+/// The manifest hosts read to find the current bundles (concierge's `registry.json`).
+const CONCIERGE_MANIFEST: &str = "registry.json";
+/// A few entries; far over what it takes.
+const CONCIERGE_MANIFEST_MAX_BYTES: usize = 64 << 10;
+const CONCIERGE_MANIFEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// `PANEL_CONCIERGE_MFE_PINS`: [`CabinetPins`] naming only what [`CONCIERGE_ELEMENTS`] serves,
+/// so a pin for a name that never matches (a typo) fails the boot, not the chip.
+pub fn concierge_pins(raw: &str) -> Result<CabinetPins, BadPins> {
+	let pins = CabinetPins::parse(raw)?;
+	match pins.0.keys().find(|f| !CONCIERGE_ELEMENTS.iter().any(|(served, _)| served == f)) {
+		Some(f) => Err(BadPins::Unserved(f.clone())),
+		None => Ok(pins),
+	}
+}
+
+/// The account chip and the sign-in element, served from concierge's own `/auth/mfe/` on the
+/// panel's origin (`PANEL_CHIP_SOURCE=concierge`), so that the page's `script-src 'self'`
+/// admits them. Held to what [`Cabinet`] is held to, and by the same code: the pinned bytes,
+/// the type, the limits, no cookie up, no cookie down. Concierge names its files by content
+/// hash, so the panel asks its manifest which file is current and serves it under a stable
+/// name; the manifest is no trust (it is a path to try), the pin is.
+#[derive(Clone)]
+pub struct ConciergeMfe {
+	/// A bare `http://` origin, without the trailing slash: concierge's web port, in-cluster.
+	base: std::sync::Arc<str>,
+	pins: std::sync::Arc<CabinetPins>,
+	client: Client<HttpConnector, Body>,
+}
+
+impl ConciergeMfe {
+	pub fn new(base: &Uri, pins: CabinetPins) -> Self {
+		let mut connector = HttpConnector::new();
+		connector.set_connect_timeout(Some(Duration::from_secs(5)));
+		Self {
+			base: base.to_string().trim_end_matches('/').into(),
+			pins: std::sync::Arc::new(pins),
+			client: Client::builder(hyper_util::rt::TokioExecutor::new()).build(connector),
+		}
+	}
+
+	/// As [`Cabinet::configured`]: concierge's web address and its pins, or the names of
+	/// what is missing. Fail closed.
+	pub fn configured(url: Option<Uri>, pins: Option<CabinetPins>) -> Result<Self, Vec<&'static str>> {
+		match (url, pins) {
+			(Some(url), Some(pins)) => Ok(Self::new(&url, pins)),
+			(url, pins) => Err([("PANEL_CONCIERGE_URL", url.is_none()), ("PANEL_CONCIERGE_MFE_PINS", pins.is_none())]
+				.into_iter()
+				.filter_map(|(name, unset)| unset.then_some(name))
+				.collect()),
+		}
+	}
+
+	/// `GET` and `HEAD` of `/auth/mfe/<name>.js` for the names of [`CONCIERGE_ELEMENTS`].
+	pub fn routes(self) -> Router {
+		bounded_get(&format!("{CONCIERGE_MFE}/{{file}}"), concierge_mfe, self)
+	}
+
+	/// The file concierge's manifest names for `element` today. Only its last segment is
+	/// used, and only if it is a plain `.js` name: the path asked for is built here.
+	async fn current(&self, element: &str) -> Result<String, Unanswered> {
+		#[derive(serde::Deserialize)]
+		struct Entry {
+			name: String,
+			#[serde(rename = "scriptUrl")]
+			script_url: String,
+		}
+		let uri: Uri = format!("{}{CONCIERGE_MFE}/{CONCIERGE_MANIFEST}", self.base)
+			.parse()
+			.map_err(|_| Unanswered::Manifest("not a URL".into()))?;
+		let (parts, body) = tokio::time::timeout(CONCIERGE_MANIFEST_TIMEOUT, async {
+			let (parts, body) = self.client.request(upstream_get(uri, &HeaderMap::new())).await?.into_parts();
+			let body = Limited::new(body, CONCIERGE_MANIFEST_MAX_BYTES).collect().await.map_err(Unanswered::Body)?.to_bytes();
+			Ok::<_, Unanswered>((parts, body))
+		})
+		.await
+		.map_err(|_elapsed| Unanswered::Timeout)??;
+		if parts.status != StatusCode::OK {
+			return Err(Unanswered::Status(parts.status));
+		}
+		let entries: Vec<Entry> = serde_json::from_slice(&body).map_err(|e| Unanswered::Manifest(e.to_string()))?;
+		let entry = entries.iter().find(|e| e.name == element).ok_or_else(|| Unanswered::Manifest(format!("no entry `{element}`")))?;
+		let file = entry.script_url.rsplit('/').next().unwrap_or_default();
+		if bundle_types(file) != Some(BUNDLE[0].1) || file.contains('/') {
+			return Err(Unanswered::Manifest(format!("`{file}` is no script of the bundle")));
+		}
+		Ok(file.to_owned())
+	}
+}
+
+async fn concierge_mfe(State(c): State<ConciergeMfe>, axum::extract::Path(file): axum::extract::Path<String>, req: Request) -> Response {
+	// Before concierge is asked: a name that is not served or not pinned is no file of ours.
+	let (Some((_, element)), Some(pin)) = (CONCIERGE_ELEMENTS.iter().find(|(served, _)| *served == file), c.pins.get(&file)) else {
+		return not_found();
+	};
+	// Copied out before the first await: a request body is not `Sync`, so a borrow of `req`
+	// held across one would make the handler's future unsendable.
+	let headers = req.headers().clone();
+	let served = async {
+		let current = c.current(element).await?;
+		// The query is dropped: a static file has no use for one.
+		let uri: Uri = format!("{}{CONCIERGE_MFE}/{current}", c.base).parse().map_err(|_| Unanswered::Manifest("not a URL".into()))?;
+		fetch(&c.client, upstream_get(uri, &headers), BUNDLE[0].1, pin).await
+	};
+	match served.await {
+		Ok(res) => res,
+		Err(Unanswered::Status(StatusCode::NOT_FOUND)) => not_found(),
+		Err(e) => {
+			tracing::warn!(error = %e, file, "concierge gave no mfe file");
+			json_error(StatusCode::BAD_GATEWAY, "concierge did not answer")
+		}
+	}
 }
 
 #[cfg(test)]
@@ -569,5 +717,14 @@ mod tests {
 		assert_eq!(route("/api/review_archive/me"), Some(("/api/review_archive", Gate::Session { csrf: true })));
 		assert_eq!(route("/api/review_archived"), None);
 		assert_eq!(route("/review_archive"), None, "the page is the front end's");
+	}
+
+	#[test]
+	fn concierge_pins_name_only_what_is_served() {
+		let h = "0f".repeat(32);
+		assert!(concierge_pins(&format!("account-chip.js={h},sign-in.js={h}")).is_ok());
+		assert_eq!(concierge_pins(&format!("account-chip.css={h}")), Err(BadPins::Unserved("account-chip.css".into())));
+		assert_eq!(concierge_pins(&format!("chip.js={h}")), Err(BadPins::Unserved("chip.js".into())));
+		assert_eq!(concierge_pins(""), Err(BadPins::Empty));
 	}
 }

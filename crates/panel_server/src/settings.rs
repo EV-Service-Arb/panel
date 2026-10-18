@@ -2,7 +2,7 @@
 
 use panel::seal::DataKey;
 use panel_core::notify::Locale;
-use panel_server::forward::CabinetPins;
+use panel_server::forward::{self, CabinetPins};
 use sa_auth::{Catalog, PermissionSet};
 use sha2::{Digest, Sha256};
 
@@ -61,6 +61,19 @@ ev_lib::settings! {
 		/// (`mfe:pins`): `account-chip.js=<hex>,account-chip.css=<hex>`. Unset: nothing is
 		/// served, whatever `PANEL_CABINET_URL` says. Not a secret: the files are public.
 		panel_cabinet_mfe_pins: Option<String>,
+		/// Where the account chip (and the sign-in element) come from: `cabinet` (the default,
+		/// `/cabinet/mfe`) or `concierge` (`/auth/mfe`, from `PANEL_CONCIERGE_URL`). The
+		/// cabinet's route stays mounted either way; only `concierge` mounts the new one.
+		panel_chip_source: Option<String>,
+		/// concierge's web port, from inside the cluster, e.g. `http://concierge:55671` (not its
+		/// gRPC, `CONCIERGE_GRPC_ADDR`): `/auth/mfe/*` is fetched from it. Read only with
+		/// `PANEL_CHIP_SOURCE=concierge`.
+		panel_concierge_url: Option<String>,
+		/// The SHA-256 of each file `/auth/mfe` serves, as the build of concierge's `web/`
+		/// prints them: `account-chip.js=<hex>,sign-in.js=<hex>`. Unset: nothing is served,
+		/// whatever `PANEL_CONCIERGE_URL` says. Not a secret. Read only with
+		/// `PANEL_CHIP_SOURCE=concierge`.
+		panel_concierge_mfe_pins: Option<String>,
 		/// The panel's bot (`@evinvest_sa_bot`; not `telegram_token_main`). Unset: no Telegram
 		/// notifications, and `serve` says so. Needs the sign-in configured too.
 		#[secret]
@@ -389,6 +402,35 @@ pub struct CabinetSettings {
 	pub pins: Option<CabinetPins>,
 }
 
+/// `PANEL_CONCIERGE_URL` and `PANEL_CONCIERGE_MFE_PINS`, checked.
+#[derive(Debug)]
+pub struct ConciergeMfeSettings {
+	pub url: Option<axum::http::Uri>,
+	pub pins: Option<CabinetPins>,
+}
+
+impl Settings {
+	/// concierge's elements behind `/auth/mfe`: `None` unless `PANEL_CHIP_SOURCE=concierge`,
+	/// and then the other two variables are read, each `None` when unset and served only with
+	/// both. Read only then so that a half-done rollout cannot fail the boot of a panel that
+	/// still serves the chip from the cabinet; with the flag on, malformed fails it.
+	pub fn concierge_mfe(&self) -> eyre::Result<Option<ConciergeMfeSettings>> {
+		let set = |v: &Option<String>| v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+		let source = set(&self.panel_chip_source);
+		match source.as_deref() {
+			None | Some("cabinet") => return Ok(None),
+			Some("concierge") => {}
+			Some(other) => eyre::bail!("PANEL_CHIP_SOURCE must be `cabinet` or `concierge`, not `{other}`"),
+		}
+		Ok(Some(ConciergeMfeSettings {
+			url: set(&self.panel_concierge_url).map(|raw| bare_http_origin("PANEL_CONCIERGE_URL", &raw)).transpose()?,
+			pins: set(&self.panel_concierge_mfe_pins)
+				.map(|raw| forward::concierge_pins(&raw).map_err(|e| eyre::eyre!("PANEL_CONCIERGE_MFE_PINS: {e}")))
+				.transpose()?,
+		}))
+	}
+}
+
 /// An in-cluster peer's address: `http://host[:port]`, nothing after it.
 fn bare_http_origin(name: &str, raw: &str) -> eyre::Result<axum::http::Uri> {
 	let raw = raw.trim();
@@ -531,6 +573,9 @@ mod tests {
 				"PANEL_PLAYBOOK_URL",
 				"PANEL_CABINET_URL",
 				"PANEL_CABINET_MFE_PINS",
+				"PANEL_CHIP_SOURCE",
+				"PANEL_CONCIERGE_URL",
+				"PANEL_CONCIERGE_MFE_PINS",
 				"TELEGRAM_BOT_TOKEN",
 				"TELEGRAM_BOT_USERNAME",
 				"TELEGRAM_LOCALE",
@@ -824,6 +869,44 @@ mod tests {
 			let vars = [("PANEL_CABINET_URL", "http://cabinet:50061"), ("PANEL_CABINET_MFE_PINS", raw.as_str())];
 			let e = format!("{}", from(&vars).unwrap().cabinet().unwrap_err());
 			assert!(e.contains("PANEL_CABINET_MFE_PINS") && e.contains(says), "{raw}: {e}");
+		}
+	}
+
+	#[test]
+	fn concierge_serves_the_chip_only_when_asked_to_and_pinned() {
+		let h = "0f".repeat(32);
+		let pins = format!("account-chip.js={h}, sign-in.js={h}");
+		let loose = [("PANEL_CONCIERGE_URL", "https://nope"), ("PANEL_CONCIERGE_MFE_PINS", "garbage")];
+		// the default, and `cabinet` said out loud: the new variables are not even read
+		assert!(from(&loose).unwrap().concierge_mfe().unwrap().is_none());
+		assert!(from(&[("PANEL_CHIP_SOURCE", "cabinet"), loose[0], loose[1]]).unwrap().concierge_mfe().unwrap().is_none());
+		assert!(from(&[("PANEL_CHIP_SOURCE", " ")]).unwrap().concierge_mfe().unwrap().is_none());
+
+		let bare = from(&[("PANEL_CHIP_SOURCE", "concierge")]).unwrap().concierge_mfe().unwrap().unwrap();
+		assert!(bare.url.is_none() && bare.pins.is_none());
+		let on = from(&[
+			("PANEL_CHIP_SOURCE", "concierge"),
+			("PANEL_CONCIERGE_URL", "http://concierge:55671"),
+			("PANEL_CONCIERGE_MFE_PINS", &pins),
+		])
+		.unwrap()
+		.concierge_mfe()
+		.unwrap()
+		.unwrap();
+		assert_eq!(on.url.unwrap().authority().unwrap().as_str(), "concierge:55671");
+		assert_eq!(on.pins, Some(forward::concierge_pins(&pins).unwrap()));
+
+		for (vars, says) in [
+			(vec![("PANEL_CHIP_SOURCE", "banking")], "PANEL_CHIP_SOURCE"),
+			(vec![("PANEL_CHIP_SOURCE", "concierge"), ("PANEL_CONCIERGE_URL", "https://evinvest.ltd")], "PANEL_CONCIERGE_URL"),
+			(vec![("PANEL_CHIP_SOURCE", "concierge"), ("PANEL_CONCIERGE_MFE_PINS", "garbage")], "PANEL_CONCIERGE_MFE_PINS"),
+			(
+				vec![("PANEL_CHIP_SOURCE", "concierge"), ("PANEL_CONCIERGE_MFE_PINS", &*format!("elsewhere.js={h}"))],
+				"not served from concierge",
+			),
+		] {
+			let e = format!("{}", from(&vars).unwrap().concierge_mfe().unwrap_err());
+			assert!(e.contains(says), "{vars:?}: {e}");
 		}
 	}
 

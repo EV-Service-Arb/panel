@@ -10,7 +10,7 @@ use axum::{
 	routing::get,
 };
 use panel_server::{
-	forward::{Cabinet, CabinetPins},
+	forward::{Cabinet, CabinetPins, ConciergeMfe, concierge_pins},
 	web::{self, CSP, Files},
 };
 use tower::ServiceExt;
@@ -192,6 +192,72 @@ async fn the_cabinets_bundle_is_mounted_only_when_configured_and_pinned_and_is_n
 		assert_eq!((status, body.as_str()), (StatusCode::NOT_FOUND, r#"{"error":"not found"}"#), "{uri}");
 		assert!(!is_page(&h), "{uri}: not the SPA's 404 page, /cabinet is reserved");
 	}
+}
+
+/// A concierge's web port: the manifest and one hashed script, the way its `web/` build
+/// writes them, with a `Set-Cookie` the panel must not pass on.
+async fn fake_concierge(script: &'static str) -> std::net::SocketAddr {
+	let manifest = r#"[{"name":"concierge.sign-in","tag":"mfe-concierge-sign-in","scriptUrl":"/api/auth/mfe/sign-in-AAAA.js","kind":"component"},
+		{"name":"concierge.account-chip","tag":"mfe-concierge-account-chip","scriptUrl":"/api/auth/mfe/account-chip-BBBB.js","kind":"component"}]"#;
+	let app = Router::new()
+		.route("/auth/mfe/registry.json", get(move || async move { ([(header::CONTENT_TYPE, "application/json")], manifest) }))
+		.route(
+			"/auth/mfe/account-chip-BBBB.js",
+			get(move || async move { ([(header::CONTENT_TYPE, "text/javascript"), (header::SET_COOKIE, "a=b")], script) }),
+		)
+		.route("/auth/mfe/sign-in-AAAA.js", get(|| async { ([(header::CONTENT_TYPE, "text/html")], "<html>") }));
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let addr = listener.local_addr().unwrap();
+	tokio::spawn(async move { axum::serve(listener, app).await });
+	addr
+}
+
+#[tokio::test]
+async fn concierges_elements_are_served_pinned_under_stable_names() {
+	use sha2::{Digest, Sha256};
+	let export = Export::new();
+	let script = "customElements.define('x',class{})";
+	let hex = |b: &[u8]| Sha256::digest(b).iter().map(|x| format!("{x:02x}")).collect::<String>();
+	let addr = fake_concierge(script).await;
+	let url = || Some(format!("http://{addr}").parse().unwrap());
+	let pins = |chip: &str| Some(concierge_pins(&format!("account-chip.js={chip},sign-in.js={}", hex(b"<html>"))).unwrap());
+
+	let ok = web::serve(
+		app_routes().merge(ConciergeMfe::configured(url(), pins(&hex(script.as_bytes()))).unwrap().routes()),
+		Files::new(&export.web()).unwrap(),
+	);
+	let (status, h, body) = get_(&ok, "/auth/mfe/account-chip.js").await;
+	assert_eq!((status, body.as_str()), (StatusCode::OK, script));
+	assert_eq!(h[header::CACHE_CONTROL], "public, max-age=300");
+	assert!(!h.contains_key(header::SET_COOKIE), "{h:?}");
+	// served by the stable name only; the hashed one and the unpinned are no files of ours
+	for uri in [
+		"/auth/mfe/account-chip-BBBB.js",
+		"/auth/mfe/registry.json",
+		"/auth/mfe/account-chip.css",
+		"/auth/mfe/other.js",
+		"/auth/mfe/%2e%2e",
+	] {
+		assert_eq!(get_(&ok, uri).await.0, StatusCode::NOT_FOUND, "{uri}");
+	}
+	// a script answered as a page does not run
+	assert_eq!(get_(&ok, "/auth/mfe/sign-in.js").await.0, StatusCode::BAD_GATEWAY);
+	assert_eq!(send(&ok, Method::POST, "/auth/mfe/account-chip.js", &[]).await.0, StatusCode::METHOD_NOT_ALLOWED);
+
+	// other bytes than the pinned ones come down as nothing
+	let wrong = web::serve(
+		app_routes().merge(ConciergeMfe::configured(url(), pins(&"0".repeat(64))).unwrap().routes()),
+		Files::new(&export.web()).unwrap(),
+	);
+	let (status, _, body) = get_(&wrong, "/auth/mfe/account-chip.js").await;
+	assert_eq!((status, body.as_str()), (StatusCode::BAD_GATEWAY, r#"{"error":"concierge did not answer"}"#));
+
+	assert_eq!(ConciergeMfe::configured(url(), None).err(), Some(vec!["PANEL_CONCIERGE_MFE_PINS"]));
+	assert_eq!(ConciergeMfe::configured(None, None).err(), Some(vec!["PANEL_CONCIERGE_URL", "PANEL_CONCIERGE_MFE_PINS"]));
+	// not mounted: /auth stays the API's, a JSON 404
+	let (status, h, _) = get_(&app(&export.web()), "/auth/mfe/account-chip.js").await;
+	assert_eq!(status, StatusCode::NOT_FOUND);
+	assert!(!is_page(&h));
 }
 
 #[tokio::test]

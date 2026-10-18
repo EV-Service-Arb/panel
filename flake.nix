@@ -172,9 +172,17 @@
           # (`account-chip.js=<sha256 hex>,account-chip.css=<sha256 hex>`, banking's
           # `npm run mfe:pins`; public, no egress). Either unset, the route is not mounted and
           # answers JSON 404; malformed pins fail the boot.
+          # PANEL_CHIP_SOURCE: `cabinet` (default) or `concierge`. With `concierge` the chip and
+          # the sign-in element are served at /auth/mfe/* from PANEL_CONCIERGE_URL (concierge's
+          # web port, a bare http origin), only with PANEL_CONCIERGE_MFE_PINS
+          # (`account-chip.js=<sha256 hex>,sign-in.js=<sha256 hex>`, printed by the build of
+          # concierge's web/; public). Not read at all under `cabinet`.
           optionalEnv = [
             "PANEL_CABINET_URL"
             "PANEL_CABINET_MFE_PINS"
+            "PANEL_CHIP_SOURCE"
+            "PANEL_CONCIERGE_URL"
+            "PANEL_CONCIERGE_MFE_PINS"
             "SENTRY_DSN"
             "TELEGRAM_BOT_TOKEN"
             "TELEGRAM_BOT_USERNAME"
@@ -202,7 +210,7 @@
           egress = {
             # in-cluster peers, at the addresses these name: concierge's gRPC, and the services
             # the forward reaches (docs/ARCHITECTURE.md, Forward)
-            grpcEnv = [ "CONCIERGE_GRPC_ADDR" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" "PANEL_CABINET_URL" ];
+            grpcEnv = [ "CONCIERGE_GRPC_ADDR" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" "PANEL_CABINET_URL" "PANEL_CONCIERGE_URL" ];
             # the Bot API; PostHog's capture host (POSTHOG_HOST's default — follow it if it is
             # pointed elsewhere); Google's token endpoint and Calendar API for the booking pull
             hosts = [ "api.telegram.org:443" "us.i.posthog.com:443" "oauth2.googleapis.com:443" "www.googleapis.com:443" ];
