@@ -13,6 +13,7 @@ import {
   platformMfe,
   redirectToSignIn,
   registerOverlayHost,
+  SIGN_IN_PATH,
   subscribeOverlay,
 } from "@/shared/api";
 import { useT } from "@/shared/i18n";
@@ -44,7 +45,9 @@ async function loadSignIn(): Promise<string | null> {
 /**
  * The concierge sign-in dialog over the dimmed panel, shown when a 401 arrives and the overlay is
  * on. The element draws its own backdrop. When it signs in, the existing RP login runs
- * (`/auth/login` -> authorize -> callback); when the bundle cannot be had in time, so does the
+ * (`/auth/login` -> authorize -> callback); the OAuth round trip is sent to `/auth/login` itself
+ * because concierge accepts only the tenant's registered return paths, not whatever page this is
+ * (absolute, since the SDK drops a root-relative `returnTo`); when the bundle cannot be had in time, so does the
  * redirect it replaces.
  */
 export function SignInOverlay() {
@@ -78,6 +81,7 @@ export function SignInOverlay() {
           onOpenChange={open => {
             if (!open) dismissOverlay();
           }}
+          returnTo={window.location.origin + SIGN_IN_PATH}
           onSignedIn={redirectToSignIn}
         />
       )}
