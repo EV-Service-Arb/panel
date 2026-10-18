@@ -220,6 +220,9 @@ it — the front end's reserved paths (`web.rs`) are derived from it.
 /playbook_mcp/*, /.well-known/oauth-{authorization-server,protected-resource}/playbook_mcp
                                  → playbook (same path)         open: OAuth and bearer clients
 /cabinet/mfe/<name>.{js,css}     → cabinet /cabinet/mfe/*       open, GET/HEAD: the account chip's bundle
+/auth/mfe/{account-chip,sign-in}.js
+                                 → concierge /auth/mfe/<hashed> open, GET/HEAD: the chip and the sign-in
+                                                                element; only PANEL_CHIP_SOURCE=concierge
 ```
 
 - **The cabinet** (`forward::Cabinet`, `PANEL_CABINET_URL`) is not in the table: it is no
@@ -235,6 +238,31 @@ it — the front end's reserved paths (`web.rs`) are derived from it.
   anything else — a redirect, an encoded body, a pin mismatch included — is a 502. At most
   32 files at once, past that a 503.
   Unset, `/cabinet` is still reserved: a JSON 404, never the front end's page.
+- **concierge's elements** (`forward::ConciergeMfe`, `PANEL_CHIP_SOURCE=concierge`) are the
+  same kind of route, held by the same code (limits, headers, type check, 4 MiB / 10 s, no
+  cookie either way, pin or 502), for `account-chip.js` and `sign-in.js` under `/auth/mfe/`
+  (concierge's own path; publicly it sits under `/api`, which the panel has no use for).
+  Concierge names its files by content hash, so the panel first reads its manifest
+  `/auth/mfe/registry.json` (at most 64 KiB, 5 s) for the entry of the element
+  (`concierge.account-chip`, `concierge.sign-in`) and fetches the file that names, under the
+  stable name the page loads. The manifest is no trust, only a path to try: just the last
+  segment of its `scriptUrl` is used, and only if it is a plain `.js` name; the pin decides.
+  concierge inlines each element's stylesheet, so there is no `.css`. Pins are
+  `PANEL_CONCIERGE_MFE_PINS` (`account-chip.js=<hex>,sign-in.js=<hex>`, any other name fails
+  the boot), the origin is `PANEL_CONCIERGE_URL` (concierge's web port, a bare `http://`
+  origin, not its gRPC). `PANEL_CHIP_SOURCE` is `cabinet` (default) or `concierge`; the cabinet's
+  route stays mounted either way, and the three variables are read only under `concierge`, so
+  a half-done rollout cannot fail the boot of a panel still serving the chip from the cabinet.
+  Differences from the cabinet's route: nothing of the browser goes up, so concierge never
+  answers 304 and the pin is checked on every byte it sends; the checked bytes of each file
+  are kept in memory until restart (the pin is fixed by the environment), so concierge is
+  asked once per file and concurrent first requests wait on one fetch; the panel's own `ETag`
+  is the pin and it answers a matching `If-None-Match` with a 304 itself; a file is at most
+  1 MiB; any failure of concierge (a 404 included) is a 502, a 404 is only for a name that
+  is not served or not pinned.
+  Under `concierge`, a URL without pins (or the reverse) mounts nothing and `serve` warns;
+  malformed values fail the boot. *Updating:* the build of concierge's `web/` prints the pins;
+  set them in the deploy together with (or before) rolling concierge, as for the cabinet.
 - **The chip's files are pinned** (`PANEL_CABINET_MFE_PINS`). The bundle runs on the panel's
   origin, under the panel's session and CSP: whoever controls its bytes acts as the signed-in
   operator. The cabinet is another team's release, reached over in-cluster plain HTTP, so
@@ -1081,6 +1109,13 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
   and the cabinet's ingress policy, if it has one, must let the panel in. It is served only
   with `PANEL_CABINET_MFE_PINS` too (Forward; not a secret, no egress of its own). Either
   unset, `serve` warns and `/cabinet/mfe/*` is a JSON 404; malformed, the boot fails.
+- **concierge's web port within reach.** Only with `PANEL_CHIP_SOURCE=concierge`: the pods
+  need egress to `PANEL_CONCIERGE_URL` (concierge's web port, beside its gRPC one), and
+  `PANEL_CONCIERGE_MFE_PINS` (Forward; not a secret). Open question before this is switched
+  on in production: the page's CSP has `connect-src 'self'` (via `default-src`), while the
+  chip's `/api/auth/session` call goes to concierge's origin, cross-domain. Only
+  `connect-src` may be widened for it, never `script-src`: the pin is what vouches for the
+  scripts, and a wider `script-src` would let any script from that origin around it.
 - **Telegram, outbound only.** With `TELEGRAM_BOT_TOKEN` (the panel bot's, in sops; not
   `telegram_token_main`) the pods need egress to `api.telegram.org:443`; nothing inbound. No
   webhook is set on the bot (`getUpdates` refuses to run while one is).
