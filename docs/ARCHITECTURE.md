@@ -1084,6 +1084,18 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
   `default-src 'self'` with `'unsafe-inline'` for scripts and styles (Next's inline
   bootstrap), `'wasm-unsafe-eval'` (the review_archive dashboard), `frame-ancestors 'none'`, `Referrer-Policy: same-origin`. Without
   `PANEL_WEB_DIR`, `serve` answers the API alone and says so.
+- **The platform's MFE bundles (`PANEL_CSP_PLATFORM_MFE`).** `0` (default, also unset) leaves
+  the CSP above exactly as it was; `1` (anything else fails the boot) adds to `script-src` the
+  two directories `https://evinvest.ltd/api/auth/mfe/` and `https://evinvest.ltd/wallet/mfe/`,
+  and to `connect-src` the origin `https://evinvest.ltd` (the elements call its API); styles,
+  images and fonts do not change. The string is built once at boot (`web::csp`, kept in
+  `web::Files`). Directories, not the origin, on purpose: the pins on `/auth/mfe` and
+  `/cabinet/mfe` (Forward) vouch for the bytes, and a `script-src` of the whole origin would
+  get around them for any script that origin serves, so the pins are not to be bypassed that
+  way. The host loads the bundles by the platform's manifest (the front end's
+  `NEXT_PUBLIC_MFE_PLATFORM=1`, switched on together with this). The proxy `/auth/mfe/*` and
+  its pins stay as the fallback until this is proven in production; a separate change removes
+  them. The sign-in's own pages (`PAGE_CSP`, above) host no element and are not widened.
 - **The contract** (`nix eval .#containers.<system>.panel.contract`) names the port
   (59120), `/health`, `APP_ENV=production`, the variables required, secret and optional,
   `PANEL_DB_PATH`, the volume (`mounts = [ "/data" ]`) and the SQLite file on it to replicate

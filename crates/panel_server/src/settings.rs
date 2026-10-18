@@ -74,6 +74,10 @@ ev_lib::settings! {
 		/// whatever `PANEL_CONCIERGE_URL` says. Not a secret. Read only with
 		/// `PANEL_CHIP_SOURCE=concierge`.
 		panel_concierge_mfe_pins: Option<String>,
+		/// `1` lets the pages load the platform's MFE bundles from `https://evinvest.ltd`
+		/// (their directories in `script-src`, the origin in `connect-src`); `0` or unset, the
+		/// policy is as before. Switched on with the front end's `NEXT_PUBLIC_MFE_PLATFORM=1`.
+		panel_csp_platform_mfe: Option<String>,
 		/// The panel's bot (`@evinvest_sa_bot`; not `telegram_token_main`). Unset: no Telegram
 		/// notifications, and `serve` says so. Needs the sign-in configured too.
 		#[secret]
@@ -154,7 +158,17 @@ impl Settings {
 		let Some(dir) = self.panel_web_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) else {
 			return Ok(None);
 		};
-		Ok(Some(panel_server::web::Files::new(std::path::Path::new(dir))?))
+		Ok(Some(panel_server::web::Files::new(std::path::Path::new(dir))?.platform_mfe(self.csp_platform_mfe()?)))
+	}
+
+	/// `PANEL_CSP_PLATFORM_MFE`: `0` (also unset or blank) or `1`; anything else fails the boot
+	/// rather than silently leaving the policy narrower or wider than meant.
+	pub fn csp_platform_mfe(&self) -> eyre::Result<bool> {
+		match self.panel_csp_platform_mfe.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+			None | Some("0") => Ok(false),
+			Some("1") => Ok(true),
+			Some(other) => eyre::bail!("PANEL_CSP_PLATFORM_MFE must be `0` or `1`, not `{other}`"),
+		}
 	}
 
 	/// `None` without `TELEGRAM_BOT_TOKEN`: the bot is off.
@@ -576,6 +590,7 @@ mod tests {
 				"PANEL_CHIP_SOURCE",
 				"PANEL_CONCIERGE_URL",
 				"PANEL_CONCIERGE_MFE_PINS",
+				"PANEL_CSP_PLATFORM_MFE",
 				"TELEGRAM_BOT_TOKEN",
 				"TELEGRAM_BOT_USERNAME",
 				"TELEGRAM_LOCALE",
@@ -870,6 +885,16 @@ mod tests {
 			let e = format!("{}", from(&vars).unwrap().cabinet().unwrap_err());
 			assert!(e.contains("PANEL_CABINET_MFE_PINS") && e.contains(says), "{raw}: {e}");
 		}
+	}
+
+	#[test]
+	fn the_platform_csp_is_off_unless_asked_and_a_typo_fails_the_boot() {
+		assert!(!from(&[]).unwrap().csp_platform_mfe().unwrap());
+		assert!(!from(&[("PANEL_CSP_PLATFORM_MFE", " ")]).unwrap().csp_platform_mfe().unwrap());
+		assert!(!from(&[("PANEL_CSP_PLATFORM_MFE", "0")]).unwrap().csp_platform_mfe().unwrap());
+		assert!(from(&[("PANEL_CSP_PLATFORM_MFE", "1")]).unwrap().csp_platform_mfe().unwrap());
+		let e = format!("{}", from(&[("PANEL_CSP_PLATFORM_MFE", "true")]).unwrap().csp_platform_mfe().unwrap_err());
+		assert!(e.contains("PANEL_CSP_PLATFORM_MFE") && e.contains("true"), "{e}");
 	}
 
 	#[test]
