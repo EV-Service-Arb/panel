@@ -12,14 +12,25 @@ import { ErrorState } from "@/shared/ui/error-state";
 
 import { NoAccessScreen, ShellSkeleton, UnavailableScreen } from "./access-screens";
 import { ShellFrame } from "./shell-frame";
+import { SignInOverlay } from "./signin-overlay";
 
 /**
  * Everything behind sign-in. `/api/v1/me` decides what shows: a 401 has already
- * sent the browser to `/auth/login` (the skeleton stays up meanwhile), a 403 is
+ * sent the browser to `/auth/login`, or opened the sign-in overlay when that is on (the skeleton stays up meanwhile), a 403 is
  * "no access", a 503 is "try again" without signing anyone out. The live socket
  * can end the session the same two ways later (4401, 4403).
  */
 export function PanelShell({ children }: { children: ReactNode }) {
+  // Mounted from the first render: the 401 of `/me` can land before anything else has.
+  return (
+    <>
+      <PanelBody>{children}</PanelBody>
+      <SignInOverlay />
+    </>
+  );
+}
+
+function PanelBody({ children }: { children: ReactNode }) {
   const me = useResource("me", fetchMe);
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const [accessLost, setAccessLost] = useState(false);
