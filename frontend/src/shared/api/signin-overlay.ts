@@ -38,14 +38,50 @@ export function registerOverlayHost(): () => void {
 /** True when the overlay took the 401; false means the caller must redirect itself. */
 export function requestSignInOverlay(): boolean {
   if (!SIGNIN_OVERLAY_ENABLED || hosts === 0) return false;
+  rememberPage();
   set("open");
   return true;
 }
 
 export function openOverlay(): void {
+  rememberPage();
   set("open");
 }
 
 export function dismissOverlay(): void {
   set("dismissed");
+}
+
+// The dialog's OAuth round trip may only come back to a path the tenant registered (`/auth/login`),
+// not to the page the person was on, so the page is kept here and put back after the callback.
+const RETURN_KEY = "sa:return-after-signin";
+const MAX_PATH = 512;
+
+/** A path on this origin, nothing a browser reads as another (`//host`, `/\host`, `javascript:`); else null. */
+export function safeLocalPath(raw: string | null): string | null {
+  if (raw === null) return null;
+  const ok = raw.length <= MAX_PATH && raw.startsWith("/") && raw[1] !== "/" && !raw.includes("\\") && /^[\x21-\x7e]+$/.test(raw);
+  return ok ? raw : null;
+}
+
+function rememberPage(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const here = safeLocalPath(window.location.pathname + window.location.search);
+    if (here !== null) window.sessionStorage.setItem(RETURN_KEY, here);
+  } catch {
+    // Storage blocked: the person lands on the start page, as before.
+  }
+}
+
+/** The page to go back to after signing in, once: the key is cleared on read. Null: none, or not a safe path. */
+export function takeReturnPage(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(RETURN_KEY);
+    window.sessionStorage.removeItem(RETURN_KEY);
+    return safeLocalPath(raw);
+  } catch {
+    return null;
+  }
 }
