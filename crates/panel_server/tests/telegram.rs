@@ -1212,7 +1212,7 @@ async fn an_access_request_reaches_the_admins_with_the_grant_link() {
 	);
 	assert_eq!(
 		sent[0]["reply_markup"]["inline_keyboard"],
-		json!([[{"text": "Grant access", "url": "https://evinvest.test/en/cabinet/admin/allocations/service_arb?email=ann%40example.com&target=sa%3Aplaybook%3Amcp%3Ause"}]])
+		json!([[{"text": "Grant access", "url": "https://evinvest.test/admin/scopes/sa?email=ann%40example.com&target=sa%3Aplaybook%3Amcp%3Ause"}]])
 	);
 
 	assert_eq!(
