@@ -288,12 +288,13 @@ impl Note {
 		}
 	}
 
-	/// A link under it, `(label, url)`: for an access request, the cabinet's grant form at
-	/// `cabinet` (concierge's origin), prefilled with the email and the need.
+	/// A link under it, `(label, url)`: for an access request, the admin console's grant form
+	/// for the `sa` scope at `cabinet` (concierge's origin), prefilled with the email and the
+	/// need.
 	pub fn link(&self, locale: Locale, cabinet: &url::Url) -> Option<(&'static str, String)> {
 		let Self::AccessRequested { email, need, .. } = self else { return None };
 		let mut url = cabinet.clone();
-		url.set_path("/en/cabinet/admin/allocations/service_arb");
+		url.set_path("/admin/scopes/sa");
 		url.query_pairs_mut().clear().append_pair("email", email).append_pair("target", need);
 		let label = match locale {
 			Locale::Ru => "Выдать доступ",
@@ -715,6 +716,20 @@ mod tests {
 		assert!(!Rule::PaymentReceived.open_to(&operator) && !Rule::SourceSilent.open_to(&operator) && !Rule::AccessRequested.open_to(&operator));
 		assert!(Rule::ALL.iter().all(|r| r.open_to(&admin)));
 		assert!(Rule::ALL.iter().all(|r| !r.open_to(&std::iter::empty::<&str>().collect())), "no permission, no rule");
+	}
+
+	#[test]
+	fn access_request_links_to_the_sa_scope_grant_form() {
+		let origin: url::Url = "https://evinvest.ltd/".parse().unwrap();
+		let note = Note::AccessRequested {
+			email: "a+b@x.io".into(),
+			name: String::new(),
+			need: "sa:operator".into(),
+		};
+		let (label, url) = note.link(Locale::En, &origin).unwrap();
+		assert_eq!(label, "Grant access");
+		assert_eq!(url, "https://evinvest.ltd/admin/scopes/sa?email=a%2Bb%40x.io&target=sa%3Aoperator");
+		assert_eq!(Note::Backlog { count: 1 }.link(Locale::En, &origin), None);
 	}
 
 	#[test]
