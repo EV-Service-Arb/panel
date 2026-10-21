@@ -725,7 +725,7 @@ default), `booked` (`sa:work:leads:edit`, on by default: a slot booked, moved or
 перенесена", "Бронь отменена", "… без заявки" for one without a lead; not to the operator who
 set or closed it themselves; no buttons), `access_requested` (every permission of `sa:admin`,
 on by default: "🔑 Playbook access request" / "🔑 Access request", the email and name, and a URL
-button "Grant access" to `<CONCIERGE_PUBLIC_ORIGIN>/en/cabinet/admin/allocations/service_arb?email=&target=`;
+button "Grant access" to `<CONCIERGE_PUBLIC_ORIGIN>/admin/scopes/sa?email=&target=` (the admin console's grant form for the `sa` scope);
 at most once a day per user and need). A 3★ review, a
 funnel drop and Grafana alerts are variants to come, once their sources exist.
 
