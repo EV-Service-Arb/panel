@@ -122,10 +122,10 @@
             # the sign-in dialog over the panel, the platform's account chip and sign-in, and
             # the wallet page. The bundles come from the platform origin (concierge's from
             # /api/auth/mfe/*, the wallet's from /wallet/mfe/*), which the server's CSP names
-            # only with PANEL_CSP_PLATFORM_MFE=1 (devops panelEnv). Rollback: run the v0.11.0
-            # image, which was built with all three off.
+            # only with PANEL_CSP_PLATFORM_MFE=1 (devops panelEnv). Rollback: run the v0.12.1
+            # image. v0.11.0 boots too, but it loads the chip through the pinned proxy, so
+            # without its pins in the environment the chip shows only its fallback.
             NEXT_PUBLIC_SIGNIN_OVERLAY = "1";
-            NEXT_PUBLIC_MFE_PLATFORM = "1";
             NEXT_PUBLIC_WALLET_PAGE = "1";
           };
           # Turbopack talks to its node workers over a loopback socket, which the Darwin
@@ -177,26 +177,11 @@
           # neither; a brand's calendar is pulled only with its refresh token
           # (`panel booking google-authorize <brand>` makes one); its calendar id defaults to
           # `primary`. A token without the client fails the boot.
-          # PANEL_CABINET_URL: the cabinet's bare http origin; /cabinet/mfe/* (the account chip's
-          # bundle) is served from it, and only with PANEL_CABINET_MFE_PINS
-          # (`account-chip.js=<sha256 hex>,account-chip.css=<sha256 hex>`, banking's
-          # `npm run mfe:pins`; public, no egress). Either unset, the route is not mounted and
-          # answers JSON 404; malformed pins fail the boot.
-          # PANEL_CHIP_SOURCE: `cabinet` (default) or `concierge`. With `concierge` the chip and
-          # the sign-in element are served at /auth/mfe/* from PANEL_CONCIERGE_URL (concierge's
-          # web port, a bare http origin), only with PANEL_CONCIERGE_MFE_PINS
-          # (`account-chip.js=<sha256 hex>,sign-in.js=<sha256 hex>`, printed by the build of
-          # concierge's web/; public). Not read at all under `cabinet`.
           # PANEL_CSP_PLATFORM_MFE: `0` (default) or `1`. With `1` the pages' CSP also allows the
           # platform's MFE directories (https://evinvest.ltd/api/auth/mfe/ and /wallet/mfe/) in
-          # script-src and the origin in connect-src; set with the front end's
-          # NEXT_PUBLIC_MFE_PLATFORM=1.
+          # script-src and the origin in connect-src. The front end always loads them from there,
+          # so production sets `1`.
           optionalEnv = [
-            "PANEL_CABINET_URL"
-            "PANEL_CABINET_MFE_PINS"
-            "PANEL_CHIP_SOURCE"
-            "PANEL_CONCIERGE_URL"
-            "PANEL_CONCIERGE_MFE_PINS"
             "PANEL_CSP_PLATFORM_MFE"
             "SENTRY_DSN"
             "TELEGRAM_BOT_TOKEN"
@@ -225,7 +210,7 @@
           egress = {
             # in-cluster peers, at the addresses these name: concierge's gRPC, and the services
             # the forward reaches (docs/ARCHITECTURE.md, Forward)
-            grpcEnv = [ "CONCIERGE_GRPC_ADDR" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" "PANEL_CABINET_URL" "PANEL_CONCIERGE_URL" ];
+            grpcEnv = [ "CONCIERGE_GRPC_ADDR" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" ];
             # the Bot API; PostHog's capture host (POSTHOG_HOST's default — follow it if it is
             # pointed elsewhere); Google's token endpoint and Calendar API for the booking pull
             hosts = [ "api.telegram.org:443" "us.i.posthog.com:443" "oauth2.googleapis.com:443" "www.googleapis.com:443" ];

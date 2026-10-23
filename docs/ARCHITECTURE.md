@@ -219,74 +219,13 @@ it — the front end's reserved paths (`web.rs`) are derived from it.
 /playbook_mcp/authorize          → playbook (same path)         session + assertion; no panel CSRF
 /playbook_mcp/*, /.well-known/oauth-{authorization-server,protected-resource}/playbook_mcp
                                  → playbook (same path)         open: OAuth and bearer clients
-/cabinet/mfe/<name>.{js,css}     → cabinet /cabinet/mfe/*       open, GET/HEAD: the account chip's bundle
-/auth/mfe/{account-chip,sign-in}.js
-                                 → concierge /auth/mfe/<hashed> open, GET/HEAD: the chip and the sign-in
-                                                                element; only PANEL_CHIP_SOURCE=concierge
 ```
 
-- **The cabinet** (`forward::Cabinet`, `PANEL_CABINET_URL`) is not in the table: it is no
-  `sa_auth` service, gets no assertion and is mounted with or without signing in. It serves
-  the account chip's files only, and is held tighter than the rows above. A name is plain
-  segments of `[A-Za-z0-9._-]` (no empty one, none starting with a dot, no `%` anywhere)
-  ending in `.js` or `.css` — no source maps, the cabinet's sources stay off this origin;
-  anything else is a 404 that never reaches the cabinet. Only `Accept`, `If-None-Match` and
-  `If-Modified-Since` go up (GET, no query); only `Content-Type`, `ETag`, `Last-Modified` and
-  `Vary` come down, with `nosniff` and the panel's own `Cache-Control: public, max-age=300`.
-  The body is read whole (at most 4 MiB, 10 s in all) to check that a `.js` is JavaScript and
-  a `.css` CSS, and that it is the pinned bytes (below); a 304 passes, a 404 is a 404,
-  anything else — a redirect, an encoded body, a pin mismatch included — is a 502. At most
-  32 files at once, past that a 503.
-  Unset, `/cabinet` is still reserved: a JSON 404, never the front end's page.
-- **concierge's elements** (`forward::ConciergeMfe`, `PANEL_CHIP_SOURCE=concierge`) are the
-  same kind of route, held by the same code (limits, headers, type check, 4 MiB / 10 s, no
-  cookie either way, pin or 502), for `account-chip.js` and `sign-in.js` under `/auth/mfe/`
-  (concierge's own path; publicly it sits under `/api`, which the panel has no use for).
-  Concierge names its files by content hash, so the panel first reads its manifest
-  `/auth/mfe/registry.json` (at most 64 KiB, 5 s) for the entry of the element
-  (`concierge.account-chip`, `concierge.sign-in`) and fetches the file that names, under the
-  stable name the page loads. The manifest is no trust, only a path to try: just the last
-  segment of its `scriptUrl` is used, and only if it is a plain `.js` name; the pin decides.
-  concierge inlines each element's stylesheet, so there is no `.css`. Pins are
-  `PANEL_CONCIERGE_MFE_PINS` (`account-chip.js=<hex>,sign-in.js=<hex>`, any other name fails
-  the boot), the origin is `PANEL_CONCIERGE_URL` (concierge's web port, a bare `http://`
-  origin, not its gRPC). `PANEL_CHIP_SOURCE` is `cabinet` (default) or `concierge`; the cabinet's
-  route stays mounted either way, and the three variables are read only under `concierge`, so
-  a half-done rollout cannot fail the boot of a panel still serving the chip from the cabinet.
-  Differences from the cabinet's route: nothing of the browser goes up, so concierge never
-  answers 304 and the pin is checked on every byte it sends; the checked bytes of each file
-  are kept in memory until restart (the pin is fixed by the environment), so concierge is
-  asked once per file and concurrent first requests wait on one fetch; the panel's own `ETag`
-  is the pin and it answers a matching `If-None-Match` with a 304 itself; a file is at most
-  1 MiB; any failure of concierge (a 404 included) is a 502, a 404 is only for a name that
-  is not served or not pinned.
-  Under `concierge`, a URL without pins (or the reverse) mounts nothing and `serve` warns;
-  malformed values fail the boot. *Updating:* the build of concierge's `web/` prints the pins;
-  set them in the deploy together with (or before) rolling concierge, as for the cabinet.
-- **The chip's files are pinned** (`PANEL_CABINET_MFE_PINS`). The bundle runs on the panel's
-  origin, under the panel's session and CSP: whoever controls its bytes acts as the signed-in
-  operator. The cabinet is another team's release, reached over in-cluster plain HTTP, so
-  its answering is not trust enough; each file must also hash to the SHA-256 named for it:
-  `account-chip.js=<hex>,account-chip.css=<hex>` (lowercase hex, `sha256sum`'s spelling).
-  - *Fail closed.* A name without a pin is a 404 and the cabinet is not asked; bytes that
-    hash otherwise are a 502 and nothing of them comes down. The URL without the pins (or
-    the pins without the URL) mounts nothing, and `serve` warns, naming what is unset. Pins
-    that do not parse fail the boot.
-  - *A pin, not SRI.* `<script integrity>` would put the hash into the front end's build, so
-    every cabinet release would need a panel release; a pin is deploy configuration, changed
-    without a build. Checked here, it holds for every page that loads `/cabinet/mfe/*` and
-    for direct fetches too, and a mismatch never reaches a browser.
-  - *No compression.* A pin is of the file as built, so `Accept-Encoding` does not go up and
-    an encoded answer is refused rather than unpacked; the files are a few dozen KiB, and
-    the ingress may compress on the way out.
-  - *Cache.* The panel sets the lifetime, not the cabinet (whose
-    `stale-while-revalidate` would keep a file past the pin's change): five minutes, so a
-    pin change reaches the pages that soon. A 304 passes unchecked — it carries no bytes,
-    and the browser's copy came from here, checked.
-  - *Updating.* A cabinet release that changes the chip changes its hashes: in `banking`,
-    `npm run mfe:pins` prints the value for the release's build; set it in the deploy
-    together with (or before) rolling the cabinet. Until both agree the chip is a 502 and
-    the panel's pages run without it — the outage is the chip's, not the panel's.
+- **The platform's elements are not forwarded.** The account chip, the sign-in element and
+  the wallet load straight from `https://evinvest.ltd` (`/api/auth/mfe/*`, `/wallet/mfe/*`),
+  admitted by the CSP's directories (Deploy requirements, `PANEL_CSP_PLATFORM_MFE`).
+  `/cabinet` stays reserved: a tab on an earlier build may still ask for `/cabinet/mfe/*`,
+  and it gets a JSON 404, never the front end's page.
 
 - **Who is calling** is told by an assertion the panel signs for that one request (`sa_auth`,
   header `x-sa-assertion`): Ed25519 (`PANEL_ASSERTION_KEY`), `aud` the service, the caller's
@@ -1078,7 +1017,7 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
 - **One image, one origin.** The image carries the binary and the front end's static
   export, and sets `PANEL_WEB_DIR` to it; `serve` answers `/api`, `/auth` and `/health`
   first, then the forward's prefixes (Forward), then the files (a directory by its
-  `index.html`, anything else `404.html` with a 404). `/grafana` is held: a JSON 404 until the dashboards move there; so is `/cabinet` beyond the chip's files (Forward). `/_next/static/*`
+  `index.html`, anything else `404.html` with a 404). `/grafana` is held: a JSON 404 until the dashboards move there; so is `/cabinet` (Forward). `/_next/static/*`
   is `immutable` for a year, everything else `no-cache` (the store's 1970 mtimes make
   date revalidation meaningless, so the panel answers none); every page carries a CSP of
   `default-src 'self'` with `'unsafe-inline'` for scripts and styles (Next's inline
@@ -1093,13 +1032,10 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
   iframe; without them the dialog shows "Captcha failed to load"; no `connect-src` entry is
   needed, as in invest and admin). The Turnstile widget's hostnames in Cloudflare must list
   the panel's host. Styles, images and fonts do not change. The string is built once at boot (`web::csp`, kept in
-  `web::Files`). Directories, not the origin, on purpose: the pins on `/auth/mfe` and
-  `/cabinet/mfe` (Forward) vouch for the bytes, and a `script-src` of the whole origin would
-  get around them for any script that origin serves, so the pins are not to be bypassed that
-  way. The host loads the bundles by the platform's manifest (the front end's
-  `NEXT_PUBLIC_MFE_PLATFORM=1`, switched on together with this). The proxy `/auth/mfe/*` and
-  its pins stay as the fallback until this is proven in production; a separate change removes
-  them. The sign-in's own pages (`PAGE_CSP`, above) host no element and are not widened.
+  `web::Files`). Directories, not the origin, on purpose: a `script-src` of the whole origin
+  would let any script that origin serves run in the panel's session, not only the elements
+  it publishes for hosts. The host loads the bundles by the platform's manifest. With `0`
+  the elements do not load at all: the panel no longer serves them from its own origin. The sign-in's own pages (`PAGE_CSP`, above) host no element and are not widened.
 - **The contract** (`nix eval .#containers.<system>.panel.contract`) names the port
   (59120), `/health`, `APP_ENV=production`, the variables required, secret and optional,
   `PANEL_DB_PATH`, the volume (`mounts = [ "/data" ]`) and the SQLite file on it to replicate
@@ -1120,18 +1056,6 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
   must register client `sa` with redirect URI `<PANEL_PUBLIC_ORIGIN>/auth/callback` exactly,
   and hold the hash of `RP_CLIENT_SECRET_SA`; `serve` publishes the `sa` catalog there at
   every boot and does not start if it is refused.
-- **The cabinet within reach.** With `PANEL_CABINET_URL` (a bare `http://` origin, e.g.
-  `http://ev-banking-cabinet.apps:50061`; optional, not a secret) the pods need egress to it,
-  and the cabinet's ingress policy, if it has one, must let the panel in. It is served only
-  with `PANEL_CABINET_MFE_PINS` too (Forward; not a secret, no egress of its own). Either
-  unset, `serve` warns and `/cabinet/mfe/*` is a JSON 404; malformed, the boot fails.
-- **concierge's web port within reach.** Only with `PANEL_CHIP_SOURCE=concierge`: the pods
-  need egress to `PANEL_CONCIERGE_URL` (concierge's web port, beside its gRPC one), and
-  `PANEL_CONCIERGE_MFE_PINS` (Forward; not a secret). Open question before this is switched
-  on in production: the page's CSP has `connect-src 'self'` (via `default-src`), while the
-  chip's `/api/auth/session` call goes to concierge's origin, cross-domain. Only
-  `connect-src` may be widened for it, never `script-src`: the pin is what vouches for the
-  scripts, and a wider `script-src` would let any script from that origin around it.
 - **Telegram, outbound only.** With `TELEGRAM_BOT_TOKEN` (the panel bot's, in sops; not
   `telegram_token_main`) the pods need egress to `api.telegram.org:443`; nothing inbound. No
   webhook is set on the bot (`getUpdates` refuses to run while one is).
