@@ -22,17 +22,10 @@ import { useButtonSize } from "@/shared/ui/touch";
 /** Past this the person is sent to the full-page sign-in instead of waiting on a bundle that may never come. */
 const BUNDLE_BUDGET_MS = 5000;
 
-/**
- * Same-origin unless the platform source is on (`NEXT_PUBLIC_MFE_PLATFORM=1`, which needs the
- * server's PANEL_CSP_PLATFORM_MFE=1 too): the CSP is then `'self'` only, so the panel server
- * proxies the bundle at this path.
- */
-const SIGN_IN_SCRIPT = "/auth/mfe/sign-in.js";
-
 /** The bundle URL once the sign-in element is defined and new enough; null: script unreachable, blocked, too old or slow. */
 async function loadSignIn(): Promise<string | null> {
   try {
-    const scriptUrl = await platformMfe.scriptUrl("signIn", SIGN_IN_SCRIPT, BUNDLE_BUDGET_MS);
+    const scriptUrl = await platformMfe.scriptUrl("signIn", BUNDLE_BUDGET_MS);
     if (scriptUrl === null) return null;
     const ok = await loadElement(SIGN_IN_TAG, scriptUrl, { minApiVersion: API_VERSION, timeoutMs: BUNDLE_BUDGET_MS });
     return ok ? scriptUrl : null;

@@ -3,13 +3,9 @@ import { switchAccountPath } from "@/shared/api";
 import { ROUTES } from "@/shared/config/routes";
 import type { T } from "@/shared/i18n";
 
-// The host side of the cabinet account chip's host-mode contract (banking,
-// cabinet/frontend/features/account-chip/lib/host-attributes.ts, apiVersion 2). The panel has
+// The host side of the account chip's host-mode contract (apiVersion 2). The panel has
 // its own origin and session, so the chip fetches nothing and shows what these attributes say.
 
-export const CHIP_TAG = "mfe-cabinet-account-chip";
-/** Forwarded same-origin to the cabinet by panel_server (PANEL_CABINET_URL). */
-export const CHIP_SCRIPT = "/cabinet/mfe/account-chip.js";
 /** The first bundle with `data-mode="host"`; older ones read a cabinet session the panel lacks. */
 export const CHIP_API_VERSION = 2;
 

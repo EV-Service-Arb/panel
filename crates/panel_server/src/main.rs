@@ -242,11 +242,7 @@ async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSign
 				None => settings.sign_in()?.map(Identity::Concierge),
 			};
 			let telegram = settings.telegram()?;
-			let front_end = Edge {
-				files: settings.web()?,
-				cabinet: settings.cabinet()?,
-				concierge_mfe: settings.concierge_mfe()?,
-			};
+			let front_end = Edge { files: settings.web()? };
 			let capture = settings.capture()?.map(|c| CaptureApi::new(&c.host, &c.key)).transpose()?;
 			let google = google(&settings)?;
 			let sign_in = match (sign_in, settings.forward()?) {
@@ -509,10 +505,6 @@ fn google(settings: &Settings) -> eyre::Result<Option<(google_calendar::GoogleCa
 struct Edge {
 	/// The front end's export (`PANEL_WEB_DIR`).
 	files: Option<Files>,
-	/// `PANEL_CABINET_URL` and its pins, behind `/cabinet/mfe`.
-	cabinet: settings::CabinetSettings,
-	/// `PANEL_CHIP_SOURCE=concierge`: concierge's elements behind `/auth/mfe`.
-	concierge_mfe: Option<settings::ConciergeMfeSettings>,
 }
 
 /// Who signs people in.
@@ -632,31 +624,6 @@ async fn serve(
 			}
 			http::router(panel)
 		}
-	};
-	// Not behind the sign-in: the chip's bundle is public, and the cabinet is told nobody.
-	let settings::CabinetSettings { url, pins } = front_end.cabinet;
-	let app = match panel_server::forward::Cabinet::configured(url, pins) {
-		Ok(cabinet) => {
-			tracing::info!("serving the cabinet's /cabinet/mfe, pinned");
-			app.merge(cabinet.routes())
-		}
-		Err(unset) => {
-			tracing::warn!(unset = unset.join(", "), "no /cabinet/mfe, the account chip is not served");
-			app
-		}
-	};
-	let app = match front_end.concierge_mfe {
-		None => app,
-		Some(settings::ConciergeMfeSettings { url, pins }) => match panel_server::forward::ConciergeMfe::configured(url, pins) {
-			Ok(concierge) => {
-				tracing::info!("serving concierge's /auth/mfe, pinned (PANEL_CHIP_SOURCE=concierge)");
-				app.merge(concierge.routes())
-			}
-			Err(unset) => {
-				tracing::warn!(unset = unset.join(", "), "PANEL_CHIP_SOURCE=concierge, but no /auth/mfe: the chip is not served from concierge");
-				app
-			}
-		},
 	};
 	let app = match front_end.files {
 		Some(files) => web::serve(app, files),

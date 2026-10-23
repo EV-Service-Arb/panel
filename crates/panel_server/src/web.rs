@@ -35,11 +35,10 @@ use tower_http::{
 /// Next inlines its bootstrap and the RSC payload as `<script>` elements, and the kit sets
 /// inline styles, hence `'unsafe-inline'`; review_archive's dashboard is wasm, hence
 /// `'wasm-unsafe-eval'`; nothing is loaded from another origin (the fonts
-/// are the system's, the kit's CSS is bundled), and the pages talk to this origin alone. The
-/// cabinet's account chip is on this origin too (`/cabinet/mfe`, Forward), its script and its
-/// stylesheet alike, and loads no font.
+/// are the system's, the kit's CSS is bundled), and the pages talk to this origin alone.
 ///
-/// This is the policy with `PANEL_CSP_PLATFORM_MFE` off, the default; [`csp`] builds the other.
+/// This is the policy with `PANEL_CSP_PLATFORM_MFE` off, the default: the platform's elements
+/// (the account chip, the sign-in, the wallet) do not load under it. [`csp`] builds the other.
 pub const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 /// The platform's origin, where the hosts load its micro-frontends from.
@@ -57,10 +56,8 @@ const TURNSTILE_ORIGIN: &str = "https://challenges.cloudflare.com";
 /// Turnstile needs no `connect-src` entry, as in the invest and admin policies.
 ///
 /// Directories, never the origin: a `script-src` of the whole origin would let any script
-/// the platform serves run in the panel's session, which is the very thing the pins on
-/// `/auth/mfe` and `/cabinet/mfe` rule out. Those pins and routes stay the fallback until the
-/// platform's bundles are proven in production; a separate change removes them. Nothing else
-/// widens: styles, images and fonts stay on this origin.
+/// the platform serves run in the panel's session, not only the elements it publishes for
+/// hosts. Nothing else widens: styles, images and fonts stay on this origin.
 pub fn csp(platform_mfe: bool) -> String {
 	if !platform_mfe {
 		return CSP.to_owned();
@@ -80,8 +77,8 @@ const HASHED: &str = "/_next/static/";
 
 /// Paths that belong to the API side, whether or not a route of theirs is mounted: an unknown
 /// one is a JSON 404, never the front end's page. `/grafana` is held for the dashboards;
-/// `/cabinet` is the cabinet's (Forward), whole, mounted or not: a missing bundle file must
-/// not come back as the panel's HTML page.
+/// `/cabinet` once served the cabinet's account chip here, and a tab still on an earlier
+/// build may ask for `/cabinet/mfe/*`: a script request must get a 404, not the panel's HTML.
 const RESERVED: [&str; 5] = ["/api", "/auth", "/health", "/grafana", "/cabinet"];
 
 /// The export's files.
