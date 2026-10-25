@@ -245,10 +245,10 @@
               PANEL_DB_PATH = dbPath;
               POSTHOG_PROJECT_API_KEY = "phc_sBwWEgdgockVmfyucBRkTTo6iZ4Y2eApSGorD22WLzj3";
               POSTHOG_PROJECT_ID = "614067";
-              # the version of the sa catalog `serve` publishes to concierge
-              PANEL_BUILD_EPOCH = toString self.lastModified;
             };
-            imageEnv = [ "PANEL_WEB_DIR=${frontend}" ];
+            # the epoch versions the sa catalog `serve` publishes to concierge: it must travel with
+            # the build, or a tag whose catalog changed boots on the previous epoch and is refused
+            imageEnv = [ "PANEL_WEB_DIR=${frontend}" "PANEL_BUILD_EPOCH=${toString self.lastModified}" ];
           };
         };
         # `implement` knows no key for the above, and throws on one it does not know.
