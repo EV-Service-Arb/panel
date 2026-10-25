@@ -181,6 +181,11 @@
           # platform's MFE directories (https://evinvest.ltd/api/auth/mfe/ and /wallet/mfe/) in
           # script-src and the origin in connect-src. The front end always loads them from there,
           # so production sets `1`.
+          # SCOPE_LEDGER_* (docs/ARCHITECTURE.md, Invoices): banking's ScopeLedger over mTLS, the
+          # address and the three *_PEM_FILE paths all or none; unset, /api/v1/invoices answers
+          # 503. The *_PEM_FILE values are literal paths (`/etc/settings/<VAR>`) to files mounted
+          # from the Secret, as invest's are: the paths are not secrets, so not in secretEnv.
+          # SCOPE_LEDGER_TLS_DOMAIN: the server certificate's name, when not the address's host.
           optionalEnv = [
             "PANEL_CSP_PLATFORM_MFE"
             "SENTRY_DSN"
@@ -198,6 +203,11 @@
             "GOOGLE_CALENDAR_ID_AQUAFIX"
             "GOOGLE_CALENDAR_REFRESH_TOKEN_VIFNET"
             "GOOGLE_CALENDAR_ID_VIFNET"
+            "SCOPE_LEDGER_ADDR"
+            "SCOPE_LEDGER_TLS_DOMAIN"
+            "SCOPE_LEDGER_TLS_CA_PEM_FILE"
+            "SCOPE_LEDGER_TLS_CERT_PEM_FILE"
+            "SCOPE_LEDGER_TLS_KEY_PEM_FILE"
           ];
           ingress = {
             # in-cluster only, by service DNS: the landings' ingest and place reads
@@ -208,9 +218,9 @@
             rateLimitPathPrefixes = [ "/auth" "/api/hooks" ];
           };
           egress = {
-            # in-cluster peers, at the addresses these name: concierge's gRPC, and the services
-            # the forward reaches (docs/ARCHITECTURE.md, Forward)
-            grpcEnv = [ "CONCIERGE_GRPC_ADDR" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" ];
+            # in-cluster peers, at the addresses these name: concierge's gRPC, the services the
+            # forward reaches (docs/ARCHITECTURE.md, Forward), and banking's ScopeLedger
+            grpcEnv = [ "CONCIERGE_GRPC_ADDR" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" "SCOPE_LEDGER_ADDR" ];
             # the Bot API; PostHog's capture host (POSTHOG_HOST's default — follow it if it is
             # pointed elsewhere); Google's token endpoint and Calendar API for the booking pull
             hosts = [ "api.telegram.org:443" "us.i.posthog.com:443" "oauth2.googleapis.com:443" "www.googleapis.com:443" ];

@@ -22,6 +22,7 @@ pub mod experiment;
 pub mod fact;
 pub mod funnel;
 pub mod ids;
+pub mod invoice;
 pub mod lead;
 pub mod notify;
 pub mod phone;

@@ -74,7 +74,7 @@ pub(crate) fn idempotency_key(headers: &HeaderMap) -> ApiResult<Option<String>> 
 }
 
 /// `201` for what was recorded now, `200` for a retry answered with what the first recorded.
-fn recorded(replayed: bool, v: Value) -> Response {
+pub(crate) fn recorded(replayed: bool, v: Value) -> Response {
 	let status = if replayed { StatusCode::OK } else { StatusCode::CREATED };
 	(status, Json(v)).into_response()
 }
@@ -111,6 +111,9 @@ pub enum ApiError {
 	Forbidden,
 	NotFound,
 	Conflict(String),
+	/// A service the request needs is not configured or not answering; the message is a
+	/// machine reason, e.g. `invoices_unavailable`.
+	Unavailable(String),
 	Internal(eyre::Report),
 }
 
@@ -121,6 +124,7 @@ impl IntoResponse for ApiError {
 			Self::Forbidden => (StatusCode::FORBIDDEN, "your permissions do not allow this".to_owned()),
 			Self::NotFound => (StatusCode::NOT_FOUND, "not found".to_owned()),
 			Self::Conflict(m) => (StatusCode::CONFLICT, m),
+			Self::Unavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m),
 			Self::Internal(e) => {
 				crate::report(&e, "operator API");
 				(StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_owned())

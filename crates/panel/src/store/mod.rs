@@ -14,6 +14,7 @@ pub mod access;
 pub mod bookings;
 pub mod events;
 pub mod experiments;
+pub mod invoices;
 pub mod places;
 pub mod posthog;
 pub mod pricing;

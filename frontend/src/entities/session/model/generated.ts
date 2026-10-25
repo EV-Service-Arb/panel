@@ -30,10 +30,10 @@ need: Permission | keyof typeof ALIASES,
  */
 requested_at: string, };
 
-export const PERMISSIONS = ["sa:admin:sources:manage", "sa:analysis:experiments:edit", "sa:analysis:read", "sa:playbook:mcp:use", "sa:review_archive:archive:operate", "sa:review_archive:members:act_as", "sa:review_archive:tokens:grant", "sa:work:leads:edit", "sa:work:pii:see", "sa:work:places:edit", "sa:work:pricing:edit", "sa:work:read"] as const;
+export const PERMISSIONS = ["sa:admin:sources:manage", "sa:analysis:experiments:edit", "sa:analysis:read", "sa:playbook:mcp:use", "sa:review_archive:archive:operate", "sa:review_archive:members:act_as", "sa:review_archive:tokens:grant", "sa:work:invoices:create", "sa:work:leads:edit", "sa:work:pii:see", "sa:work:places:edit", "sa:work:pricing:edit", "sa:work:read"] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 export const ALIASES = {
-  "sa:admin": ["sa:admin:sources:manage", "sa:analysis:experiments:edit", "sa:analysis:read", "sa:playbook:mcp:use", "sa:review_archive:archive:operate", "sa:review_archive:members:act_as", "sa:review_archive:tokens:grant", "sa:work:leads:edit", "sa:work:pii:see", "sa:work:places:edit", "sa:work:pricing:edit", "sa:work:read"],
+  "sa:admin": ["sa:admin:sources:manage", "sa:analysis:experiments:edit", "sa:analysis:read", "sa:playbook:mcp:use", "sa:review_archive:archive:operate", "sa:review_archive:members:act_as", "sa:review_archive:tokens:grant", "sa:work:invoices:create", "sa:work:leads:edit", "sa:work:pii:see", "sa:work:places:edit", "sa:work:pricing:edit", "sa:work:read"],
   "sa:operator": ["sa:analysis:read", "sa:work:leads:edit", "sa:work:pii:see", "sa:work:read"],
 } as const;

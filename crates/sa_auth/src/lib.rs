@@ -43,6 +43,14 @@ pub enum Pricing {
 	Edit,
 }
 
+/// Issue an invoice through banking (`sa:work:invoices:create`). Reading the invoices needs
+/// only the work section: an operator chasing a payment sees whether it came.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Permission)]
+#[permission("sa:work:invoices")]
+pub enum Invoices {
+	Create,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Permission)]
 #[permission("sa:analysis")]
 pub enum Analysis {
@@ -94,6 +102,7 @@ alias!(
 		Pii::See,
 		Places::Edit,
 		Pricing::Edit,
+		Invoices::Create,
 		Analysis::Read,
 		Experiments::Edit,
 		Sources::Manage,
