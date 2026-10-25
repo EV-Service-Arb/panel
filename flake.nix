@@ -185,7 +185,6 @@
           # address and the three *_PEM_FILE paths all or none; unset, /api/v1/invoices answers
           # 503. The *_PEM_FILE values are literal paths (`/etc/settings/<VAR>`) to files mounted
           # from the Secret, as invest's are: the paths are not secrets, so not in secretEnv.
-          # SCOPE_LEDGER_TLS_DOMAIN: the server certificate's name, when not the address's host.
           optionalEnv = [
             "PANEL_CSP_PLATFORM_MFE"
             "SENTRY_DSN"
@@ -204,7 +203,6 @@
             "GOOGLE_CALENDAR_REFRESH_TOKEN_VIFNET"
             "GOOGLE_CALENDAR_ID_VIFNET"
             "SCOPE_LEDGER_ADDR"
-            "SCOPE_LEDGER_TLS_DOMAIN"
             "SCOPE_LEDGER_TLS_CA_PEM_FILE"
             "SCOPE_LEDGER_TLS_CERT_PEM_FILE"
             "SCOPE_LEDGER_TLS_KEY_PEM_FILE"

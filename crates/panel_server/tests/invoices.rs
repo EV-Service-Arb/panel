@@ -121,7 +121,7 @@ impl ScopeLedgerService for Fake {
 		self.admit(&r)?;
 		self.bank().opens += 1;
 		let r = r.into_inner();
-		assert_eq!((r.scope.as_str(), r.label.as_str()), ("sa", "invoice:sa"));
+		assert_eq!((r.scope.as_str(), r.label.as_str()), ("sa", "sa:invoices"));
 		Ok(GrpcResponse::new(pb::ScopeAccount {
 			scope: r.scope,
 			label: r.label,

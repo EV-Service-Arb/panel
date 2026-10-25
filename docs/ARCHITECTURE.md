@@ -835,7 +835,7 @@ and opens its pay page on evinvest.ltd for the customer. Banking is the authorit
 ```text
 POST /api/v1/invoices      sa:work:invoices:create, Idempotency-Key required
                            → the row is stored `creating` with the terms, then banking is asked
-                           (OpenAccount `invoice:sa` once, CreateInvoice under a key derived from
+                           (OpenAccount `sa:invoices` once, CreateInvoice under a key derived from
                            the row, subject_ref sa_invoice:<row id>) → 201; a retry → 200, the
                            same row; the key with other terms → 409. A refusal drops the row;
                            a lost answer keeps it for the retry.
@@ -1099,7 +1099,7 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
 - **banking's ScopeLedger within reach.** With `SCOPE_LEDGER_ADDR` (`https://…:50054`) and the
   three `SCOPE_LEDGER_TLS_*_PEM_FILE` files mounted at `/etc/settings`, the pods need egress
   to that address. Banking must map the panel's client certificate to its client and grant it
-  `(sa, invoice:)`; until then every invoice is 503 `not_granted`.
+  `(client sa, scope sa, prefix sa:)`; until then every invoice is 503 `not_granted`.
 - **`/api/v1/live` through the public IngressRoute, as a WebSocket.** Traefik proxies the
   upgrade as is; nothing in front of it may buffer the response or strip `Upgrade` /
   `Connection` / `Origin`, and an idle timeout on the way must be longer than the 25 s ping

@@ -93,9 +93,6 @@ ev_lib::settings! {
 		/// `https://banking-scope-ledger:50054`: the invoices are issued there. With the three
 		/// files below, or none of them; unset, the invoice routes answer 503.
 		scope_ledger_addr: Option<String>,
-		/// The name banking's server certificate is checked against, when it is not the host of
-		/// SCOPE_LEDGER_ADDR.
-		scope_ledger_tls_domain: Option<String>,
 		/// Paths, not secrets: the CA banking's server certificate chains to, and the panel's
 		/// client certificate and key, mounted from the cluster's Secret.
 		scope_ledger_tls_ca_pem_file: Option<String>,
@@ -320,7 +317,6 @@ impl Settings {
 		];
 		let missing: Vec<&str> = vars.iter().filter(|(_, v)| v.is_none()).map(|(name, _)| *name).collect();
 		if missing.len() == vars.len() {
-			eyre::ensure!(set(&self.scope_ledger_tls_domain).is_none(), "SCOPE_LEDGER_TLS_DOMAIN is set without SCOPE_LEDGER_ADDR");
 			return Ok(None);
 		}
 		eyre::ensure!(missing.is_empty(), "the ScopeLedger needs {} too", missing.join(", "));
@@ -340,7 +336,6 @@ impl Settings {
 			ca_pem: pem("SCOPE_LEDGER_TLS_CA_PEM_FILE", &ca)?,
 			client_cert_pem: pem("SCOPE_LEDGER_TLS_CERT_PEM_FILE", &cert)?,
 			client_key_pem: zeroize::Zeroizing::new(pem("SCOPE_LEDGER_TLS_KEY_PEM_FILE", &key)?),
-			tls_domain: set(&self.scope_ledger_tls_domain),
 			addr,
 		}))
 	}
@@ -583,7 +578,6 @@ mod tests {
 				"GOOGLE_OAUTH_CLIENT_SECRET",
 				"GOOGLE_CALENDAR_SYNC_MINUTES",
 				"SCOPE_LEDGER_ADDR",
-				"SCOPE_LEDGER_TLS_DOMAIN",
 				"SCOPE_LEDGER_TLS_CA_PEM_FILE",
 				"SCOPE_LEDGER_TLS_CERT_PEM_FILE",
 				"SCOPE_LEDGER_TLS_KEY_PEM_FILE",
@@ -750,17 +744,12 @@ mod tests {
 		};
 		assert!(from(&[]).unwrap().scope_ledger_from(files).unwrap().is_none());
 		let on = with(&[]).unwrap().unwrap();
-		assert_eq!((on.addr.as_str(), on.tls_domain.as_deref()), ("https://banking-scope-ledger:50054", None));
+		assert_eq!(on.addr, "https://banking-scope-ledger:50054");
 		assert!(on.client_key_pem.contains("key-secret"));
 		assert!(!format!("{on:?}").contains("key-secret"), "the key never prints");
-		assert_eq!(
-			with(&[("SCOPE_LEDGER_TLS_DOMAIN", "scope-ledger.banking")]).unwrap().unwrap().tls_domain.as_deref(),
-			Some("scope-ledger.banking")
-		);
 
 		let e = format!("{}", from(&[("SCOPE_LEDGER_ADDR", "https://banking:50054")]).unwrap().scope_ledger_from(files).unwrap_err());
 		assert!(e.contains("SCOPE_LEDGER_TLS_CA_PEM_FILE, SCOPE_LEDGER_TLS_CERT_PEM_FILE, SCOPE_LEDGER_TLS_KEY_PEM_FILE"), "{e}");
-		assert!(from(&[("SCOPE_LEDGER_TLS_DOMAIN", "x")]).unwrap().scope_ledger_from(files).is_err());
 		for addr in ["http://banking:50054", "https://banking:50054/v1", "banking:50054"] {
 			let e = format!("{}", with(&[("SCOPE_LEDGER_ADDR", addr)]).unwrap_err());
 			assert!(e.contains("SCOPE_LEDGER_ADDR"), "{addr}: {e}");

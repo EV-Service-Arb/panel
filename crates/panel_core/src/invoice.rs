@@ -12,9 +12,9 @@ use crate::Invalid;
 
 /// The concierge tenant (banking scope) the panel's invoices live in.
 pub const SCOPE: &str = "sa";
-/// The scope account every invoice pays into. Its prefix `invoice:` is the panel's grant in
-/// banking's grants file (`(sa-panel client, sa, invoice:)`).
-pub const ACCOUNT_LABEL: &str = "invoice:sa";
+/// The scope account every invoice pays into. Its prefix `sa:` is the panel's grant in
+/// banking's grants file (`(client sa, scope sa, prefix sa:)`).
+pub const ACCOUNT_LABEL: &str = "sa:invoices";
 /// The type half of the `subject_ref` banking echoes in the invoice and its money events:
 /// `sa_invoice:<the panel's row id>`.
 pub const SUBJECT_REF_TYPE: &str = "sa_invoice";
@@ -139,7 +139,7 @@ pub fn ledger_key(id: Uuid) -> String {
 }
 
 /// The idempotency key of opening [`ACCOUNT_LABEL`]: one for good, as the account is.
-pub const OPEN_ACCOUNT_KEY: &str = "sa-panel:open-account:invoice:sa";
+pub const OPEN_ACCOUNT_KEY: &str = "sa-panel:open-account:sa:invoices";
 
 #[cfg(test)]
 mod tests {

@@ -52,16 +52,11 @@ pub struct ScopeLedgerConfig {
 	/// The panel's client certificate and key: the identity banking maps to the panel's client.
 	pub client_cert_pem: String,
 	pub client_key_pem: Zeroizing<String>,
-	/// The name banking's certificate is checked against, when it is not `addr`'s host.
-	pub tls_domain: Option<String>,
 }
 
 impl std::fmt::Debug for ScopeLedgerConfig {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		f.debug_struct("ScopeLedgerConfig")
-			.field("addr", &self.addr)
-			.field("tls_domain", &self.tls_domain)
-			.finish_non_exhaustive()
+		f.debug_struct("ScopeLedgerConfig").field("addr", &self.addr).finish_non_exhaustive()
 	}
 }
 
@@ -85,12 +80,9 @@ impl ScopeLedger {
 	/// A client over mTLS. Lazy: nothing is dialled until the first call, so a banking that is
 	/// down at boot is a failed call later, not a failed boot.
 	pub fn connect(config: &ScopeLedgerConfig) -> eyre::Result<Self> {
-		let mut tls = ClientTlsConfig::new()
+		let tls = ClientTlsConfig::new()
 			.ca_certificate(Certificate::from_pem(&config.ca_pem))
 			.identity(Identity::from_pem(&config.client_cert_pem, config.client_key_pem.as_bytes()));
-		if let Some(domain) = &config.tls_domain {
-			tls = tls.domain_name(domain.clone());
-		}
 		let channel = Endpoint::from_shared(config.addr.clone())
 			.map_err(|e| eyre::eyre!("SCOPE_LEDGER_ADDR {}: {e}", config.addr))?
 			.timeout(CALL_TIMEOUT)
@@ -490,7 +482,7 @@ mod tests {
 		pb::Invoice {
 			invoice_id: "inv-1".into(),
 			scope: "sa".into(),
-			to_label: "invoice:sa".into(),
+			to_label: "sa:invoices".into(),
 			amount: "12.5".into(),
 			state: state.into(),
 			pay_url: "https://evinvest.ltd/pay/inv-1".into(),
