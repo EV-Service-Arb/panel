@@ -12,6 +12,10 @@ readme.workspace = true
 [package.metadata.cargo-machete]
 ignored = ["pbjson", "prost", "serde", "tonic", "tonic-prost"]
 
+[features]
+# The scope.v1 gRPC servers, for the tests' stand-in banking ledger.
+testing = []
+
 [dependencies]
 pbjson.workspace = true
 pbjson-types.workspace = true

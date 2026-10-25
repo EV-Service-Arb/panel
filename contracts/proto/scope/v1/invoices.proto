@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package scope.v1;
+
+// InvoiceService — a scope asks a user to pay into one of its scope accounts. The
+// user pays on evinvest.ltd (`banking.v1.InvoicePaymentService`) straight from `main`
+// or from their compartment in the scope, with no transfer between compartments
+// first; the receiving scope's `min_kyc_level` applies to the payer. Payment shows up
+// as `KIND_INVOICE_PAID` in `MoneyEvents`; this service has no callback.
+//
+// PAID MEANS POSTED. An invoice is PAID — here, in `GetInvoice`, and as
+// `KIND_INVOICE_PAID` — only once the ledger has taken the payment. Until then it reads
+// PROCESSING with no payer, and a payment the ledger refuses leaves it OPEN, payable
+// again; the issuer is never told of a payment that did not happen. PROCESSING is a
+// moment, not an outcome: poll `GetInvoice` or wait for `KIND_INVOICE_PAID`, and never
+// fulfil on it. This is how a
+// service takes a one-off payment from a user who gave it no mandate.
+//
+// Grants, identifiers, amounts, `idempotency_key` and `subject_ref` follow
+// `ScopeLedgerService` (ledger.proto); `scope = main` is refused there and here. The
+// account an invoice pays into is one the caller owns under a current grant (else
+// `not_granted` / `not_account_owner`, as for a debit) — never `fee` or `treasury`.
+service InvoiceService {
+  // Issue an invoice payable into `(scope, to_label)`; the caller must own that
+  // account. A FROZEN scope issues none (`scope_frozen`).
+  rpc CreateInvoice(CreateInvoiceRequest) returns (Invoice);
+
+  // Withdraw an OPEN invoice the caller issued. The one mutating call here without an
+  // `idempotency_key`, by design: it names the invoice and asks for one end state, so a
+  // retry IS a repeat — cancelling a cancelled invoice returns it unchanged, whoever
+  // cancelled it and whenever. A paid or expired one (an open one past `expires_at`
+  // included) is FAILED_PRECONDITION `invoice_not_open`; one whose payment is waiting for
+  // the ledger (PROCESSING) is FAILED_PRECONDITION `invoice_processing` — it may still fall
+  // back to open, so retry once it settles.
+  rpc CancelInvoice(CancelInvoiceRequest) returns (Invoice);
+
+  // One invoice the caller issued, as it stands now; anyone else's is NOT_FOUND. An open
+  // invoice past `expires_at` reads EXPIRED at once, before `KIND_INVOICE_EXPIRED` reaches
+  // the stream.
+  rpc GetInvoice(GetInvoiceRequest) returns (Invoice);
+}
+
+enum InvoiceState {
+  INVOICE_STATE_UNSPECIFIED = 0;
+  INVOICE_STATE_OPEN = 1;
+  INVOICE_STATE_PAID = 2;
+  INVOICE_STATE_CANCELLED = 3;
+  INVOICE_STATE_EXPIRED = 4;
+  // The payer has paid, but the ledger has not posted it yet (normally milliseconds). NOT a
+  // payment: it ends as PAID, or falls back to OPEN if the ledger refuses it. Do not
+  // fulfil on it; wait for PAID / `KIND_INVOICE_PAID`.
+  INVOICE_STATE_PROCESSING = 5;
+}
+
+message CreateInvoiceRequest {
+  string scope = 1;
+  string to_label = 2;
+  string amount = 3;
+  // Shown to the payer, at most 140 chars; plain text, no links.
+  string memo = 4;
+  // Unix seconds, in the future and at most 30 days ahead.
+  int64 expires_at = 5;
+  // Optional: only this user (`auth_subject`) may pay. Empty = anyone signed in.
+  string payer_auth_subject = 6;
+  string idempotency_key = 7;
+  string subject_ref = 8;
+}
+
+message CancelInvoiceRequest {
+  string scope = 1;
+  string invoice_id = 2;
+}
+
+message GetInvoiceRequest {
+  string scope = 1;
+  string invoice_id = 2;
+}
+
+message Invoice {
+  string invoice_id = 1;
+  string scope = 2;
+  string to_label = 3;
+  string amount = 4;
+  string memo = 5;
+  InvoiceState state = 6;
+  int64 created_at = 7;
+  int64 expires_at = 8;
+  // Set at creation; empty = anyone may pay.
+  string payer_auth_subject = 9;
+  // The page on https://evinvest.ltd where the user pays — the link to hand them.
+  // Always first-party: a scope's own host never takes the payment.
+  string pay_url = 10;
+  string subject_ref = 11;
+  // Once PAID: who paid, when, and from where — "main" or this scope (the payer's
+  // compartment).
+  string paid_by_auth_subject = 12;
+  int64 paid_at = 13;
+  string paid_from = 14;
+}
