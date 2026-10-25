@@ -18,7 +18,7 @@ use panel_core::{
 	ids::{BrandId, LocationId},
 	notify::{Failure, Locale, Rendered, Rule},
 };
-use sa_auth::{PermissionSet, SA_ADMIN, SA_OPERATOR};
+use sa_auth::{PermissionSet, SA_OPERATOR};
 use serde_json::json;
 use zeroize::Zeroizing;
 
@@ -240,6 +240,22 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 #[tokio::test]
 async fn telegram_roles_become_permissions_both_ways() {
 	const PERMISSIONS: i64 = 20261006090000;
+	// `sa:admin` as the migration wrote it: the alias of that day, frozen. A permission added to
+	// the alias since (`sa:work:invoices:create`) reaches a link when concierge is next asked.
+	const ADMIN_WHEN_WRITTEN: &[&str] = &[
+		"sa:admin:sources:manage",
+		"sa:analysis:experiments:edit",
+		"sa:analysis:read",
+		"sa:playbook:mcp:use",
+		"sa:review_archive:archive:operate",
+		"sa:review_archive:members:act_as",
+		"sa:review_archive:tokens:grant",
+		"sa:work:leads:edit",
+		"sa:work:pii:see",
+		"sa:work:places:edit",
+		"sa:work:pricing:edit",
+		"sa:work:read",
+	];
 	let db = TestDb::create().await;
 	let pool = db.pool().await;
 	let migrator = sqlx::migrate!("./migrations");
@@ -273,8 +289,8 @@ async fn telegram_roles_become_permissions_both_ways() {
 	let (operator, raw) = held(links, ann).await;
 	assert_eq!(operator, alias(SA_OPERATOR.members));
 	assert_eq!(raw, serde_json::to_string(&operator).unwrap(), "written as the panel writes a set");
-	assert_eq!(held(links, bob).await.0, alias(SA_ADMIN.members));
-	assert_eq!(held("SELECT permissions FROM telegram_link_tokens WHERE user_id = $1", bob).await.0, alias(SA_ADMIN.members));
+	assert_eq!(held(links, bob).await.0, alias(ADMIN_WHEN_WRITTEN));
+	assert_eq!(held("SELECT permissions FROM telegram_link_tokens WHERE user_id = $1", bob).await.0, alias(ADMIN_WHEN_WRITTEN));
 	let checked: i64 = sqlx::query_scalar("SELECT permissions_checked_at FROM telegram_links WHERE user_id = $1")
 		.bind(ann)
 		.fetch_one(&pool)

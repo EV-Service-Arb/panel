@@ -89,6 +89,15 @@ ev_lib::settings! {
 		google_oauth_client_secret: Option<String>,
 		/// How often each brand's calendar is pulled, in minutes.
 		google_calendar_sync_minutes: u32 = "5",
+		/// banking's ScopeLedger listener, from inside the cluster, e.g.
+		/// `https://banking-scope-ledger:50054`: the invoices are issued there. With the three
+		/// files below, or none of them; unset, the invoice routes answer 503.
+		scope_ledger_addr: Option<String>,
+		/// Paths, not secrets: the CA banking's server certificate chains to, and the panel's
+		/// client certificate and key, mounted from the cluster's Secret.
+		scope_ledger_tls_ca_pem_file: Option<String>,
+		scope_ledger_tls_cert_pem_file: Option<String>,
+		scope_ledger_tls_key_pem_file: Option<String>,
 		/// Development only: an alias (`sa:operator`, `sa:admin`), a comma-separated list of
 		/// `sa` permissions, or `none`. Signs whoever opens `/auth/login` in as a made-up user
 		/// holding those, without concierge. Refused at start in any profile but
@@ -287,6 +296,48 @@ impl Settings {
 				}))
 			}
 		}
+	}
+}
+
+impl Settings {
+	/// banking's ScopeLedger: `None` when none of its variables is set; some but not all is a
+	/// mistake, named. The PEM files are read here, at boot: a file that is missing fails the
+	/// boot, not the first invoice.
+	pub fn scope_ledger(&self) -> eyre::Result<Option<panel_server::scope_ledger::ScopeLedgerConfig>> {
+		self.scope_ledger_from(|path| std::fs::read_to_string(path).map_err(|e| eyre::eyre!("{path}: {e}")))
+	}
+
+	fn scope_ledger_from(&self, read: impl Fn(&str) -> eyre::Result<String>) -> eyre::Result<Option<panel_server::scope_ledger::ScopeLedgerConfig>> {
+		let set = |v: &Option<String>| v.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned);
+		let vars = [
+			("SCOPE_LEDGER_ADDR", set(&self.scope_ledger_addr)),
+			("SCOPE_LEDGER_TLS_CA_PEM_FILE", set(&self.scope_ledger_tls_ca_pem_file)),
+			("SCOPE_LEDGER_TLS_CERT_PEM_FILE", set(&self.scope_ledger_tls_cert_pem_file)),
+			("SCOPE_LEDGER_TLS_KEY_PEM_FILE", set(&self.scope_ledger_tls_key_pem_file)),
+		];
+		let missing: Vec<&str> = vars.iter().filter(|(_, v)| v.is_none()).map(|(name, _)| *name).collect();
+		if missing.len() == vars.len() {
+			return Ok(None);
+		}
+		eyre::ensure!(missing.is_empty(), "the ScopeLedger needs {} too", missing.join(", "));
+		let [addr, ca, cert, key] = vars.map(|(_, v)| v.unwrap_or_default());
+		// Never plain: the service token rides every call.
+		let url = url::Url::parse(&addr).map_err(|e| eyre::eyre!("SCOPE_LEDGER_ADDR is not a URL: {e}"))?;
+		eyre::ensure!(
+			url.scheme() == "https" && url.host_str().is_some_and(|h| !h.is_empty()) && url.path() == "/" && url.query().is_none(),
+			"SCOPE_LEDGER_ADDR must be a bare https:// address, not {addr}"
+		);
+		let pem = |var: &str, path: &str| -> eyre::Result<String> {
+			let text = read(path).map_err(|e| eyre::eyre!("{var}: {e:#}"))?;
+			eyre::ensure!(text.contains("-----BEGIN "), "{var}: {path} holds no PEM");
+			Ok(text)
+		};
+		Ok(Some(panel_server::scope_ledger::ScopeLedgerConfig {
+			ca_pem: pem("SCOPE_LEDGER_TLS_CA_PEM_FILE", &ca)?,
+			client_cert_pem: pem("SCOPE_LEDGER_TLS_CERT_PEM_FILE", &cert)?,
+			client_key_pem: zeroize::Zeroizing::new(pem("SCOPE_LEDGER_TLS_KEY_PEM_FILE", &key)?),
+			addr,
+		}))
 	}
 }
 
@@ -526,6 +577,10 @@ mod tests {
 				"GOOGLE_OAUTH_CLIENT_ID",
 				"GOOGLE_OAUTH_CLIENT_SECRET",
 				"GOOGLE_CALENDAR_SYNC_MINUTES",
+				"SCOPE_LEDGER_ADDR",
+				"SCOPE_LEDGER_TLS_CA_PEM_FILE",
+				"SCOPE_LEDGER_TLS_CERT_PEM_FILE",
+				"SCOPE_LEDGER_TLS_KEY_PEM_FILE",
 				"PANEL_DEV_SIGN_IN",
 				"PANEL_DEV_SIGN_IN_EMAIL",
 				"APP_ENV"
@@ -664,6 +719,45 @@ mod tests {
 		assert!(format!("{e}").contains("GOOGLE_OAUTH_CLIENT_ID"), "{e}");
 		assert!(from(&[("GOOGLE_OAUTH_CLIENT_ID", "cid")]).unwrap().google_client().is_err());
 		assert!(client.google(vars(&[("GOOGLE_CALENDAR_REFRESH_TOKEN_VIF NET", token)])).is_err());
+	}
+
+	#[test]
+	fn the_scope_ledger_is_all_or_nothing_over_https() {
+		let files = |path: &str| -> eyre::Result<String> {
+			match path {
+				"/etc/settings/ca" => Ok("-----BEGIN CERTIFICATE-----\nca\n".into()),
+				"/etc/settings/cert" => Ok("-----BEGIN CERTIFICATE-----\ncert\n".into()),
+				"/etc/settings/key" => Ok("-----BEGIN PRIVATE KEY-----\nkey-secret\n".into()),
+				"/etc/settings/empty" => Ok(String::new()),
+				_ => eyre::bail!("no such file"),
+			}
+		};
+		let with = |extra: &[(&str, &str)]| {
+			let mut vars = vec![
+				("SCOPE_LEDGER_ADDR", "https://banking-scope-ledger:50054"),
+				("SCOPE_LEDGER_TLS_CA_PEM_FILE", "/etc/settings/ca"),
+				("SCOPE_LEDGER_TLS_CERT_PEM_FILE", "/etc/settings/cert"),
+				("SCOPE_LEDGER_TLS_KEY_PEM_FILE", "/etc/settings/key"),
+			];
+			vars.extend_from_slice(extra);
+			from(&vars).unwrap().scope_ledger_from(files)
+		};
+		assert!(from(&[]).unwrap().scope_ledger_from(files).unwrap().is_none());
+		let on = with(&[]).unwrap().unwrap();
+		assert_eq!(on.addr, "https://banking-scope-ledger:50054");
+		assert!(on.client_key_pem.contains("key-secret"));
+		assert!(!format!("{on:?}").contains("key-secret"), "the key never prints");
+
+		let e = format!("{}", from(&[("SCOPE_LEDGER_ADDR", "https://banking:50054")]).unwrap().scope_ledger_from(files).unwrap_err());
+		assert!(e.contains("SCOPE_LEDGER_TLS_CA_PEM_FILE, SCOPE_LEDGER_TLS_CERT_PEM_FILE, SCOPE_LEDGER_TLS_KEY_PEM_FILE"), "{e}");
+		for addr in ["http://banking:50054", "https://banking:50054/v1", "banking:50054"] {
+			let e = format!("{}", with(&[("SCOPE_LEDGER_ADDR", addr)]).unwrap_err());
+			assert!(e.contains("SCOPE_LEDGER_ADDR"), "{addr}: {e}");
+		}
+		let e = format!("{}", with(&[("SCOPE_LEDGER_TLS_KEY_PEM_FILE", "/etc/settings/missing")]).unwrap_err());
+		assert!(e.contains("SCOPE_LEDGER_TLS_KEY_PEM_FILE") && e.contains("no such file"), "{e}");
+		let e = format!("{}", with(&[("SCOPE_LEDGER_TLS_CA_PEM_FILE", "/etc/settings/empty")]).unwrap_err());
+		assert!(e.contains("holds no PEM"), "{e}");
 	}
 
 	#[test]

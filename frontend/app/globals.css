@@ -14,6 +14,8 @@
   /* Grid tracks with no step on the spacing scale, used as grid-cols-(--name). */
   --grid-source-form: 1fr 12rem 1fr auto;
   --grid-payment: 1fr 1fr 7rem;
+  /* A new invoice: amount, memo (the widest), days, submit. */
+  --grid-invoice-form: 12rem minmax(0, 1fr) 8rem auto;
   --grid-funnel-row: 1fr auto auto;
   --grid-place-step: 6rem 1fr auto;
   --grid-account-row: 8rem 1fr;

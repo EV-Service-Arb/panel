@@ -6,7 +6,7 @@
 
 mod settings;
 
-use std::{collections::BTreeSet, net::SocketAddr};
+use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
 use clap::{Parser, Subcommand};
 use ev_lib::error_monitoring;
@@ -29,6 +29,7 @@ use panel_server::{
 	capture::{self, CaptureApi},
 	concierge::{Concierge, DevIdentity},
 	google_calendar, http,
+	scope_ledger::{self, ScopeLedger},
 	signin::{SignIn, SignInConfig},
 	telegram::{self, BotApi, BotName},
 	web::{self, Files},
@@ -245,13 +246,15 @@ async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSign
 			let front_end = Edge { files: settings.web()? };
 			let capture = settings.capture()?.map(|c| CaptureApi::new(&c.host, &c.key)).transpose()?;
 			let google = google(&settings)?;
+			let ledger = settings.scope_ledger()?.map(|c| ScopeLedger::connect(&c)).transpose()?.map(Arc::new);
 			let sign_in = match (sign_in, settings.forward()?) {
 				(Some(identity), forward) => Some((identity, forward)),
 				(None, None) => None,
 				(None, Some(_)) => eyre::bail!("the forward vouches for signed-in callers: it needs the sign-in configured"),
 			};
 			let panel = connect().await?.with_capture(capture.is_some());
-			serve(panel, sign_in, telegram, capture, google, front_end, bind).await
+			let peers = Peers { capture, google, ledger };
+			serve(panel, sign_in, telegram, peers, front_end, bind).await
 		}
 		Cmd::RebuildProjections => {
 			let r = connect().await?.rebuild_projections().await?;
@@ -507,6 +510,16 @@ struct Edge {
 	files: Option<Files>,
 }
 
+/// The services `serve` calls out to, each when configured.
+struct Peers {
+	/// PostHog (`POSTHOG_*`).
+	capture: Option<CaptureApi>,
+	/// Google Calendar (`GOOGLE_*`), and how often it is pulled.
+	google: Option<(google_calendar::GoogleCalendar, jiff::SignedDuration)>,
+	/// banking's ScopeLedger (`SCOPE_LEDGER_*`): the invoices.
+	ledger: Option<Arc<ScopeLedger>>,
+}
+
 /// Who signs people in.
 enum Identity {
 	Concierge(settings::SignInSettings),
@@ -518,8 +531,7 @@ async fn serve(
 	panel: Panel,
 	sign_in: Option<(Identity, Option<panel_server::forward::Upstreams>)>,
 	telegram: Option<settings::TelegramSettings>,
-	sender: Option<CaptureApi>,
-	google: Option<(google_calendar::GoogleCalendar, jiff::SignedDuration)>,
+	peers: Peers,
 	front_end: Edge,
 	bind: SocketAddr,
 ) -> eyre::Result<()> {
@@ -563,7 +575,7 @@ async fn serve(
 	let bus = panel.bus().clone();
 	let mut bot_work = None;
 	// Held, and awaited at shutdown, like the bot's.
-	let capture_work = match sender {
+	let capture_work = match peers.capture {
 		Some(api) => {
 			tracing::info!(?api, "sending lead events to posthog");
 			Some(tokio::spawn(capture::run(panel.clone(), api, stopped.clone())))
@@ -574,7 +586,7 @@ async fn serve(
 		}
 	};
 	// Held, and awaited at shutdown, like the sender's.
-	let booking_work = match google {
+	let booking_work = match peers.google {
 		Some((api, every)) => {
 			let brands: Vec<String> = api.brands().iter().map(|b| b.as_str().to_owned()).collect();
 			tracing::info!(?brands, minutes = every.as_mins(), "google calendar booking pull on; brands without a refresh token are off");
@@ -582,6 +594,17 @@ async fn serve(
 		}
 		None => {
 			tracing::warn!("GOOGLE_OAUTH_CLIENT_* or every GOOGLE_CALENDAR_REFRESH_TOKEN_<BRAND> unset: no Google Calendar bookings pulled");
+			None
+		}
+	};
+	// Held, and awaited at shutdown, like the others.
+	let invoice_work = match &peers.ledger {
+		Some(ledger) => {
+			tracing::info!(?ledger, "invoices on: issued through banking's ScopeLedger, payments confirmed from its money events");
+			Some(tokio::spawn(scope_ledger::run(panel.clone(), ledger.clone(), stopped.clone())))
+		}
+		None => {
+			tracing::warn!("SCOPE_LEDGER_* unset: no invoices, /api/v1/invoices answers 503");
 			None
 		}
 	};
@@ -625,6 +648,11 @@ async fn serve(
 			http::router(panel)
 		}
 	};
+	// The invoice routes find the ledger here; without it they answer 503.
+	let app = match peers.ledger {
+		Some(ledger) => app.layer(axum::Extension(ledger)),
+		None => app,
+	};
 	let app = match front_end.files {
 		Some(files) => web::serve(app, files),
 		None => {
@@ -655,6 +683,11 @@ async fn serve(
 		&& let Err(e) = work.await
 	{
 		panel_server::report(&eyre::eyre!(e), "the google calendar sync panicked");
+	}
+	if let Some(work) = invoice_work
+		&& let Err(e) = work.await
+	{
+		panel_server::report(&eyre::eyre!(e), "the invoice confirmation panicked");
 	}
 	served
 }

@@ -50,6 +50,7 @@ zeroize.workspace = true
 [dev-dependencies]
 futures.workspace = true
 panel = { workspace = true, features = ["testing"] }
+panel_contracts = { workspace = true, features = ["testing"] }
 sqlx.workspace = true
 tower = { workspace = true, features = ["util"] }
 

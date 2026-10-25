@@ -21,6 +21,7 @@ pub mod access;
 pub mod booking;
 pub mod capture;
 pub mod experiment;
+pub mod invoices;
 pub mod live;
 pub mod operator;
 pub mod place;

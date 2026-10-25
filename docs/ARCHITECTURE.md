@@ -825,6 +825,36 @@ The key is the project's `phc_` key — public like the landings' — not a pers
 refused at boot). A booking's slot is told as `lead_time_hours` alone: its weekday and part of
 the day would need the place's time zone, which a fact does not carry.
 
+## Invoices
+
+An operator asks a customer to pay in USDT through banking: the panel issues an invoice in
+banking's scope `sa` (`scope.v1.InvoiceService`, protos vendored in `contracts/proto/scope`)
+and opens its pay page on evinvest.ltd for the customer. Banking is the authority; the
+`invoices` table mirrors what it last said (`panel::invoices`, `panel_server::scope_ledger`).
+
+```text
+POST /api/v1/invoices      sa:work:invoices:create, Idempotency-Key required
+                           → the row is stored `creating` with the terms, then banking is asked
+                           (OpenAccount `sa:invoices` once, CreateInvoice under a key derived from
+                           the row, subject_ref sa_invoice:<row id>) → 201; a retry → 200, the
+                           same row; the key with other terms → 409. A refusal drops the row;
+                           a lost answer keeps it for the retry.
+GET  /api/v1/invoices      the rows, newest first, ≤ 500, no call to banking
+GET  /api/v1/invoices/{id} GetInvoice → stored; a `creating` row is asked for again; a final
+                           one (paid, cancelled, expired) is answered as stored
+confirm (15 s)             MoneyEvents.Pull after the stored cursor: INVOICE_PAID marks the
+                           invoice paid once (the event id is stored on it), CANCELLED and
+                           EXPIRED end it; the cursor moves in the same transaction
+```
+
+Paid means posted: `processing` (the payer paid, the ledger has not posted it) is never paid,
+and a paid invoice is never anything else. Nothing here writes the journal or `payments`: a
+lead's payments are typed in by hand and stay apart. Banking proves the panel twice, by its
+client certificate (mTLS) and by a `typ=service` token minted over the same channel
+(`ScopeAuthService.MintServiceToken`) and cached until shortly before it lapses. Without
+`SCOPE_LEDGER_*` the routes answer 503 `invoices_unavailable`; a grant banking has not given
+(`not_granted`) and an unreachable banking (`ledger_unavailable`) are 503 too.
+
 ### The retired import
 
 Up to v0.3 an hourly HogQL import journaled `site.metrics`, `contact.metrics` and
@@ -1066,6 +1096,10 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
 - **Google, outbound only.** With the booking pull configured the pods need egress to
   `oauth2.googleapis.com:443` and `www.googleapis.com:443`. `/api/hooks/booking` is public
   (no push provider is registered yet: 404s) and rate-limited per IP at the edge.
+- **banking's ScopeLedger within reach.** With `SCOPE_LEDGER_ADDR` (`https://…:50054`) and the
+  three `SCOPE_LEDGER_TLS_*_PEM_FILE` files mounted at `/etc/settings`, the pods need egress
+  to that address. Banking must map the panel's client certificate to its client and grant it
+  `(client sa, scope sa, prefix sa:)`; until then every invoice is 503 `not_granted`.
 - **`/api/v1/live` through the public IngressRoute, as a WebSocket.** Traefik proxies the
   upgrade as is; nothing in front of it may buffer the response or strip `Upgrade` /
   `Connection` / `Origin`, and an idle timeout on the way must be longer than the 25 s ping

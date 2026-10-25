@@ -1,7 +1,7 @@
 "use client";
 
 import { Button, Item, ItemActions, ItemContent, ItemGroup, ItemTitle, NavDot } from "@evinvest/uikit";
-import { Archive, ArrowUpRight, CircleUser, FlaskConical, KeyRound, LayoutGrid, type LucideIcon, Tags, Users, Wallet } from "lucide-react";
+import { Archive, ArrowUpRight, CircleUser, FlaskConical, KeyRound, LayoutGrid, type LucideIcon, ReceiptText, Tags, Users, Wallet } from "lucide-react";
 import Link from "next/link";
 
 import { DevSignInBadge, may, useMe } from "@/entities/session";
@@ -35,6 +35,7 @@ export function MoreView() {
         {may(me, "sa:work:read") && <MoreLink href={ROUTES.reviewArchive} icon={Archive} label="nav.reviewArchive" />}
         {may(me, "sa:work:read") && <MoreLink href={ROUTES.pricing} icon={Tags} label="nav.pricing" />}
         {WALLET_PAGE_ENABLED && may(me, "sa:work:read") && <MoreLink href={ROUTES.wallet} icon={Wallet} label="nav.wallet" />}
+        {may(me, "sa:work:read") && <MoreLink href={ROUTES.invoices} icon={ReceiptText} label="nav.invoices" />}
         {may(me, "sa:analysis:read") && <MoreLink href={ROUTES.experiments} icon={FlaskConical} label="nav.experiments" />}
         {may(me, "sa:admin:sources:manage") && <MoreLink href={ROUTES.sources} icon={KeyRound} label="nav.sources" />}
         <Item variant="outline" size="sm" asChild>
