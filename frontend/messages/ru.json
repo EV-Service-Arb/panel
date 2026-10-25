@@ -698,8 +698,6 @@
   "nav.invoices": "Счета",
   "invoices.title": "Счета",
   "invoices.description": "Счета в USDT в скоупе Service-Arb. Плательщик платит на evinvest.ltd; статус приходит из банкинга.",
-  "invoices.off.title": "Счета недоступны",
-  "invoices.off.body": "Счета для этой панели ещё не включены.",
   "invoices.refresh": "Обновить",
   "invoices.empty": "Счетов пока нет",
   "invoices.empty.body": "Созданный счёт появится здесь вместе со статусом.",

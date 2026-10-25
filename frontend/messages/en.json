@@ -698,8 +698,6 @@
   "nav.invoices": "Invoices",
   "invoices.title": "Invoices",
   "invoices.description": "USDT invoices in the Service-Arb scope. The payer pays on evinvest.ltd; the state comes from banking.",
-  "invoices.off.title": "Invoices are unavailable",
-  "invoices.off.body": "Invoices are not enabled for this panel yet.",
   "invoices.refresh": "Refresh",
   "invoices.empty": "No invoices yet",
   "invoices.empty.body": "An invoice you create appears here with its state.",

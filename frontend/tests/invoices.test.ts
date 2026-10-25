@@ -13,34 +13,23 @@ const t: T = (key) => key;
 const marks: Marks = { leads: 0, away: 0, places: 0, experiments: false, sources: false, bookings: false };
 const caller = (permissions: readonly Permission[]): Caller => ({ user_id: "u", email: "e", preferred_name: "", permissions: [...permissions], dev_sign_in: false, account_center: null });
 const WORK: readonly Permission[] = ["sa:work:read"];
-interface Pages {
-  wallet: boolean;
-  invoices: boolean;
-}
-const workItems = (permissions: readonly Permission[], pages: Pages) => panelNav(t, caller(permissions), marks, pages).groups.find((g) => g.id === "work")?.items.map((i) => i.id);
-const also = (permissions: readonly Permission[], pages: Pages) => panelNav(t, caller(permissions), marks, pages).tabs.find((i) => i.id === "more")?.also ?? [];
+const workItems = (permissions: readonly Permission[], wallet: boolean) => panelNav(t, caller(permissions), marks, { wallet }).groups.find((g) => g.id === "work")?.items.map((i) => i.id);
+const also = (permissions: readonly Permission[], wallet: boolean) => panelNav(t, caller(permissions), marks, { wallet }).tabs.find((i) => i.id === "more")?.also ?? [];
 
 describe("the invoices rail entry", () => {
-  it("ends the work group and joins the More tab when the page is on and the caller may work", () => {
-    expect(workItems(WORK, { wallet: false, invoices: true })?.at(-1)).toBe("invoices");
-    expect(also(WORK, { wallet: false, invoices: true })).toContain("/invoices");
+  it("ends the work group and joins the More tab when the caller may work", () => {
+    expect(workItems(WORK, false)?.at(-1)).toBe("invoices");
+    expect(also(WORK, false)).toContain("/invoices");
   });
 
-  it("is absent when the page is off", () => {
-    expect(workItems(WORK, { wallet: false, invoices: false })).not.toContain("invoices");
-    expect(also(WORK, { wallet: false, invoices: false })).not.toContain("/invoices");
+  it("is absent without sa:work:read", () => {
+    expect(workItems(["sa:analysis:read"], true)).toBeUndefined();
+    expect(also(["sa:analysis:read"], true)).not.toContain("/invoices");
   });
 
-  it("is absent without sa:work:read even when the page is on", () => {
-    expect(workItems(["sa:analysis:read"], { wallet: true, invoices: true })).toBeUndefined();
-    expect(also(["sa:analysis:read"], { wallet: true, invoices: true })).not.toContain("/invoices");
-  });
-
-  it("is independent of the wallet entry", () => {
-    expect(workItems(WORK, { wallet: true, invoices: false })).toContain("wallet");
-    expect(workItems(WORK, { wallet: true, invoices: false })).not.toContain("invoices");
-    expect(workItems(WORK, { wallet: false, invoices: true })).not.toContain("wallet");
-    expect(workItems(WORK, { wallet: true, invoices: true })?.slice(-2)).toEqual(["wallet", "invoices"]);
+  it("follows the wallet entry when that is on", () => {
+    expect(workItems(WORK, true)?.slice(-2)).toEqual(["wallet", "invoices"]);
+    expect(workItems(WORK, false)).not.toContain("wallet");
   });
 });
 

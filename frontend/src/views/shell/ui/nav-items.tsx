@@ -2,7 +2,6 @@ import { NavDot, type NavGroup, type NavItem } from "@evinvest/uikit";
 import { Archive, ArrowUpRight, BarChart3, Ellipsis, FlaskConical, Inbox, KeyRound, LayoutGrid, MapPin, ReceiptText, Tags, Wallet } from "lucide-react";
 
 import { type Caller, may } from "@/entities/session";
-import { INVOICES_PAGE_ENABLED } from "@/shared/config/invoices-page";
 import { ROUTES } from "@/shared/config/routes";
 import { WALLET_PAGE_ENABLED } from "@/shared/config/wallet-page";
 import type { T } from "@/shared/i18n";
@@ -23,10 +22,9 @@ export interface PanelNav {
 /** The screens behind a build flag, and whether this build offers each. */
 export interface FlaggedPages {
   wallet: boolean;
-  invoices: boolean;
 }
 
-const BUILD_PAGES: FlaggedPages = { wallet: WALLET_PAGE_ENABLED, invoices: INVOICES_PAGE_ENABLED };
+const BUILD_PAGES: FlaggedPages = { wallet: WALLET_PAGE_ENABLED };
 
 /** `pages`: the build flags by default; a parameter so that a test can turn them on and off. */
 export function panelNav(t: T, caller: Caller, marks: Marks, pages: FlaggedPages = BUILD_PAGES): PanelNav {
@@ -54,7 +52,7 @@ export function panelNav(t: T, caller: Caller, marks: Marks, pages: FlaggedPages
   const reviewArchive: NavItem = { id: "review_archive", href: ROUTES.reviewArchive, label: t("nav.reviewArchive"), icon: Archive };
   const walletItem: NavItem = { id: "wallet", href: ROUTES.wallet, label: t("nav.wallet"), icon: Wallet };
   const invoicesItem: NavItem = { id: "invoices", href: ROUTES.invoices, label: t("nav.invoices"), icon: ReceiptText };
-  const flagged = [...(pages.wallet ? [walletItem] : []), ...(pages.invoices ? [invoicesItem] : [])];
+  const flagged = [...(pages.wallet ? [walletItem] : []), invoicesItem];
   const elsewhere = (analysis && marks.experiments) || (admin && marks.sources);
   const more: NavItem = {
     id: "more",

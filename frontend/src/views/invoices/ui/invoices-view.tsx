@@ -7,7 +7,6 @@ import { fetchInvoice, fetchInvoices } from "@/entities/invoice";
 import { may, useMe } from "@/entities/session";
 import { CreateInvoiceForm } from "@/features/create-invoice";
 import { type PayOutcome, payNotice, refetchesAfter } from "@/features/pay-invoice-element";
-import { INVOICES_PAGE_ENABLED } from "@/shared/config/invoices-page";
 import { useT } from "@/shared/i18n";
 import { useResource } from "@/shared/lib/use-resource";
 import { EmptyState } from "@/shared/ui/empty-state";
@@ -18,20 +17,7 @@ import { useButtonSize } from "@/shared/ui/touch";
 
 import { InvoiceTable } from "./invoice-table";
 
-/** The invoices screen; with the flag off the route exists in the export but shows no invoices. */
 export function InvoicesView() {
-  const t = useT();
-  if (!INVOICES_PAGE_ENABLED) {
-    return (
-      <ScreenFrame title={t("invoices.title")} width="content">
-        <EmptyState title={t("invoices.off.title")} description={t("invoices.off.body")} />
-      </ScreenFrame>
-    );
-  }
-  return <Invoices />;
-}
-
-function Invoices() {
   const t = useT();
   const me = useMe();
   const button = useButtonSize();
