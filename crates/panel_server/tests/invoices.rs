@@ -466,3 +466,58 @@ async fn a_cancelled_or_expired_invoice_ends_so() {
 		.collect();
 	assert_eq!(states, HashMap::from([("inv-0", "cancelled"), ("inv-1", "expired")]));
 }
+
+/// The `invoices` changes told on the bus since the last call, as `(id named?)`.
+fn told(rx: &mut tokio::sync::broadcast::Receiver<panel::live::Signal>) -> Vec<bool> {
+	let mut out = Vec::new();
+	while let Ok(signal) = rx.try_recv() {
+		if let panel::live::Signal::Changed(c) = signal {
+			assert_eq!(c.topic, panel::live::Topic::Invoices, "{c:?}");
+			assert_eq!(c.brand, None);
+			out.push(c.id.is_some());
+		}
+	}
+	out
+}
+
+#[tokio::test]
+async fn the_screens_are_told_when_an_invoice_row_changes() {
+	let db = TestDb::create().await;
+	let fake = Fake::granted();
+	let ledger = serve_fake(fake.clone()).await;
+	let panel = panel(&db).await;
+	let mut rx = panel.bus().subscribe();
+	let app = app(panel.clone(), "sa:admin", Some(ledger.clone()));
+	let mut b = Browser::signed_in(&app).await;
+
+	let (_, issued) = b.issue(&app, Some("k-1"), terms()).await;
+	assert_eq!(told(&mut rx), [true, true], "stored creating, then as banking issued it");
+	b.issue(&app, Some("k-1"), terms()).await;
+	assert_eq!(told(&mut rx), [false; 0], "a retry changes nothing");
+
+	let item = format!("/api/v1/invoices/{}", issued["id"].as_str().unwrap());
+	b.get(&app, &item).await;
+	assert_eq!(told(&mut rx), [false; 0], "a read banking answers the same");
+	fake.set_state(pb::InvoiceState::Processing);
+	b.get(&app, &item).await;
+	assert_eq!(told(&mut rx), [true], "a read that found it processing");
+
+	panel.confirm_invoices(&*ledger).await.unwrap();
+	assert_eq!(told(&mut rx), [false; 0], "no events, nothing told");
+	fake.push_event("e-0", Kind::Charged, "hold-9");
+	panel.confirm_invoices(&*ledger).await.unwrap();
+	assert_eq!(told(&mut rx), [false; 0], "events about nothing the panel holds");
+	fake.push_event("e-1", Kind::InvoicePaid, "inv-0");
+	panel.confirm_invoices(&*ledger).await.unwrap();
+	assert_eq!(told(&mut rx), [false], "paid: one change for the page");
+
+	let (_, two) = b.issue(&app, Some("k-2"), terms()).await;
+	told(&mut rx);
+	fake.push_event("e-2", Kind::InvoiceExpired, two["invoice_id"].as_str().unwrap());
+	panel.confirm_invoices(&*ledger).await.unwrap();
+	assert_eq!(told(&mut rx), [false], "expired");
+
+	fake.bank().granted = false;
+	b.issue(&app, Some("k-3"), terms()).await;
+	assert_eq!(told(&mut rx), [true, true], "stored creating, then dropped on the refusal");
+}

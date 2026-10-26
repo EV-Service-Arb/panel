@@ -3,7 +3,7 @@ import { type Infer, nullable, object, oneOf, parse, str } from "@/shared/lib/pa
 /** Same origin as the pages, so the session cookie rides along; the server checks `Origin`. */
 export const LIVE_PATH = "/api/v1/live";
 
-export const LIVE_TOPICS = ["leads", "lead", "places", "sources", "experiments", "telegram", "pricing", "bookings"] as const;
+export const LIVE_TOPICS = ["leads", "lead", "places", "sources", "experiments", "telegram", "pricing", "bookings", "invoices"] as const;
 export type LiveTopic = (typeof LIVE_TOPICS)[number];
 
 /** The session is gone: the browser goes to sign-in, as on an HTTP 401. */

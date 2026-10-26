@@ -137,14 +137,14 @@ pub async fn update(conn: &mut SqliteConnection, i: &Invoice) -> eyre::Result<()
 	Ok(())
 }
 
-/// Drops a row banking refused to issue: nothing stands behind it.
-pub async fn delete_creating(conn: &mut SqliteConnection, id: Uuid) -> eyre::Result<()> {
-	sqlx::query("DELETE FROM invoices WHERE id = $1 AND state = 'creating'")
+/// Drops a row banking refused to issue: nothing stands behind it. `true` when it was there.
+pub async fn delete_creating(conn: &mut SqliteConnection, id: Uuid) -> eyre::Result<bool> {
+	let done = sqlx::query("DELETE FROM invoices WHERE id = $1 AND state = 'creating'")
 		.bind(id)
 		.execute(&mut *conn)
 		.await
 		.wrap_err_with(|| format!("dropping refused invoice {id}"))?;
-	Ok(())
+	Ok(done.rows_affected() == 1)
 }
 
 /// Marks banking's invoice paid on the money event `event_id`: `true` if this event was taken

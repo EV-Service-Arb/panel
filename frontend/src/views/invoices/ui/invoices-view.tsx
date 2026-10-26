@@ -21,7 +21,7 @@ export function InvoicesView() {
   const t = useT();
   const me = useMe();
   const button = useButtonSize();
-  const invoices = useResource("invoices", fetchInvoices);
+  const invoices = useResource("invoices", fetchInvoices, "invoices", { live: ["invoices"] });
 
   if (!may(me, "sa:work:read")) {
     return (

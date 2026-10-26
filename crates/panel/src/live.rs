@@ -16,6 +16,7 @@
 //! pricing               a brand's model saved or removed, its locales  → pricing
 //! add_source, revoke    the signing keys                               → sources
 //! telegram              linked, unlinked, blocked, rules               → telegram (its user only)
+//! invoices              a row stored, read from banking, dropped, paid or ended → invoices
 //! sessions closed       logout, a sign-in replacing one, a refusal     → the sockets of that session end
 //! ```
 //!
@@ -59,6 +60,8 @@ pub enum Topic {
 	Telegram,
 	/// The providers' bookings without a lead: one came, changed, or was joined to a lead.
 	Bookings,
+	/// The invoices asked of banking: one issued, read, dropped, paid or ended.
+	Invoices,
 }
 
 impl Topic {
@@ -72,6 +75,7 @@ impl Topic {
 			Self::Experiments => "experiments",
 			Self::Telegram => "telegram",
 			Self::Bookings => "bookings",
+			Self::Invoices => "invoices",
 		}
 	}
 }
@@ -95,7 +99,7 @@ impl Change {
 	/// Telegram link is its own user's.
 	pub fn visible_to(&self, user: Uuid, permissions: &PermissionSet) -> bool {
 		match self.topic {
-			Topic::Leads | Topic::Lead | Topic::Places | Topic::Pricing | Topic::Bookings => permissions.may(Work::Read),
+			Topic::Leads | Topic::Lead | Topic::Places | Topic::Pricing | Topic::Bookings | Topic::Invoices => permissions.may(Work::Read),
 			Topic::Experiments => permissions.may(Analysis::Read),
 			Topic::Sources => permissions.may(Sources::Manage),
 			Topic::Telegram => self.user == Some(user),
@@ -257,11 +261,12 @@ mod tests {
 		let operator: PermissionSet = sa_auth::SA_OPERATOR.members.iter().copied().collect();
 		let admin: PermissionSet = sa_auth::SA_ADMIN.members.iter().copied().collect();
 		let work_only: PermissionSet = [Work::Read.as_str()].into_iter().collect();
-		for topic in [Topic::Leads, Topic::Lead, Topic::Places, Topic::Pricing, Topic::Experiments, Topic::Bookings] {
+		for topic in [Topic::Leads, Topic::Lead, Topic::Places, Topic::Pricing, Topic::Experiments, Topic::Bookings, Topic::Invoices] {
 			assert!(change(topic, None).visible_to(ann, &operator), "{topic:?}");
 			assert!(change(topic, None).visible_to(ann, &admin), "{topic:?}");
 		}
 		assert!(!change(Topic::Experiments, None).visible_to(ann, &work_only), "an analyst's read");
+		assert!(change(Topic::Invoices, None).visible_to(ann, &work_only), "the Work section's read");
 		assert!(!change(Topic::Sources, None).visible_to(ann, &operator), "an admin's read");
 		assert!(change(Topic::Sources, None).visible_to(ann, &admin));
 		assert!(change(Topic::Telegram, Some(ann)).visible_to(ann, &operator));
