@@ -162,7 +162,7 @@ impl Files {
 		Ok(Self { dir, inline, csp })
 	}
 
-	/// The pages' policy with or without the platform's MFE directories ([`csp`]).
+	/// The pages' policy with or without the platform's MFE directories.
 	#[must_use]
 	pub fn platform_mfe(mut self, on: bool) -> Self {
 		self.csp = HeaderValue::from_str(&csp(on, &self.inline)).expect("the policy is ASCII without control characters");
