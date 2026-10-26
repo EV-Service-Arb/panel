@@ -8,7 +8,11 @@ import { WALLET_ORIGIN } from "@/shared/config/wallet-bundle";
 
 /** Cancelable, from the element: the user pressed Pay. `detail` is `{ href }`. */
 export const WALLET_ACTION_EVENT = "ev:wallet-action";
-/** `type` of the message that the evinvest.ltd page posts to its opener. */
+/**
+ * `type` of the message that the evinvest.ltd page posts to its opener, and the name of the
+ * event the element dispatches on itself when its in-page form closes (`detail` is
+ * `{ kind, outcome, reference? }`).
+ */
 export const WALLET_RESULT_MESSAGE = "ev:wallet-result";
 
 /** The only action the pay button offers. The SDK knows four more; this host opens none of them. */
@@ -73,6 +77,17 @@ export function parsePayMessage(data: unknown, state: string): PayResult | null 
   if (typeof data !== "object" || data === null) return null;
   if (Reflect.get(data, "type") !== WALLET_RESULT_MESSAGE) return null;
   if (state === "" || Reflect.get(data, "state") !== state) return null;
+  return resultOf(data);
+}
+
+/** The in-page form's `ev:wallet-result` for a payment, or null for anything else. */
+export function payResultFromEvent(event: Event): PayResult | null {
+  const detail: unknown = event instanceof CustomEvent ? event.detail : undefined;
+  if (typeof detail !== "object" || detail === null || Reflect.get(detail, "kind") !== "pay") return null;
+  return resultOf(detail);
+}
+
+function resultOf(data: object): PayResult | null {
   const outcome: unknown = Reflect.get(data, "outcome");
   const reference: unknown = Reflect.get(data, "reference");
   const known = OUTCOMES.find((value) => value === outcome);

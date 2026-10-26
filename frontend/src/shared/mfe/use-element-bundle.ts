@@ -46,6 +46,8 @@ export function awaitElement(
 
 export interface ElementBundleOptions {
   minApiVersion: number;
+  /** The script's Subresource Integrity (`sha256-…`): the browser refuses other bytes. Null: unpinned. */
+  integrity: string | null;
   /** A bundle that neither loads nor fails (a hung proxy) must not hold the fallback forever. */
   timeoutMs: number;
 }
@@ -54,13 +56,14 @@ export interface ElementBundleOptions {
 // the next mount retries, a good one is shared.
 const loads = new Map<string, Promise<boolean>>();
 
-function loadOnce(tag: string, scriptUrl: string, { minApiVersion, timeoutMs }: ElementBundleOptions): Promise<boolean> {
+function loadOnce(tag: string, scriptUrl: string, { minApiVersion, integrity, timeoutMs }: ElementBundleOptions): Promise<boolean> {
   const pending = loads.get(tag);
   if (pending) return pending;
   let failure: Promise<void> = new Promise<void>(() => {});
   if (!customElements.get(tag)) {
     const script = document.createElement("script");
     script.type = "module";
+    if (integrity !== null) script.integrity = integrity;
     script.src = scriptUrl;
     failure = new Promise<void>((resolve) => {
       script.addEventListener(
@@ -87,20 +90,20 @@ function loadOnce(tag: string, scriptUrl: string, { minApiVersion, timeoutMs }: 
  * usable. Unlike `useRemoteBundle` it gives up: a 404 (served as JSON, so a MIME error), an
  * older bundle and a timeout all read as `failed`, never as an endless `loading`.
  */
-export function useElementBundle(tag: string, scriptUrl: string, { minApiVersion, timeoutMs }: ElementBundleOptions): BundleState {
+export function useElementBundle(tag: string, scriptUrl: string, { minApiVersion, integrity, timeoutMs }: ElementBundleOptions): BundleState {
   const [state, setState] = useState<{ tag: string; value: BundleState } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const stopContainment = containRemoteStyles(scriptUrl);
-    void loadOnce(tag, scriptUrl, { minApiVersion, timeoutMs }).then((ok) => {
+    void loadOnce(tag, scriptUrl, { minApiVersion, integrity, timeoutMs }).then((ok) => {
       if (!cancelled) setState({ tag, value: ok ? "ready" : "failed" });
     });
     return () => {
       cancelled = true;
       stopContainment();
     };
-  }, [tag, scriptUrl, minApiVersion, timeoutMs]);
+  }, [tag, scriptUrl, minApiVersion, integrity, timeoutMs]);
 
   return state?.tag === tag ? state.value : "loading";
 }

@@ -53,8 +53,9 @@ aquafix has one. What that needs of the backend and the flake:
   and links `/leads/`), and `404.html` with status 404 for anything else. `/api`,
   `/auth`, `/health` and later `/grafana` keep their routes ahead of it.
 - Cache headers: `/_next/static/*` is content-hashed — `public, max-age=31536000,
-  immutable`; every HTML file `no-cache`. A CSP (`default-src 'self'`, plus
-  `'unsafe-inline'` for `script-src` while Next inlines its bootstrap).
+  immutable`; every HTML file `no-cache`. A CSP (`default-src 'self'`; Next's inline
+  bootstrap and payload run by their sha256, hashed from the export at boot: no
+  `'unsafe-inline'` in `script-src`). An inline `<script>` added at runtime is refused.
 - The flake builds `frontend/` with `buildNpmPackage` (needs `npmDepsHash`) and puts
   `out/` in the container beside the binary; the entrypoint sets the directory.
 - The IngressRoute for `sa.evinvest.ltd` sends everything to the panel's Service

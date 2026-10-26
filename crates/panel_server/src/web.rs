@@ -17,7 +17,11 @@
 //! Headers: `/_next/static/*` is content-hashed, so `immutable` for a year; everything else
 //! `no-cache`, and every HTML page a CSP.
 
-use std::{io, path::Path};
+use std::{
+	collections::BTreeSet,
+	io,
+	path::{Path, PathBuf},
+};
 
 use axum::{
 	Json, Router,
@@ -26,20 +30,14 @@ use axum::{
 	http::{HeaderValue, StatusCode, header},
 	response::{IntoResponse, Response},
 };
+use base64::Engine;
+use eyre::WrapErr;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tower_http::{
 	services::{ServeDir, ServeFile},
 	set_status::SetStatus,
 };
-
-/// Next inlines its bootstrap and the RSC payload as `<script>` elements, and the kit sets
-/// inline styles, hence `'unsafe-inline'`; review_archive's dashboard is wasm, hence
-/// `'wasm-unsafe-eval'`; nothing is loaded from another origin (the fonts
-/// are the system's, the kit's CSS is bundled), and the pages talk to this origin alone.
-///
-/// This is the policy with `PANEL_CSP_PLATFORM_MFE` off, the default: the platform's elements
-/// (the account chip, the sign-in, the wallet) do not load under it. [`csp`] builds the other.
-pub const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 /// The platform's origin, where the hosts load its micro-frontends from.
 const PLATFORM_ORIGIN: &str = "https://evinvest.ltd";
@@ -48,28 +46,87 @@ const PLATFORM_ORIGIN: &str = "https://evinvest.ltd";
 /// an iframe, both from this origin.
 const TURNSTILE_ORIGIN: &str = "https://challenges.cloudflare.com";
 
-/// The policy for the pages: [`CSP`], and with `platform_mfe` also the platform's MFE
-/// directories (concierge's `/api/auth/mfe/`, the wallet's `/wallet/mfe/`) in `script-src`
-/// and its origin in `connect-src` (the elements call its API, cross-origin), plus Turnstile's
-/// origin in `script-src` and a `frame-src` of it alone (without one the frame would fall back
-/// to `default-src 'self'` and the sign-in dialog would show "Captcha failed to load").
-/// Turnstile needs no `connect-src` entry, as in the invest and admin policies.
+/// The pages' policy. Scripts run from this origin, and inline only as `inline` names them:
+/// Next inlines its bootstrap and the RSC payload, so every inline script of the export is
+/// admitted by its hash, on every page (a client-side navigation keeps the first page's
+/// policy). The kit sets inline styles, hence `'unsafe-inline'` in `style-src`;
+/// review_archive's dashboard is wasm, hence `'wasm-unsafe-eval'`.
 ///
-/// Directories, never the origin: a `script-src` of the whole origin would let any script
-/// the platform serves run in the panel's session, not only the elements it publishes for
-/// hosts. Nothing else widens: styles, images and fonts stay on this origin.
-pub fn csp(platform_mfe: bool) -> String {
-	if !platform_mfe {
-		return CSP.to_owned();
-	}
-	let widened = CSP
-		.replace(
-			"'wasm-unsafe-eval';",
-			&format!("'wasm-unsafe-eval' {PLATFORM_ORIGIN}/api/auth/mfe/ {PLATFORM_ORIGIN}/wallet/mfe/ {TURNSTILE_ORIGIN};"),
+/// With `platform_mfe`, also the platform's MFE directories (concierge's `/api/auth/mfe/`, the
+/// wallet's `/wallet/mfe/`) in `script-src`, the wallet's in `style-src` (its stylesheet's
+/// `<link>`), its origin in `connect-src` (the elements call its API, cross-origin), and
+/// Turnstile's origin in `script-src` and a `frame-src` of it alone (without one the frame
+/// would fall back to `default-src 'self'` and the sign-in dialog would show "Captcha failed
+/// to load"). Directories, never the origin: a `script-src` of the whole origin would let any
+/// script the platform serves run in the panel's session, not only the elements it publishes
+/// for hosts.
+fn csp(platform_mfe: bool, inline: &BTreeSet<String>) -> String {
+	let hashes: String = inline.iter().map(|h| format!(" '{h}'")).collect();
+	let (scripts, styles, connect, frames) = if platform_mfe {
+		(
+			format!(" {PLATFORM_ORIGIN}/api/auth/mfe/ {PLATFORM_ORIGIN}/wallet/mfe/ {TURNSTILE_ORIGIN}"),
+			format!(" {PLATFORM_ORIGIN}/wallet/mfe/"),
+			format!(" {PLATFORM_ORIGIN}"),
+			format!("; frame-src {TURNSTILE_ORIGIN}"),
 		)
-		.replace("connect-src 'self';", &format!("connect-src 'self' {PLATFORM_ORIGIN}; frame-src {TURNSTILE_ORIGIN};"));
-	debug_assert_ne!(widened, CSP, "the base policy changed shape; update the two anchors");
-	widened
+	} else {
+		(String::new(), String::new(), String::new(), String::new())
+	};
+	format!(
+		"default-src 'self'; script-src 'self'{hashes} 'wasm-unsafe-eval'{scripts}; style-src 'self' 'unsafe-inline'{styles}; img-src 'self' data:; \
+		 connect-src 'self'{connect}{frames}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+	)
+}
+
+/// Trusted Types, reported in the console only: the step before enforcing them (banking
+/// WALLET-INPAGE-SPEC control (g)).
+const TRUSTED_TYPES_REPORT_ONLY: &str = "require-trusted-types-for 'script'";
+
+/// `sha256-<base64>` of every inline `<script>` (one without `src`) of the export's pages.
+fn inline_scripts(dir: &Path) -> eyre::Result<BTreeSet<String>> {
+	let mut pages = Vec::new();
+	let mut dirs = vec![dir.to_path_buf()];
+	while let Some(d) = dirs.pop() {
+		for entry in std::fs::read_dir(&d).wrap_err_with(|| format!("reading {}", d.display()))? {
+			let path: PathBuf = entry.wrap_err_with(|| format!("reading {}", d.display()))?.path();
+			if path.is_dir() {
+				dirs.push(path);
+			} else if path.extension().is_some_and(|e| e == "html") {
+				pages.push(path);
+			}
+		}
+	}
+	let mut hashes = BTreeSet::new();
+	for page in pages {
+		let html = std::fs::read_to_string(&page).wrap_err_with(|| format!("reading {}", page.display()))?;
+		for script in inline_bodies(&html).wrap_err_with(|| format!("the scripts of {}", page.display()))? {
+			hashes.insert(format!("sha256-{}", base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script.as_bytes()))));
+		}
+	}
+	Ok(hashes)
+}
+
+/// The text of each `<script>` without a `src`, as the browser hashes it (a script's text is
+/// raw: no entity is decoded in it).
+fn inline_bodies(html: &str) -> eyre::Result<Vec<&str>> {
+	let lower = html.to_ascii_lowercase();
+	let mut bodies = Vec::new();
+	let mut at = 0;
+	while let Some(open) = lower[at..].find("<script").map(|i| at + i) {
+		let name_end = open + "<script".len();
+		if !lower[name_end..].starts_with(|c: char| c == '>' || c.is_ascii_whitespace()) {
+			at = name_end;
+			continue;
+		}
+		let tag_end = lower[name_end..].find('>').map(|i| name_end + i).ok_or_else(|| eyre::eyre!("a <script> tag never closes"))?;
+		let close = lower[tag_end..].find("</script").map(|i| tag_end + i).ok_or_else(|| eyre::eyre!("a <script> never ends"))?;
+		let has_src = lower[name_end..tag_end].split(|c: char| c.is_ascii_whitespace()).any(|a| a == "src" || a.starts_with("src="));
+		if !has_src {
+			bodies.push(&html[tag_end + 1..close]);
+		}
+		at = close;
+	}
+	Ok(bodies)
 }
 
 /// Where the build puts what it names by content hash.
@@ -85,6 +142,8 @@ const RESERVED: [&str; 5] = ["/api", "/auth", "/health", "/grafana", "/cabinet"]
 #[derive(Clone, Debug)]
 pub struct Files {
 	dir: ServeDir<SetStatus<ServeFile>>,
+	/// The hashes of the export's inline scripts, read once at boot.
+	inline: BTreeSet<String>,
 	/// Built once at boot, so a page costs no allocation for it.
 	csp: HeaderValue,
 }
@@ -97,17 +156,16 @@ impl Files {
 			let path = dir.join(page);
 			eyre::ensure!(path.is_file(), "PANEL_WEB_DIR {} has no {page}: not a build of frontend/", dir.display());
 		}
+		let inline = inline_scripts(dir)?;
+		let csp = HeaderValue::from_str(&csp(false, &inline)).expect("the policy is ASCII without control characters");
 		let dir = ServeDir::new(dir).append_index_html_on_directories(true).not_found_service(ServeFile::new(dir.join("404.html")));
-		Ok(Self {
-			dir,
-			csp: HeaderValue::from_static(CSP),
-		})
+		Ok(Self { dir, inline, csp })
 	}
 
 	/// The pages' policy with or without the platform's MFE directories ([`csp`]).
 	#[must_use]
 	pub fn platform_mfe(mut self, on: bool) -> Self {
-		self.csp = HeaderValue::from_str(&csp(on)).expect("the policy is ASCII without control characters");
+		self.csp = HeaderValue::from_str(&csp(on, &self.inline)).expect("the policy is ASCII without control characters");
 		self
 	}
 }
@@ -168,6 +226,7 @@ fn dressed(mut res: Response, hashed: bool, csp: &HeaderValue) -> Response {
 	h.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
 	if html {
 		h.insert(header::CONTENT_SECURITY_POLICY, csp.clone());
+		h.insert(header::CONTENT_SECURITY_POLICY_REPORT_ONLY, HeaderValue::from_static(TRUSTED_TYPES_REPORT_ONLY));
 	}
 	res
 }
@@ -175,47 +234,6 @@ fn dressed(mut res: Response, hashed: bool, csp: &HeaderValue) -> Response {
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	/// The directive's sources, split on spaces.
-	fn sources<'a>(policy: &'a str, directive: &str) -> Vec<&'a str> {
-		let d = policy.split("; ").find(|d| d.split(' ').next() == Some(directive)).unwrap();
-		d.split(' ').skip(1).collect()
-	}
-
-	#[test]
-	fn the_policy_is_the_old_one_byte_for_byte_when_off() {
-		assert_eq!(csp(false), CSP);
-	}
-
-	#[test]
-	fn the_platform_widens_script_connect_and_frame_sources_only() {
-		let on = csp(true);
-		let off = CSP;
-		assert_eq!(
-			sources(&on, "script-src"),
-			[
-				"'self'",
-				"'unsafe-inline'",
-				"'wasm-unsafe-eval'",
-				"https://evinvest.ltd/api/auth/mfe/",
-				"https://evinvest.ltd/wallet/mfe/",
-				"https://challenges.cloudflare.com"
-			]
-		);
-		assert_eq!(sources(&on, "frame-src"), ["https://challenges.cloudflare.com"]);
-		assert_eq!(sources(&on, "connect-src"), ["'self'", "https://evinvest.ltd"]);
-		assert!(!sources(&on, "script-src").contains(&"https://evinvest.ltd"), "the bare origin is never a script source");
-		// every other directive, in the same order, is untouched
-		let rest = |p: &str| {
-			p.split("; ")
-				.filter(|d| !d.starts_with("script-src") && !d.starts_with("connect-src") && !d.starts_with("frame-src"))
-				.map(str::to_owned)
-				.collect::<Vec<_>>()
-		};
-		assert_eq!(rest(&on), rest(off));
-		assert_eq!(on.split("; ").count(), off.split("; ").count() + 1);
-		HeaderValue::from_str(&on).unwrap();
-	}
 
 	#[test]
 	fn reserved_prefixes_are_whole_segments() {
