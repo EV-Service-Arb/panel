@@ -490,6 +490,7 @@ closes              4401 the session ended   4403 sa:work:read is gone   1001 th
 | `experiments` | a landing's declaration, or an admin's change | its brand | the key (a change) | `sa:analysis:read` |
 | `telegram` | the user's link made, undone or found blocked; their rules | — | — | that user |
 | `bookings` | a provider's booking without a lead came, changed, or was attached | its brand | — | `sa:work:read` |
+| `invoices` | an invoice stored, read from banking (changed), dropped on a refusal, or paid / cancelled / expired by the confirmation | — | the invoice (one row); — (a confirmation page) | `sa:work:read` |
 
 A booking event tells `lead` for every lead it changed — a provider's booking attached
 elsewhere tells the lead it left and the one it joined.
@@ -508,7 +509,8 @@ elsewhere tells the lead it left and the one it joined.
   unregistered type changed no read and says nothing. Outside the journal: a place's change
   (`place.rs`, after its transaction), a brand's pricing (`pricing.rs`, the same), the sources (`Panel::add_source`,
   `Panel::revoke_source`), the Telegram link (`telegram.rs`: `/start`, `/stop`, the profile's
-  unlink, a chat found blocked, the rules). A write that changes nothing publishes nothing.
+  unlink, a chat found blocked, the rules), the invoices (`invoices.rs`, after each commit that
+  changed a row). A write that changes nothing publishes nothing.
 - **The bus is in-process** (`tokio::sync::broadcast`, one pod). Publishing never waits and
   never fails a write; with no socket open it is dropped. A command run in another process
   (`panel place set`, `panel source add`) is not seen by the
