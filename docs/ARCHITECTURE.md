@@ -849,6 +849,19 @@ confirm (15 s)             MoneyEvents.Pull after the stored cursor: INVOICE_PAI
                            EXPIRED end it; the cursor moves in the same transaction
 ```
 
+**Paying in the page.** Each open row mounts banking's `<mfe-banking-pay-invoice invoice
+scope="sa" actions="inline">`. When banking's wallet BFF lists `pay` for this origin
+(`WALLET_ACTION_ORIGINS` / `WALLET_ACTION_KINDS`, banking docs/WALLET-INTENTS.md) the element
+shows the terms and asks the passkey in this page, then dispatches `ev:wallet-result`; else (or
+before the list arrives, or without a passkey) it offers the popup on evinvest.ltd as before.
+Either result is a hint: the row is read again from banking, and the confirmation's `invoices`
+frame turns it paid. `wallet.js` is pinned (`WALLET_SCRIPT_INTEGRITY`, SRI on the script the
+loader injects): banking's registry carries no integrity, so a banking release that changes
+`wallet.js` needs a panel release with its new `mfe:pins` hash, or the wallet and Pay read
+"unavailable". The front end loads no Sentry Replay or PostHog; adding either must keep
+`/api/auth/stepup/*` and `/cabinet/api/wallet/intents*` out of their network-payload capture
+(the step-up proof and the CSRF token ride there).
+
 Paid means posted: `processing` (the payer paid, the ledger has not posted it) is never paid,
 and a paid invoice is never anything else. Nothing here writes the journal or `payments`: a
 lead's payments are typed in by hand and stay apart. Banking proves the panel twice, by its
@@ -1052,18 +1065,25 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
   `index.html`, anything else `404.html` with a 404). `/grafana` is held: a JSON 404 until the dashboards move there; so is `/cabinet` (Forward). `/_next/static/*`
   is `immutable` for a year, everything else `no-cache` (the store's 1970 mtimes make
   date revalidation meaningless, so the panel answers none); every page carries a CSP of
-  `default-src 'self'` with `'unsafe-inline'` for scripts and styles (Next's inline
-  bootstrap), `'wasm-unsafe-eval'` (the review_archive dashboard), `frame-ancestors 'none'`, `Referrer-Policy: same-origin`. Without
+  `default-src 'self'`, scripts from this origin and inline only by hash (`web::Files::new`
+  hashes every inline `<script>` of every page at boot, one list for the whole origin: Next's
+  inline bootstrap and payload; no `'unsafe-inline'` in `script-src`, banking's
+  WALLET-INPAGE-SPEC control (g) for in-page pay), `'unsafe-inline'` for styles (the kit),
+  `'wasm-unsafe-eval'` (the review_archive dashboard), `frame-ancestors 'none'`,
+  `Referrer-Policy: same-origin`, and Trusted Types report-only
+  (`require-trusted-types-for 'script'`, the console alone: no report endpoint). Without
   `PANEL_WEB_DIR`, `serve` answers the API alone and says so.
 - **The platform's MFE bundles (`PANEL_CSP_PLATFORM_MFE`).** `0` (default, also unset) leaves
   the CSP above exactly as it was; `1` (anything else fails the boot) adds to `script-src` the
   two directories `https://evinvest.ltd/api/auth/mfe/` and `https://evinvest.ltd/wallet/mfe/`,
-  and to `connect-src` the origin `https://evinvest.ltd` (the elements call its API); it also
+  to `style-src` the wallet's directory (its stylesheet's `<link>`), and to `connect-src` the
+  origin `https://evinvest.ltd` (the elements call its API: the wallet, its intents, concierge's
+  step-up); it also
   adds `https://challenges.cloudflare.com` to `script-src` and a `frame-src` of it alone
   (the sign-in element's Turnstile loads `api.js` and draws its challenge in a Cloudflare
   iframe; without them the dialog shows "Captcha failed to load"; no `connect-src` entry is
   needed, as in invest and admin). The Turnstile widget's hostnames in Cloudflare must list
-  the panel's host. Styles, images and fonts do not change. The string is built once at boot (`web::csp`, kept in
+  the panel's host. Images and fonts do not change. The string is built once at boot (`web::csp`, kept in
   `web::Files`). Directories, not the origin, on purpose: a `script-src` of the whole origin
   would let any script that origin serves run in the panel's session, not only the elements
   it publishes for hosts. The host loads the bundles by the platform's manifest. With `0`

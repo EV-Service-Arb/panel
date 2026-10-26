@@ -7,10 +7,10 @@ import { useLocale, useT } from "@/shared/i18n";
 import { useElementBundle } from "@/shared/mfe";
 import { EmptyState } from "@/shared/ui/empty-state";
 
-import { WALLET_API_VERSION, WALLET_SCOPE, WALLET_SCRIPT, WALLET_TAG } from "../model/constants";
+import { WALLET_API_VERSION, WALLET_SCOPE, WALLET_SCRIPT, WALLET_SCRIPT_INTEGRITY, WALLET_TAG } from "../model/constants";
 
 // A stable object: the loader's effect is keyed on its fields.
-const BUNDLE = { minApiVersion: WALLET_API_VERSION, timeoutMs: 8000 } as const;
+const BUNDLE = { minApiVersion: WALLET_API_VERSION, integrity: WALLET_SCRIPT_INTEGRITY, timeoutMs: 8000 } as const;
 
 /**
  * banking's `<mfe-banking-wallet scope="sa">`: balances and recent history of the SA

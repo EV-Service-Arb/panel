@@ -15,7 +15,7 @@ import { ChipFallback } from "./chip-fallback";
 import { useChipElement } from "./use-chip-element";
 
 // A stable object: the loader's effect is keyed on its fields.
-const BUNDLE = { minApiVersion: CHIP_API_VERSION, timeoutMs: 8000 } as const;
+const BUNDLE = { minApiVersion: CHIP_API_VERSION, integrity: null, timeoutMs: 8000 } as const;
 
 /**
  * The EV account chip — the one the site and the cabinet show — in host mode: the panel tells

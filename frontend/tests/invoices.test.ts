@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { type Invoice, canonicalAmount, expiresInDays, memoProblem, payableInvoiceId } from "@/entities/invoice";
 import { type Caller, type Permission } from "@/entities/session/model/generated";
-import { type PayOutcome, parsePayMessage, payActionUrl, payNotice, refetchesAfter } from "@/features/pay-invoice-element";
+import { type PayOutcome, parsePayMessage, payActionUrl, payNotice, payResultFromEvent, refetchesAfter } from "@/features/pay-invoice-element";
 import { invoiceFrom, keepsKey } from "@/features/create-invoice";
 import type { ApiFailure } from "@/shared/api";
 import type { T } from "@/shared/i18n";
@@ -186,6 +186,26 @@ describe("parsePayMessage", () => {
   it("drops a 129-character reference instead of cutting it, and keeps a 128-character one", () => {
     expect(parsePayMessage({ ...msg, reference: "r".repeat(129) }, "s1")).toEqual({ outcome: "done", reference: null });
     expect(parsePayMessage({ ...msg, reference: "r".repeat(128) }, "s1")?.reference).toBe("r".repeat(128));
+  });
+});
+
+describe("payResultFromEvent", () => {
+  const result = (detail: unknown) => payResultFromEvent(new CustomEvent("ev:wallet-result", { detail }));
+
+  it("reads the in-page form's result for a payment", () => {
+    expect(result({ kind: "pay", outcome: "done", reference: "inv_1" })).toEqual({ outcome: "done", reference: "inv_1" });
+    expect(result({ kind: "pay", outcome: "cancelled" })).toEqual({ outcome: "cancelled", reference: null });
+  });
+
+  it("ignores another kind, an unknown outcome, no detail and a plain event", () => {
+    expect(result({ kind: "move", outcome: "done" })).toBeNull();
+    expect(result({ kind: "pay", outcome: "paid" })).toBeNull();
+    expect(result(null)).toBeNull();
+    expect(payResultFromEvent(new Event("ev:wallet-result"))).toBeNull();
+  });
+
+  it("drops a reference over 128 characters instead of cutting it", () => {
+    expect(result({ kind: "pay", outcome: "done", reference: "r".repeat(129) })).toEqual({ outcome: "done", reference: null });
   });
 });
 
