@@ -94,6 +94,8 @@ pub enum Mcp {
 }
 
 alias!(pub SA_OPERATOR = "sa:operator", [Work::Read, Leads::Edit, Pii::See, Analysis::Read]);
+// Held by every member of the `sa` scope, without a grant (concierge's `<namespace>:everyone`).
+alias!(pub SA_EVERYONE = "sa:everyone", [Mcp::Use]);
 alias!(
 	pub SA_ADMIN = "sa:admin",
 	[

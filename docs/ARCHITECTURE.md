@@ -173,7 +173,9 @@ POST /auth/logout    CSRF; every session of the user is closed
 - **The catalog.** `serve` publishes `Catalog::collect("sa", PANEL_BUILD_EPOCH)` with
   `PublishCatalog` before it serves (the image sets `PANEL_BUILD_EPOCH` to the commit's
   unix seconds, so an older replica never supersedes a newer one); concierge refusing it
-  fails the boot. Not under dev sign-in.
+  fails the boot. Not under dev sign-in. Its `sa:everyone` alias is held by every member of
+  the `sa` scope with no grant: `sa:playbook:mcp:use` is in it while the playbook MCP is
+  free, and taking it out (one release) re-states every member's set at concierge.
 - **`return_to`** is a path on this origin: it starts with `/`, the next character is not `/`,
   it has no `\`, only visible ASCII, ≤ 512 bytes. Anything else is the 400 sign-in page,
   never a silent `/`.
