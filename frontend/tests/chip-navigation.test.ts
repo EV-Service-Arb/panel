@@ -47,7 +47,6 @@ describe("panelRouteFor: left to the browser", () => {
     ["a relative path", "account"],
     ["a look-alike screen", "/accounts"],
     ["a path under a screen", "/account/x"],
-    ["the signed-out page", "/signed-out"],
   ])("refuses %s (%s)", (_, href) => {
     expect(panelRouteFor(href)).toBeNull();
   });

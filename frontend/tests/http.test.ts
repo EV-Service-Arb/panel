@@ -47,6 +47,30 @@ describe("the CSRF header", () => {
   });
 });
 
+describe("the init a write may add", () => {
+  it("passes keepalive to fetch", async () => {
+    const { http, calls } = harness(() => new Response(null, { status: 204 }));
+    await http.send("POST", "/auth/logout", undefined, any, undefined, { keepalive: true });
+    expect(calls[0]?.init.keepalive).toBe(true);
+  });
+
+  it("leaves keepalive out when no init is given", async () => {
+    const { http, calls } = harness(() => new Response(null, { status: 204 }));
+    await http.send("POST", "/auth/logout", undefined, any);
+    expect(calls[0]?.init).not.toHaveProperty("keepalive");
+  });
+
+  it("cannot override the method, the headers or the CSRF header", async () => {
+    const { http, calls } = harness(() => json(201, {}));
+    const hostile: object = { keepalive: true, method: "GET", headers: { "x-sa-csrf": "forged", accept: "text/plain" } };
+    await http.send("POST", "/api/v1/leads", { a: 1 }, any, undefined, hostile);
+    expect(calls[0]?.init.method).toBe("POST");
+    expect(headerOf(calls[0], "x-sa-csrf")).toBe("tok-dev");
+    expect(headerOf(calls[0], "accept")).toBe("application/json");
+    expect(calls[0]?.init.keepalive).toBe(true);
+  });
+});
+
 describe("the gate's answers", () => {
   it("401 sends the browser to sign in", async () => {
     const { http, onUnauthenticated } = harness(() => json(401, { error: "sign in" }));
