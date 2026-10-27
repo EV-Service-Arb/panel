@@ -5,7 +5,7 @@ ones of `SA-PANEL-SPEC.md` §10 (hybrid 1+2): Overview, Leads, Locations, Experi
 Sources (admin), and on a phone a bottom tab bar with "More" in place of the sidebar.
 
 ```text
-app/                 routes: (panel)/ is everything behind sign-in, signed-out/ and access/ are not
+app/                 routes: (panel)/ is everything behind sign-in, access/ is not
 src/views/           one slice per screen, plus shell/ (the kit's AppShell: rail, tab bar, nav marks, access states)
 src/features/        call-lead · move-stage · record-payment · create-lead ·
                      lead-filters · funnel-filters · manage-sources · sign-out ·

@@ -12,6 +12,10 @@ export function fetchMe(): Promise<Caller> {
   return http.get("/api/v1/me", meParser);
 }
 
+/**
+ * Ends the panel's session. `keepalive`: the concierge chip navigates to the platform sign-out
+ * right after its `signout` event, and that unload must not cancel this POST.
+ */
 export async function signOut(): Promise<void> {
-  await http.send("POST", "/auth/logout", undefined, () => null);
+  await http.send("POST", "/auth/logout", undefined, () => null, undefined, { keepalive: true });
 }
