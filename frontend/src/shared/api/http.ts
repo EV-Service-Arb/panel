@@ -105,10 +105,20 @@ export async function failureOf(res: Response): Promise<ApiFailure> {
   }
 }
 
+/** What a write may ask of `fetch` beyond the defaults. `keepalive`: the request outlives the page, for a write that a navigation follows at once. */
+export type SendInit = Pick<RequestInit, "keepalive">;
+
 export interface Http {
   get<T>(path: string, parser: Parser<T>, query?: Query): Promise<T>;
   /** Every write carries the CSRF header; the backend refuses one without it. `headers` adds others (an Idempotency-Key). */
-  send<T>(method: "POST" | "PUT" | "DELETE", path: string, body: unknown, parser: Parser<T>, headers?: Readonly<Record<string, string>>): Promise<T>;
+  send<T>(
+    method: "POST" | "PUT" | "DELETE",
+    path: string,
+    body: unknown,
+    parser: Parser<T>,
+    headers?: Readonly<Record<string, string>>,
+    init?: SendInit,
+  ): Promise<T>;
 }
 
 export function createHttp(deps: HttpDeps): Http {
@@ -130,11 +140,11 @@ export function createHttp(deps: HttpDeps): Http {
 
   return {
     get: (path, parser, query) => call(withQuery(path, query), { method: "GET", headers: { accept: "application/json" } }, parser),
-    send: (method, path, body, parser, extra) => {
+    send: (method, path, body, parser, extra, options) => {
       const headers: Record<string, string> = { ...extra, accept: "application/json" };
       const csrf = readCsrf(deps.cookie());
       if (csrf) headers[CSRF_HEADER] = csrf;
-      const init: RequestInit = { method, headers };
+      const init: RequestInit = { ...options, method, headers };
       if (body !== undefined) {
         headers["content-type"] = "application/json";
         init.body = JSON.stringify(body);
