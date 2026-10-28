@@ -34,7 +34,8 @@ struct Seen {
 	headers: HeaderMap,
 }
 
-/// One service standing in for both: records each request, answers with a cookie of its own.
+/// One service standing in for both: records each request, answers with a cookie of its own and
+/// a compressed, cacheable body.
 async fn upstream() -> (String, Arc<Mutex<Vec<Seen>>>) {
 	let seen = Arc::new(Mutex::new(Vec::new()));
 	let log = seen.clone();
@@ -46,7 +47,16 @@ async fn upstream() -> (String, Arc<Mutex<Vec<Seen>>>) {
 				path_and_query: req.uri().path_and_query().unwrap().to_string(),
 				headers: req.headers().clone(),
 			});
-			([(header::SET_COOKIE, "upstream=1; Path=/"), (header::HeaderName::from_static("x-upstream"), "yes")], "ok").into_response()
+			(
+				[
+					(header::SET_COOKIE, "upstream=1; Path=/"),
+					(header::HeaderName::from_static("x-upstream"), "yes"),
+					(header::CONTENT_ENCODING, "gzip"),
+					(header::CACHE_CONTROL, "public, max-age=31536000"),
+				],
+				"ok",
+			)
+				.into_response()
 		}
 	});
 	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -192,4 +202,72 @@ async fn playbooks_open_paths_pass_without_a_session_and_its_consent_page_sends_
 	let (status, headers) = b.send(&app, Method::GET, "/playbook_mcp/authorize?client_id=c&state=s", &[], false).await;
 	assert_eq!(status, StatusCode::SEE_OTHER);
 	assert_eq!(headers[header::LOCATION], "/auth/login?return_to=%2Fplaybook_mcp%2Fauthorize%3Fclient_id%3Dc%26state%3Ds");
+}
+
+#[tokio::test]
+async fn grafana_is_reached_under_its_own_path_and_its_query_posts_need_no_csrf() {
+	let db = TestDb::create().await;
+	let (base, seen) = upstream().await;
+	let app = app(&db, &base).await;
+	let mut b = Browser::default();
+	let keys: Keys = SEED.parse::<Signer>().unwrap().public().parse().unwrap();
+
+	assert_eq!(
+		b.send(&app, Method::GET, "/api/review_archive/grafana/", &[], false).await.0,
+		StatusCode::UNAUTHORIZED,
+		"no session"
+	);
+	assert!(seen.lock().unwrap().is_empty());
+	b.sign_in(&app).await;
+
+	for (method, ours, theirs) in [
+		(Method::GET, "/api/review_archive/grafana", "/grafana"),
+		(Method::GET, "/api/review_archive/grafana/public/build/app.6f3e.js", "/grafana/public/build/app.6f3e.js"),
+		(Method::POST, "/api/review_archive/grafana/api/ds/query?ds_type=x", "/grafana/api/ds/query?ds_type=x"),
+		(
+			Method::POST,
+			"/api/review_archive/grafana/apis/query.grafana.app/v0alpha1/namespaces/default/query",
+			"/grafana/apis/query.grafana.app/v0alpha1/namespaces/default/query",
+		),
+	] {
+		let (status, headers) = b.send(&app, method.clone(), ours, &[("accept-encoding", "gzip")], false).await;
+		assert_eq!(status, StatusCode::OK, "{method} {ours}: no CSRF asked");
+		assert_eq!(headers[header::CONTENT_ENCODING], "gzip", "{ours}: passed as is, never decoded");
+		assert_eq!(headers[header::CACHE_CONTROL], "public, max-age=31536000", "{ours}");
+		let got = seen.lock().unwrap().pop().unwrap();
+		assert_eq!((&got.method, got.path_and_query.as_str()), (&method, theirs));
+		assert_eq!(got.headers["accept-encoding"], "gzip");
+		let path = theirs.split('?').next().unwrap();
+		let token = got.headers["x-sa-assertion"].to_str().unwrap();
+		sa_auth::verify(&keys, token, Service::ReviewArchive, method.as_str(), path, jiff::Timestamp::now().as_second()).expect("signed for the path the service sees");
+	}
+
+	assert_eq!(
+		b.send(&app, Method::POST, "/api/review_archive/grafanas", &[], false).await.0,
+		StatusCode::FORBIDDEN,
+		"a neighbour of grafana is the service's API, CSRF and all"
+	);
+}
+
+#[tokio::test]
+async fn a_forwarded_path_never_climbs_out_of_its_prefix() {
+	let db = TestDb::create().await;
+	let (base, seen) = upstream().await;
+	let app = app(&db, &base).await;
+	let mut b = Browser::default();
+	b.sign_in(&app).await;
+
+	for path in [
+		"/api/review_archive/grafana/../me",
+		"/api/review_archive/grafana/./../me",
+		"/api/review_archive/grafana/%2e%2e/me",
+		"/api/review_archive/grafana/%2E./me",
+		"/api/review_archive/grafana/public/..%2f..%2fme",
+		"/api/review_archive/grafana/..%5cme",
+		"/api/review_archive/grafana/..",
+		"/review_archive/mfe/%2e%2e/me",
+	] {
+		assert_eq!(b.send(&app, Method::POST, path, &[], false).await.0, StatusCode::BAD_REQUEST, "{path}");
+	}
+	assert!(seen.lock().unwrap().is_empty(), "nothing reached the service");
 }
