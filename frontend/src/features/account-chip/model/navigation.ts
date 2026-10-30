@@ -14,6 +14,7 @@ const SOFT_ROUTES: readonly string[] = [
   ROUTES.sources,
   ROUTES.more,
   ROUTES.usage,
+  ROUTES.account,
   ROUTES.reviewArchive,
 ];
 

@@ -10,7 +10,7 @@ import type { T } from "@/shared/i18n";
 export const CHIP_API_VERSION = 2;
 
 /** Every attribute the panel may set, so one it stops sending is removed rather than left stale. */
-export const CHIP_ATTRIBUTE_NAMES = ["data-mode", "data-name", "data-email", "data-switch-href", "data-groups"] as const;
+export const CHIP_ATTRIBUTE_NAMES = ["data-mode", "data-name", "data-email", "data-profile-href", "data-switch-href", "data-groups"] as const;
 
 export type ChipAttributeName = (typeof CHIP_ATTRIBUTE_NAMES)[number];
 export type ChipAttributes = Partial<Record<ChipAttributeName, string>>;
@@ -51,6 +51,7 @@ export function panelGroups(me: Caller, t: T): ChipGroup[] {
 export function chipAttributes(me: Caller, pathname: string, t: T): ChipAttributes {
   const attrs: ChipAttributes = {
     "data-mode": "host",
+    "data-profile-href": ROUTES.account,
     "data-switch-href": switchAccountPath(pathname),
     "data-groups": JSON.stringify(panelGroups(me, t)),
   };

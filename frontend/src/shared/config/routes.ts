@@ -7,6 +7,7 @@ export const ROUTES = {
   sources: "/sources",
   more: "/more",
   usage: "/usage",
+  account: "/account",
   wallet: "/wallet",
   invoices: "/invoices",
   reviewArchive: "/review_archive/",
