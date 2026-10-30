@@ -24,11 +24,11 @@ function sectionOf(p: Permission): MessageKey {
   return key;
 }
 
-/** Service-Arb's page about the signed-in account: who they are is evinvest.ltd's account page, the rest is this service's. */
-export function AccountView() {
+/** What the signed-in account may do and has spent on Service-Arb; who they are is evinvest.ltd's account page. */
+export function UsageView() {
   const t = useT();
   return (
-    <ScreenFrame title={t("account.title")} description={t("account.description")} back={ROUTES.more} width="content">
+    <ScreenFrame title={t("usage.title")} description={t("usage.description")} back={ROUTES.more} width="content">
       <Access />
       <TokensCard />
       <UsageCard />

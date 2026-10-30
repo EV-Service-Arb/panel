@@ -39,7 +39,7 @@ function clip(value: string): string {
 
 /** The panel's own menu entries, the ones the kit's AccountMenu showed before. */
 export function panelGroups(me: Caller, t: T): ChipGroup[] {
-  const items: ChipItem[] = [{ id: "account", href: ROUTES.account, label: t("account.title") }];
+  const items: ChipItem[] = [];
   if (may(me, "sa:review_archive:members:act_as")) {
     items.push({ id: "act-as", href: ROUTES.reviewArchiveActAs, label: t("account.actAs"), external: true });
   }

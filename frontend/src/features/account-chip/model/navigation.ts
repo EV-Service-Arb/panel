@@ -13,11 +13,11 @@ const SOFT_ROUTES: readonly string[] = [
   ROUTES.experiments,
   ROUTES.sources,
   ROUTES.more,
-  ROUTES.account,
+  ROUTES.usage,
   ROUTES.reviewArchive,
 ];
 
-// The export is built with `trailingSlash`, so `/account` and `/account/` are one screen.
+// The export is built with `trailingSlash`, so `/usage` and `/usage/` are one screen.
 const bare = (path: string) => (path.length > 1 ? path.replace(/\/+$/, "") : path);
 
 const BY_PATH = new Map(SOFT_ROUTES.map((route) => [bare(route), route]));

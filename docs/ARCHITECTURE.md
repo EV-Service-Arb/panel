@@ -146,7 +146,7 @@ GET /auth/login      ?return_to=<path> (optional; else 400), ?prompt=select_acco
                      sa_prelogin (10 min)
                      → 302 <concierge>/api/auth/authorize?client_id=sa&redirect_uri=…&state&code_challenge
                        [&prompt=select_account: Google's chooser even with a live evinvest.ltd session;
-                       the top bar's account menu, More and /account link here]
+                       the top bar's account menu and More link here]
 GET /auth/callback   state = the cookie's (constant time), and not redeemed before
                      (consumed_states), else 400 and the code is never presented;
                      ExchangeCode(code, redirect_uri, verifier, client secret); the browser's
