@@ -35,10 +35,12 @@ npm run dev          # :3120 — proxies /api and /auth to PANEL_DEV_BACKEND (de
 Against the real backend, point `PANEL_DEV_BACKEND` at `panel serve` with sign-in
 configured and `PANEL_PUBLIC_ORIGIN=http://localhost:3120`, so the callback lands here.
 
-The top bar's account chip and the sign-in dialog load from the platform origin
-(`evinvest.ltd`), named by its published registry. If the registry is unreachable, the
-chip's fallback shows. Who the account is lives on the platform's account page, the chip's
-header row; the panel adds only its own entries (token history, view as member).
+The top bar's account chip, the sign-in dialog and the account element on `/account`
+load from the platform origin (`evinvest.ltd`), named by its published registry. If the
+registry is unreachable, the chip's fallback shows. The chip's header row opens `/account`
+(`data-profile-href`); the element there shows who is signed in and links to evinvest.ltd
+for what acts on the platform session. The panel's own chip entries are token history and
+view as member.
 
 Checks: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`.
 

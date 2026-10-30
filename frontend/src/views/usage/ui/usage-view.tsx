@@ -24,7 +24,7 @@ function sectionOf(p: Permission): MessageKey {
   return key;
 }
 
-/** What the signed-in account may do and has spent on Service-Arb; who they are is evinvest.ltd's account page. */
+/** What the signed-in account may do and has spent on Service-Arb; who they are is the Profile screen. */
 export function UsageView() {
   const t = useT();
   return (

@@ -12,6 +12,7 @@ describe("panelRouteFor: the panel's own screens", () => {
     ["/usage", "/usage"],
     ["/usage/", "/usage"],
     ["/usage?x=1#h", "/usage?x=1#h"],
+    ["/account/?section=security", "/account?section=security"],
     ["/", "/"],
     ["/leads/?stage=new", "/leads?stage=new"],
     ["/review_archive", "/review_archive/"],

@@ -1,5 +1,5 @@
 import { NavDot, type NavGroup, type NavItem } from "@evinvest/uikit";
-import { Archive, ArrowUpRight, BarChart3, Ellipsis, FlaskConical, Gauge, Inbox, KeyRound, LayoutGrid, MapPin, ReceiptText, Tags, Wallet } from "lucide-react";
+import { Archive, ArrowUpRight, BarChart3, Ellipsis, FlaskConical, Gauge, Inbox, KeyRound, LayoutGrid, MapPin, ReceiptText, Tags, UserRound, Wallet } from "lucide-react";
 
 import { type Caller, may } from "@/entities/session";
 import { ROUTES } from "@/shared/config/routes";
@@ -55,6 +55,7 @@ export function panelNav(t: T, caller: Caller, marks: Marks, pages: FlaggedPages
   const walletItem: NavItem = { id: "wallet", href: ROUTES.wallet, label: t("nav.wallet"), icon: Wallet };
   const invoicesItem: NavItem = { id: "invoices", href: ROUTES.invoices, label: t("nav.invoices"), icon: ReceiptText };
   const wallet = work && pages.wallet ? [walletItem] : [];
+  const account: NavItem = { id: "account", href: ROUTES.account, label: t("nav.account"), icon: UserRound };
   const usage: NavItem = { id: "usage", href: ROUTES.usage, label: t("usage.title"), icon: Gauge };
   const elsewhere = (analysis && marks.experiments) || (admin && marks.sources);
   const more: NavItem = {
@@ -65,6 +66,7 @@ export function panelNav(t: T, caller: Caller, marks: Marks, pages: FlaggedPages
     also: [
       ...(work ? [ROUTES.reviewArchive, ROUTES.pricing, ROUTES.invoices] : []),
       ...wallet.map((item) => item.href),
+      ROUTES.account,
       ROUTES.usage,
       ...(analysis ? [ROUTES.experiments] : []),
       ...(admin ? [ROUTES.sources] : []),
@@ -79,7 +81,7 @@ export function panelNav(t: T, caller: Caller, marks: Marks, pages: FlaggedPages
   groups.push({ id: "archive", label: t("nav.group.archive"), items: [reviewArchive] });
   return {
     groups,
-    footer: [{ id: "own", items: [...wallet, usage] }],
+    footer: [{ id: "own", items: [...wallet, account, usage] }],
     tabs: [...(work ? [overview, leads, places] : [reviewArchive]), more],
   };
 }
