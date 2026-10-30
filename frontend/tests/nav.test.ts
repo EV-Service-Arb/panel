@@ -7,7 +7,7 @@ import type { Marks } from "@/views/shell/model/use-marks";
 
 const t: T = (key) => key;
 const marks: Marks = { leads: 0, away: 0, places: 0, experiments: false, sources: false, bookings: false };
-const caller = (permissions: readonly Permission[]): Caller => ({ user_id: "u", email: "e", preferred_name: "", permissions: [...permissions], dev_sign_in: false, account_center: null });
+const caller = (permissions: readonly Permission[]): Caller => ({ user_id: "u", email: "e", preferred_name: "", permissions: [...permissions], dev_sign_in: false });
 const ALIAS = { operator: ALIASES["sa:operator"], admin: ALIASES["sa:admin"] };
 const ids = (permissions: readonly Permission[]) => Object.fromEntries(panelNav(t, caller(permissions), marks).groups.map((g) => [g.id, g.items.map((i) => i.id)]));
 

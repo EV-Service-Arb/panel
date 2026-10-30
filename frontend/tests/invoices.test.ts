@@ -11,7 +11,7 @@ import type { Marks } from "@/views/shell/model/use-marks";
 
 const t: T = (key) => key;
 const marks: Marks = { leads: 0, away: 0, places: 0, experiments: false, sources: false, bookings: false };
-const caller = (permissions: readonly Permission[]): Caller => ({ user_id: "u", email: "e", preferred_name: "", permissions: [...permissions], dev_sign_in: false, account_center: null });
+const caller = (permissions: readonly Permission[]): Caller => ({ user_id: "u", email: "e", preferred_name: "", permissions: [...permissions], dev_sign_in: false });
 const WORK: readonly Permission[] = ["sa:work:read"];
 const workItems = (permissions: readonly Permission[], wallet: boolean) => panelNav(t, caller(permissions), marks, { wallet }).groups.find((g) => g.id === "work")?.items.map((i) => i.id);
 const also = (permissions: readonly Permission[], wallet: boolean) => panelNav(t, caller(permissions), marks, { wallet }).tabs.find((i) => i.id === "more")?.also ?? [];

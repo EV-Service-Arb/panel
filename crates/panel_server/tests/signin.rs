@@ -386,8 +386,7 @@ async fn an_operator_signs_in_works_leads_and_signs_out() {
 	assert_eq!(me.status, StatusCode::OK, "{}", me.body);
 	assert_eq!(
 		me.body,
-		json!({"user_id": OPERATOR, "email": "investor@example.com", "preferred_name": "Ann", "permissions": operator(), "dev_sign_in": false,
-			"account_center": "http://concierge.test/cabinet/settings"})
+		json!({"user_id": OPERATOR, "email": "investor@example.com", "preferred_name": "Ann", "permissions": operator(), "dev_sign_in": false})
 	);
 	assert_eq!(me.headers[header::CACHE_CONTROL], "no-store");
 

@@ -1,11 +1,9 @@
 "use client";
 
-import { Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from "@evinvest/uikit";
-import { useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle, Skeleton } from "@evinvest/uikit";
 
 import { type Permission, useMe } from "@/entities/session";
 import { type Usage, fetchTokens, fetchUsage } from "@/entities/tokens";
-import { switchAccountPath } from "@/shared/api";
 import { ROUTES } from "@/shared/config/routes";
 import { type MessageKey, useT } from "@/shared/i18n";
 import { useResource } from "@/shared/lib/use-resource";
@@ -26,12 +24,11 @@ function sectionOf(p: Permission): MessageKey {
   return key;
 }
 
-/** Service-Arb's page about the signed-in account: identity is evinvest.ltd's, the rest is this service's. */
+/** Service-Arb's page about the signed-in account: who they are is evinvest.ltd's account page, the rest is this service's. */
 export function AccountView() {
   const t = useT();
   return (
     <ScreenFrame title={t("account.title")} description={t("account.description")} back={ROUTES.more} width="content">
-      <Identity />
       <Access />
       <TokensCard />
       <UsageCard />
@@ -62,42 +59,6 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <span className="text-ink-soft">{label}</span>
       <span className="min-w-0 text-ink">{children}</span>
     </div>
-  );
-}
-
-function Identity() {
-  const t = useT();
-  const me = useMe();
-  const [copied, setCopied] = useState(false);
-  const copy = () =>
-    navigator.clipboard.writeText(me.user_id).then(
-      () => setCopied(true),
-      () => setCopied(false), // the browser refused the clipboard: the id stays on screen to select
-    );
-  return (
-    <Section title={t("account.identity")}>
-      {me.preferred_name && <Row label={t("account.name")}>{me.preferred_name}</Row>}
-      <Row label={t("account.email")}>{me.email}</Row>
-      <Row label={t("account.userId")}>
-        <span className="flex items-center gap-2">
-          <code className="truncate text-xs">{me.user_id}</code>
-          <Button variant="ghost" size="sm" onClick={copy}>
-            {copied ? t("account.copied") : t("account.copy")}
-          </Button>
-        </span>
-      </Row>
-      <div className="flex flex-wrap gap-2 pt-2">
-        {me.account_center && (
-          <Button variant="outline" size="sm" asChild>
-            <a href={me.account_center}>{t("account.manage")}</a>
-          </Button>
-        )}
-        <Button variant="outline" size="sm" asChild>
-          <a href={switchAccountPath(ROUTES.account)}>{t("nav.switchAccount")}</a>
-        </Button>
-      </div>
-      {me.account_center && <p className="text-xs text-ink-soft">{t("account.manage.hint")}</p>}
-    </Section>
   );
 }
 

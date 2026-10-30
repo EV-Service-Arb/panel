@@ -8,6 +8,7 @@ import {
   TopBar,
   cn,
 } from "@evinvest/uikit";
+import { CONCIERGE_ORIGIN } from "@evinvest/concierge";
 import { Check, ChevronDown } from "lucide-react";
 import Link from "next/link";
 
@@ -29,7 +30,7 @@ export function PanelTopBar() {
   const signOut = useSignOut();
   return (
     <TopBar
-      start={<AppSwitcher accountCenter={me.account_center} />}
+      start={<AppSwitcher />}
       end={
         <>
           <TokensStat />
@@ -41,11 +42,10 @@ export function PanelTopBar() {
   );
 }
 
-/** Service-Arb and evinvest.ltd; just the name when there is no evinvest.ltd to go to (dev sign-in). */
-function AppSwitcher({ accountCenter }: { accountCenter: string | null }) {
+/** Service-Arb and evinvest.ltd. */
+function AppSwitcher() {
   const t = useT();
   const name = <span className="text-base font-semibold text-ink">{t("app.name")}</span>;
-  if (accountCenter === null) return name;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className="flex items-center gap-1 rounded-md px-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={t("apps.switch")}>
@@ -60,7 +60,7 @@ function AppSwitcher({ accountCenter }: { accountCenter: string | null }) {
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <a href={new URL(accountCenter).origin}>
+          <a href={CONCIERGE_ORIGIN}>
             <span aria-hidden className="size-4" />
             evinvest.ltd
           </a>

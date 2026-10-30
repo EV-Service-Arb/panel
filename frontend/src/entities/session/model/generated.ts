@@ -11,11 +11,7 @@ permissions: Array<Permission>,
 /**
  * Signed in by `PANEL_DEV_SIGN_IN`, not concierge: `/me` says so, for the UI to show.
  */
-dev_sign_in: boolean, 
-/**
- * Where the account itself is managed, on concierge's origin; none under dev sign-in.
- */
-account_center: string | null, };
+dev_sign_in: boolean, };
 
 /**
  * An access request of the caller's, standing.

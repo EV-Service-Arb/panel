@@ -149,8 +149,6 @@ pub struct Caller {
 	pub permissions: PermissionSet,
 	/// Signed in by `PANEL_DEV_SIGN_IN`, not concierge: `/me` says so, for the UI to show.
 	pub dev_sign_in: bool,
-	/// Where the account itself is managed, on concierge's origin; none under dev sign-in.
-	pub account_center: Option<String>,
 }
 
 fn json_error(status: StatusCode, msg: &str) -> Response {
@@ -534,7 +532,6 @@ pub(crate) async fn check(s: &SignIn, headers: &HeaderMap, freshness: Freshness)
 		preferred_name: me.preferred_name,
 		permissions: me.permissions,
 		dev_sign_in: s.concierge.is_dev(),
-		account_center: (!s.concierge.is_dev()).then(|| format!("{}/cabinet/settings", s.config.concierge_origin)),
 	})
 }
 
