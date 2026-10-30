@@ -114,7 +114,7 @@
             src = lib.cleanSource ./frontend;
             filter = path: _type: !(builtins.elem (baseNameOf path) [ "node_modules" ".next" "out" ]);
           };
-          npmDepsHash = "sha256-Ns7DpEsd4Dy5XNlre7clKtKuqHvrkNbUgi65T+56JFw=";
+          npmDepsHash = "sha256-JKDCZ8uMBXRA/NxdpkIA5wtJyzr5zRoxhB4zynwrzZ0=";
           env = {
             NEXT_TELEMETRY_DISABLED = "1";
             # NEXT_PUBLIC_* values are inlined by `next build`, so these are compile-time:
