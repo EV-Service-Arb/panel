@@ -27,9 +27,9 @@ describe("the invoices rail entry", () => {
     expect(also(["sa:analysis:read"], true)).not.toContain("/invoices");
   });
 
-  it("follows the wallet entry when that is on", () => {
-    expect(workItems(WORK, true)?.slice(-2)).toEqual(["wallet", "invoices"]);
-    expect(workItems(WORK, false)).not.toContain("wallet");
+  it("ends the work group whether or not the wallet entry is on: the wallet is the rail's footer", () => {
+    expect(workItems(WORK, true)?.at(-1)).toBe("invoices");
+    expect(workItems(WORK, true)).not.toContain("wallet");
   });
 });
 

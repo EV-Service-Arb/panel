@@ -8,12 +8,13 @@ import { DevSignInBadge } from "@/entities/session";
 import { useT } from "@/shared/i18n";
 
 /** The desktop rail: the app's name (and the dev sign-in warning), then the groups; who is signed in is the top bar's. */
-export function PanelRail({ groups }: { groups: NavGroup[] }) {
+export function PanelRail({ groups, footer }: { groups: NavGroup[]; footer: NavGroup[] }) {
   const t = useT();
   const router = useRouter();
   return (
     <ShellNav
       groups={groups}
+      footerGroups={footer}
       pathname={usePathname()}
       linkComponent={Link}
       onItemIntent={(item) => {
@@ -25,7 +26,7 @@ export function PanelRail({ groups }: { groups: NavGroup[] }) {
           <DevSignInBadge />
         </div>
       }
-      labels={{ primary: t("nav.primary"), badge: (n) => t("nav.badge", { n }) }}
+      labels={{ primary: t("nav.primary"), footer: t("nav.account"), badge: (n) => t("nav.badge", { n }) }}
     />
   );
 }

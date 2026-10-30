@@ -2,7 +2,8 @@
 
 Next.js (App Router), Feature-Sliced Design, `@evinvest/uikit`. The screens are the
 ones of `SA-PANEL-SPEC.md` §10 (hybrid 1+2): Overview, Leads, Locations, Experiments,
-Sources (admin), and on a phone a bottom tab bar with "More" in place of the sidebar.
+Sources (admin), and on a phone a bottom tab bar with "More" in place of the sidebar. The
+rail's foot holds what is the caller's own: the wallet and Usage (access, tokens, spending).
 
 ```text
 app/                 routes: (panel)/ is everything behind sign-in, access/ is not
@@ -36,7 +37,8 @@ configured and `PANEL_PUBLIC_ORIGIN=http://localhost:3120`, so the callback land
 
 The top bar's account chip and the sign-in dialog load from the platform origin
 (`evinvest.ltd`), named by its published registry. If the registry is unreachable, the
-chip's fallback shows.
+chip's fallback shows. Who the account is lives on the platform's account page, the chip's
+header row; the panel adds only its own entries (token history, view as member).
 
 Checks: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`.
 

@@ -31,4 +31,14 @@ describe("the rail", () => {
     expect(Object.keys(ids(["sa:analysis:read"]))).toEqual(["analysis", "archive"]);
     expect(panelNav(t, caller([]), marks).tabs.map((i) => i.id)).toEqual(["review_archive", "more"]);
   });
+
+  it("pins the wallet (when built and the caller may work) and Usage to the rail's foot, and the More tab covers both", () => {
+    const nav = (permissions: readonly Permission[], wallet: boolean) => panelNav(t, caller(permissions), marks, { wallet });
+    const foot = (permissions: readonly Permission[], wallet: boolean) => nav(permissions, wallet).footer.flatMap((g) => g.items.map((i) => i.id));
+    expect(foot(ALIAS.operator, true)).toEqual(["wallet", "usage"]);
+    expect(foot(ALIAS.operator, false)).toEqual(["usage"]);
+    expect(foot([], true)).toEqual(["usage"]);
+    expect(nav(ALIAS.operator, true).tabs.find((i) => i.id === "more")?.also).toEqual(expect.arrayContaining(["/wallet", "/usage"]));
+    expect(nav([], true).tabs.find((i) => i.id === "more")?.also).toContain("/usage");
+  });
 });

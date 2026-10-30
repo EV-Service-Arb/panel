@@ -1,5 +1,5 @@
 import { NavDot, type NavGroup, type NavItem } from "@evinvest/uikit";
-import { Archive, ArrowUpRight, BarChart3, Ellipsis, FlaskConical, Inbox, KeyRound, LayoutGrid, MapPin, ReceiptText, Tags, Wallet } from "lucide-react";
+import { Archive, ArrowUpRight, BarChart3, Ellipsis, FlaskConical, Gauge, Inbox, KeyRound, LayoutGrid, MapPin, ReceiptText, Tags, Wallet } from "lucide-react";
 
 import { type Caller, may } from "@/entities/session";
 import { ROUTES } from "@/shared/config/routes";
@@ -10,6 +10,8 @@ import type { Marks } from "../model/use-marks";
 
 export interface PanelNav {
   groups: NavGroup[];
+  /** Pinned to the rail's bottom: what is the caller's own rather than a section's. */
+  footer: NavGroup[];
   tabs: NavItem[];
 }
 
@@ -52,24 +54,32 @@ export function panelNav(t: T, caller: Caller, marks: Marks, pages: FlaggedPages
   const reviewArchive: NavItem = { id: "review_archive", href: ROUTES.reviewArchive, label: t("nav.reviewArchive"), icon: Archive };
   const walletItem: NavItem = { id: "wallet", href: ROUTES.wallet, label: t("nav.wallet"), icon: Wallet };
   const invoicesItem: NavItem = { id: "invoices", href: ROUTES.invoices, label: t("nav.invoices"), icon: ReceiptText };
-  const flagged = [...(pages.wallet ? [walletItem] : []), invoicesItem];
+  const wallet = work && pages.wallet ? [walletItem] : [];
+  const usage: NavItem = { id: "usage", href: ROUTES.usage, label: t("usage.title"), icon: Gauge };
   const elsewhere = (analysis && marks.experiments) || (admin && marks.sources);
   const more: NavItem = {
     id: "more",
     href: ROUTES.more,
     label: t("nav.more"),
     icon: Ellipsis,
-    also: [...(work ? [ROUTES.reviewArchive, ROUTES.pricing, ...flagged.map((item) => item.href)] : []), ...(analysis ? [ROUTES.experiments] : []), ...(admin ? [ROUTES.sources] : [])],
+    also: [
+      ...(work ? [ROUTES.reviewArchive, ROUTES.pricing, ROUTES.invoices] : []),
+      ...wallet.map((item) => item.href),
+      ROUTES.usage,
+      ...(analysis ? [ROUTES.experiments] : []),
+      ...(admin ? [ROUTES.sources] : []),
+    ],
     ...(elsewhere ? { badge: dot(true) } : {}),
   };
 
   const groups: NavGroup[] = [];
-  if (work) groups.push({ id: "work", label: t("nav.group.work"), items: [overview, leads, places, pricing, ...flagged] });
+  if (work) groups.push({ id: "work", label: t("nav.group.work"), items: [overview, leads, places, pricing, invoicesItem] });
   if (analysis) groups.push({ id: "analysis", label: t("nav.group.analysis"), items: [experiments, grafana] });
   if (admin) groups.push({ id: "admin", label: t("nav.group.admin"), items: [sources] });
   groups.push({ id: "archive", label: t("nav.group.archive"), items: [reviewArchive] });
   return {
     groups,
+    footer: [{ id: "own", items: [...wallet, usage] }],
     tabs: [...(work ? [overview, leads, places] : [reviewArchive]), more],
   };
 }
