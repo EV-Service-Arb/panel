@@ -55,9 +55,8 @@ const TURNSTILE_ORIGIN: &str = "https://challenges.cloudflare.com";
 /// With `platform_mfe`, also the platform's MFE directories (concierge's `/api/auth/mfe/`, the
 /// wallet's `/wallet/mfe/`) in `script-src`, the wallet's in `style-src` (its stylesheet's
 /// `<link>`), its origin in `connect-src` (the elements call its API, cross-origin), and
-/// Turnstile's origin in `script-src` and a `frame-src` of it alone (without one the frame
-/// would fall back to `default-src 'self'` and the sign-in dialog would show "Captcha failed
-/// to load"). Directories, never the origin: a `script-src` of the whole origin would let any
+/// Turnstile's origin in `script-src` and a `frame-src` of `'self'` (review_archive's dashboard
+/// frames its Grafana) and it (without it the sign-in dialog shows "Captcha failed to load"). Directories, never the origin: a `script-src` of the whole origin would let any
 /// script the platform serves run in the panel's session, not only the elements it publishes
 /// for hosts.
 fn csp(platform_mfe: bool, inline: &BTreeSet<String>) -> String {
@@ -67,7 +66,7 @@ fn csp(platform_mfe: bool, inline: &BTreeSet<String>) -> String {
 			format!(" {PLATFORM_ORIGIN}/api/auth/mfe/ {PLATFORM_ORIGIN}/wallet/mfe/ {TURNSTILE_ORIGIN}"),
 			format!(" {PLATFORM_ORIGIN}/wallet/mfe/"),
 			format!(" {PLATFORM_ORIGIN}"),
-			format!("; frame-src {TURNSTILE_ORIGIN}"),
+			format!("; frame-src 'self' {TURNSTILE_ORIGIN}"),
 		)
 	} else {
 		(String::new(), String::new(), String::new(), String::new())

@@ -216,6 +216,7 @@ streams each prefix to its service, both ways (hyper-util, no buffering), one ta
 it — the front end's reserved paths (`web.rs`) are derived from it.
 
 ```text
+/api/review_archive/grafana/*    → review_archive /grafana/*    session + assertion; a POST is a read
 /api/review_archive/*            → review_archive /*            session + assertion; CSRF on writes
 /review_archive/mfe/*            → review_archive /mfe/*        open: the dashboard's bundle
 /playbook_mcp/authorize          → playbook (same path)         session + assertion; no panel CSRF
@@ -243,6 +244,13 @@ it — the front end's reserved paths (`web.rs`) are derived from it.
   playbook's own single-use nonce (bound to `sub` and the pending request) guard it. A
   signed-out `GET` of that page goes to `/auth/login?return_to=` and comes back; a call
   without a session is a 401.
+- **Grafana** (`/api/review_archive/grafana`, its `root_url`, run by review_archive): its
+  dashboards' queries are POSTs, so every method there takes the cached `GetMe` and no CSRF.
+  This rests on review_archive accepting an identity on Grafana's backend fetches only on GETs,
+  and only through a token it wrote into the query itself: a cross-site POST there writes
+  nothing.
+- **A path stays under its upstream prefix:** a `.` or `..` segment, `%2e`, `%2f`, `%5c` and `\`
+  decoded, is a 400.
 - **The page** `/review_archive` mounts `<mfe-review-archive-dashboard api base sign-in
   csrf-cookie>` from `/review_archive/mfe/` (`shared/mfe`), its stylesheet demoted into the
   `mfe` layer; any `/review_archive/<view>` without a dot loads the same page, for the
@@ -1081,8 +1089,8 @@ Booking:      {id, brand, provider, external_ref, status: booked | canceled, sta
   to `style-src` the wallet's directory (its stylesheet's `<link>`), and to `connect-src` the
   origin `https://evinvest.ltd` (the elements call its API: the wallet, its intents, concierge's
   step-up); it also
-  adds `https://challenges.cloudflare.com` to `script-src` and a `frame-src` of it alone
-  (the sign-in element's Turnstile loads `api.js` and draws its challenge in a Cloudflare
+  adds `https://challenges.cloudflare.com` to `script-src` and a `frame-src` of `'self'`
+  (review_archive's dashboard frames its Grafana) and it (the sign-in element's Turnstile loads `api.js` and draws its challenge in a Cloudflare
   iframe; without them the dialog shows "Captcha failed to load"; no `connect-src` entry is
   needed, as in invest and admin). The Turnstile widget's hostnames in Cloudflare must list
   the panel's host. Images and fonts do not change. The string is built once at boot (`web::csp`, kept in

@@ -183,7 +183,7 @@ async fn the_platform_policy_is_sent_only_when_switched_on() {
 			"the wallet's stylesheet link"
 		);
 		assert_eq!(sources(on, "connect-src"), ["'self'", "https://evinvest.ltd"]);
-		assert_eq!(sources(on, "frame-src"), ["https://challenges.cloudflare.com"]);
+		assert_eq!(sources(on, "frame-src"), ["'self'", "https://challenges.cloudflare.com"], "review_archive's Grafana, Turnstile");
 		let rest = |p: &str| {
 			p.split("; ")
 				.filter(|d| !["script-src", "style-src", "connect-src", "frame-src"].iter().any(|n| d.starts_with(n)))
