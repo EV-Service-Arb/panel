@@ -9,9 +9,9 @@ import { panelRouteFor, routeOfNavigateEvent } from "@/features/account-chip";
 // not a path-absolute string — stays a full navigation by the browser.
 describe("panelRouteFor: the panel's own screens", () => {
   it.each([
-    ["/account", "/account"],
-    ["/account/", "/account"],
-    ["/account?x=1#h", "/account?x=1#h"],
+    ["/usage", "/usage"],
+    ["/usage/", "/usage"],
+    ["/usage?x=1#h", "/usage?x=1#h"],
     ["/", "/"],
     ["/leads/?stage=new", "/leads?stage=new"],
     ["/review_archive", "/review_archive/"],
@@ -40,13 +40,13 @@ describe("panelRouteFor: left to the browser", () => {
     ["the account chooser", "/auth/login?prompt=select_account"],
     ["the API", "/api/v1/me"],
     ["the cabinet zone", "/cabinet"],
-    ["a protocol-relative URL", "//evil.com/account"],
+    ["a protocol-relative URL", "//evil.com/usage"],
     ["a backslash the URL parser reads as a slash", "/\\evil.com"],
-    ["a tab the URL parser drops between the slashes", "/\t/evil.com/account"],
-    ["an absolute URL", "https://x/account"],
-    ["a relative path", "account"],
-    ["a look-alike screen", "/accounts"],
-    ["a path under a screen", "/account/x"],
+    ["a tab the URL parser drops between the slashes", "/\t/evil.com/usage"],
+    ["an absolute URL", "https://x/usage"],
+    ["a relative path", "usage"],
+    ["a look-alike screen", "/usages"],
+    ["a path under a screen", "/usage/x"],
   ])("refuses %s (%s)", (_, href) => {
     expect(panelRouteFor(href)).toBeNull();
   });
@@ -54,8 +54,8 @@ describe("panelRouteFor: left to the browser", () => {
   // Each guard on its own: these resolve onto the parser's placeholder host, so only the
   // path-shape checks refuse them, whatever the origin check would say.
   it.each([
-    ["protocol-relative", "//panel.invalid/account"],
-    ["backslash", "/\\panel.invalid/account"],
+    ["protocol-relative", "//panel.invalid/usage"],
+    ["backslash", "/\\panel.invalid/usage"],
   ])("refuses a %s href even onto the resolver's own host", (_, href) => {
     expect(panelRouteFor(href)).toBeNull();
   });
@@ -64,7 +64,7 @@ describe("panelRouteFor: left to the browser", () => {
     ["undefined", undefined],
     ["a number", 42],
     ["null", null],
-    ["an object", { href: "/account" }],
+    ["an object", { href: "/usage" }],
   ])("refuses a href that is %s", (_, href) => {
     expect(panelRouteFor(href)).toBeNull();
   });
@@ -77,8 +77,8 @@ describe("routeOfNavigateEvent", () => {
   const navigate = (detail?: unknown) => new CustomEvent("ev:navigate", { detail });
 
   it("routes a panel screen from detail.href, spelled as the panel spells it", () => {
-    expect(routeOfNavigateEvent(navigate({ href: "/account" }))).toBe("/account");
-    expect(routeOfNavigateEvent(navigate({ href: "/account/?x=1" }))).toBe("/account?x=1");
+    expect(routeOfNavigateEvent(navigate({ href: "/usage" }))).toBe("/usage");
+    expect(routeOfNavigateEvent(navigate({ href: "/usage/?x=1" }))).toBe("/usage?x=1");
   });
 
   it("leaves a link outside the panel's screens to the browser", () => {
@@ -89,7 +89,7 @@ describe("routeOfNavigateEvent", () => {
     ["no detail", navigate()],
     ["an empty detail", navigate({})],
     ["a numeric href", navigate({ href: 42 })],
-    ["a bare string detail", navigate("/account")],
+    ["a bare string detail", navigate("/usage")],
     ["a null detail", navigate(null)],
   ])("finds no route in a CustomEvent with %s", (_, event) => {
     expect(routeOfNavigateEvent(event)).toBeNull();
@@ -97,6 +97,6 @@ describe("routeOfNavigateEvent", () => {
 
   it("finds no route in a plain Event, even one carrying a detail property", () => {
     expect(routeOfNavigateEvent(new Event("ev:navigate"))).toBeNull();
-    expect(routeOfNavigateEvent(Object.assign(new Event("ev:navigate"), { detail: { href: "/account" } }))).toBeNull();
+    expect(routeOfNavigateEvent(Object.assign(new Event("ev:navigate"), { detail: { href: "/usage" } }))).toBeNull();
   });
 });

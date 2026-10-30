@@ -10,7 +10,7 @@ import type { T } from "@/shared/i18n";
 export const CHIP_API_VERSION = 2;
 
 /** Every attribute the panel may set, so one it stops sending is removed rather than left stale. */
-export const CHIP_ATTRIBUTE_NAMES = ["data-mode", "data-name", "data-email", "data-manage-href", "data-profile-href", "data-switch-href", "data-groups"] as const;
+export const CHIP_ATTRIBUTE_NAMES = ["data-mode", "data-name", "data-email", "data-switch-href", "data-groups"] as const;
 
 export type ChipAttributeName = (typeof CHIP_ATTRIBUTE_NAMES)[number];
 export type ChipAttributes = Partial<Record<ChipAttributeName, string>>;
@@ -37,27 +37,9 @@ function clip(value: string): string {
   return chars.length > MAX_TEXT ? chars.slice(0, MAX_TEXT).join("") : chars.join("");
 }
 
-/**
- * The EV cabinet's home, for the chip's name row. `account_center` is
- * `{concierge}/cabinet/settings`, locale-free: the cabinet repairs `/cabinet/…` to the reader's
- * locale, so its parent `/cabinet` is the home page. Anything else, the origin's root.
- */
-export function cabinetHomeOf(accountCenter: string | null): string | null {
-  if (accountCenter === null) return null;
-  let url: URL;
-  try {
-    url = new URL(accountCenter);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-  const path = url.pathname.replace(/\/+$/, "");
-  return path.endsWith("/settings") ? url.origin + path.slice(0, -"/settings".length) : `${url.origin}/`;
-}
-
 /** The panel's own menu entries, the ones the kit's AccountMenu showed before. */
 export function panelGroups(me: Caller, t: T): ChipGroup[] {
-  const items: ChipItem[] = [{ id: "account", href: ROUTES.account, label: t("account.title") }];
+  const items: ChipItem[] = [];
   if (may(me, "sa:review_archive:members:act_as")) {
     items.push({ id: "act-as", href: ROUTES.reviewArchiveActAs, label: t("account.actAs"), external: true });
   }
@@ -77,9 +59,6 @@ export function chipAttributes(me: Caller, pathname: string, t: T): ChipAttribut
   // Not clipped: a cut address is someone else's; one over 254 is not valid and the chip drops it.
   const email = me.email.trim();
   if (email) attrs["data-email"] = email;
-  if (me.account_center) attrs["data-manage-href"] = me.account_center;
-  const home = cabinetHomeOf(me.account_center);
-  if (home) attrs["data-profile-href"] = home;
   return attrs;
 }
 

@@ -11,7 +11,7 @@ import type { Marks } from "@/views/shell/model/use-marks";
 
 const t: T = (key) => key;
 const marks: Marks = { leads: 0, away: 0, places: 0, experiments: false, sources: false, bookings: false };
-const caller = (permissions: readonly Permission[]): Caller => ({ user_id: "u", email: "e", preferred_name: "", permissions: [...permissions], dev_sign_in: false, account_center: null });
+const caller = (permissions: readonly Permission[]): Caller => ({ user_id: "u", email: "e", preferred_name: "", permissions: [...permissions], dev_sign_in: false });
 const WORK: readonly Permission[] = ["sa:work:read"];
 const workItems = (permissions: readonly Permission[], wallet: boolean) => panelNav(t, caller(permissions), marks, { wallet }).groups.find((g) => g.id === "work")?.items.map((i) => i.id);
 const also = (permissions: readonly Permission[], wallet: boolean) => panelNav(t, caller(permissions), marks, { wallet }).tabs.find((i) => i.id === "more")?.also ?? [];
@@ -27,9 +27,9 @@ describe("the invoices rail entry", () => {
     expect(also(["sa:analysis:read"], true)).not.toContain("/invoices");
   });
 
-  it("follows the wallet entry when that is on", () => {
-    expect(workItems(WORK, true)?.slice(-2)).toEqual(["wallet", "invoices"]);
-    expect(workItems(WORK, false)).not.toContain("wallet");
+  it("ends the work group whether or not the wallet entry is on: the wallet is the rail's footer", () => {
+    expect(workItems(WORK, true)?.at(-1)).toBe("invoices");
+    expect(workItems(WORK, true)).not.toContain("wallet");
   });
 });
 

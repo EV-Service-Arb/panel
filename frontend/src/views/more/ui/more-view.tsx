@@ -1,7 +1,7 @@
 "use client";
 
 import { Button, Item, ItemActions, ItemContent, ItemGroup, ItemTitle, NavDot } from "@evinvest/uikit";
-import { Archive, ArrowUpRight, CircleUser, FlaskConical, KeyRound, LayoutGrid, type LucideIcon, ReceiptText, Tags, Users, Wallet } from "lucide-react";
+import { Archive, ArrowUpRight, FlaskConical, Gauge, KeyRound, LayoutGrid, type LucideIcon, ReceiptText, Tags, Users, Wallet } from "lucide-react";
 import Link from "next/link";
 
 import { DevSignInBadge, may, useMe } from "@/entities/session";
@@ -30,7 +30,7 @@ export function MoreView() {
         <LiveStatusIndicator className="mt-1" />
       </section>
       <ItemGroup className="gap-2">
-        <MoreLink href={ROUTES.account} icon={CircleUser} label="account.title" />
+        <MoreLink href={ROUTES.usage} icon={Gauge} label="usage.title" />
         {may(me, "sa:review_archive:members:act_as") && <MoreLink href={ROUTES.reviewArchiveActAs} icon={Users} label="account.actAs" />}
         {may(me, "sa:work:read") && <MoreLink href={ROUTES.reviewArchive} icon={Archive} label="nav.reviewArchive" />}
         {may(me, "sa:work:read") && <MoreLink href={ROUTES.pricing} icon={Tags} label="nav.pricing" />}
