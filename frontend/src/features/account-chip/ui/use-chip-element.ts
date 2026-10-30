@@ -16,9 +16,8 @@ function applyAttributes(element: HTMLElement, attributes: ChipAttributes): void
  * the latest values and forwards its `signout` and `ev:navigate` events. Imperative rather than JSX: the element
  * must exist only after its definition, with its attributes set before `connectedCallback`.
  *
- * `painted` turns true when the element releases its reserve. The bundle holds the element at
- * 178×42 with an inline `visibility: hidden` until its stylesheet applies and lifts both in the
- * frame the chip paints; that inline style is the only readiness signal bundle v2 gives a host.
+ * `painted` turns true when the element sets `data-ready`, in the layout effect of its first
+ * render, the frame it paints.
  *
  * `ev:navigate` (cancelable, `detail.href`): the chip renders plain `<a>`s outside the panel's
  * React tree, so it has no router; for a link to one of the panel's screens the host cancels
@@ -59,9 +58,9 @@ export function useChipElement(tag: string, ready: boolean, attributes: ChipAttr
     element.addEventListener("signout", forwardSignOut);
     element.addEventListener("ev:navigate", forwardNavigate);
     const observer = new MutationObserver(() => {
-      if (element.style.visibility !== "hidden") setPainted(true);
+      if (element.hasAttribute("data-ready")) setPainted(true);
     });
-    observer.observe(element, { attributes: true, attributeFilter: ["style"] });
+    observer.observe(element, { attributes: true, attributeFilter: ["data-ready"] });
     host.appendChild(element);
     elementRef.current = element;
     return () => {
