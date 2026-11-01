@@ -69,6 +69,12 @@ ev_lib::settings! {
 		telegram_bot_username: Option<String>,
 		/// The language of the bot's messages: `ru` or `en`.
 		telegram_locale: String = "ru",
+		/// Grafana's server (the image's `grafanaServer` wrapper): `serve` runs it, at `/grafana/`.
+		/// With PANEL_GRAFANA_DIR, or neither; needs the forward and a public origin.
+		panel_grafana_server: Option<String>,
+		/// Grafana's directory, e.g. `/data/grafana`: its socket, its data, its provisioning and
+		/// the services' dashboards.
+		panel_grafana_dir: Option<String>,
 		/// The front end's static export (`frontend/` built, its `out/`), served on the same
 		/// origin behind the API's routes; the image sets it. Unset: `serve` answers the API
 		/// alone, and says so.
@@ -232,6 +238,25 @@ impl Settings {
 	}
 }
 
+/// Grafana, when it is configured.
+pub struct GrafanaSettings {
+	pub server: std::path::PathBuf,
+	pub dir: std::path::PathBuf,
+}
+
+impl Settings {
+	/// `None` when neither variable is set; one without the other is a mistake, named.
+	pub fn grafana(&self) -> eyre::Result<Option<GrafanaSettings>> {
+		let set = |v: &Option<String>| v.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(std::path::PathBuf::from);
+		match (set(&self.panel_grafana_server), set(&self.panel_grafana_dir)) {
+			(None, None) => Ok(None),
+			(Some(server), Some(dir)) => Ok(Some(GrafanaSettings { server, dir })),
+			(Some(_), None) => eyre::bail!("PANEL_GRAFANA_SERVER needs PANEL_GRAFANA_DIR too"),
+			(None, Some(_)) => eyre::bail!("PANEL_GRAFANA_DIR needs PANEL_GRAFANA_SERVER too"),
+		}
+	}
+}
+
 /// An in-cluster peer's address: `http://host[:port]`, nothing after it.
 fn bare_http_origin(name: &str, raw: &str) -> eyre::Result<axum::http::Uri> {
 	let raw = raw.trim();
@@ -377,6 +402,8 @@ mod tests {
 				"TELEGRAM_BOT_TOKEN",
 				"TELEGRAM_BOT_USERNAME",
 				"TELEGRAM_LOCALE",
+				"PANEL_GRAFANA_SERVER",
+				"PANEL_GRAFANA_DIR",
 				"PANEL_WEB_DIR",
 				"PANEL_DEV_SIGN_IN",
 				"PANEL_DEV_SIGN_IN_EMAIL",

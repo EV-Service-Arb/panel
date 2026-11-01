@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# The conductor, sites_panel and both landings on this machine, wired together: a lead posted on
-# a landing lands in sites_panel through the conductor's ingest, a place edited on the sites page
-# shows on the landing. See docs/LOCAL.md.
+# The conductor (its Grafana included), sites_panel, review_archive and both landings on this
+# machine, wired together: a lead posted on a landing lands in sites_panel through the conductor's
+# ingest, a place edited on the sites page shows on the landing, review_archive's boards draw in
+# the conductor's Grafana. See docs/LOCAL.md.
 #
 #   nix run .#local-stack                  build, seed, start everything; Ctrl-C stops it all
 #   nix run .#local-stack -- --reset       wipe .local/ (databases, keys, the landings' leads) first
@@ -10,12 +11,15 @@
 #
 # The conductor and its front end come from `nix build .#bin` / `.#frontend` of this checkout,
 # unless PANEL_BIN / PANEL_WEB_DIR name others (PANEL_BIN=target/debug/panel for a cargo build);
-# sites_panel and its bundle from its checkout's, unless SITES_BIN / SITES_MFE_DIR do. SITES_DIR,
-# AQUAFIX_DIR and VIFNET_DIR name the checkouts, by default beside this one's.
+# sites_panel and its bundle from its checkout's, unless SITES_BIN / SITES_MFE_DIR do; review_archive
+# likewise (REVIEW_ARCHIVE_BIN / REVIEW_ARCHIVE_MFE_DIR), and Grafana's server (PANEL_GRAFANA_SERVER).
+# SITES_DIR, REVIEW_ARCHIVE_DIR, AQUAFIX_DIR and VIFNET_DIR name the checkouts, by default beside
+# this one's.
 set -euo pipefail
 
 PANEL_PORT=59120
 SITES_PORT=59121
+REVIEW_ARCHIVE_PORT=59110
 AQUAFIX_PORT=59081
 VIFNET_PORT=59082
 AQUAFIX_PLACES=(royat clermont-ferrand desgenettes lyon-est la-mouche lyon-nord)
@@ -36,8 +40,8 @@ while [ $# -gt 0 ]; do
 		cat <<'EOF'
 local-stack [--reset] [--no-sites] [--role admin|operator]
 
-  The conductor on http://127.0.0.1:59120 (dev sign-in), sites_panel on :59121, aquafix on
-  :59081 and vifnet on :59082, wired together. State in .local/ (--reset wipes it). Ctrl-C stops everything. See docs/LOCAL.md.
+  The conductor on http://127.0.0.1:59120 (dev sign-in, its Grafana at /grafana/), sites_panel
+  on :59121, review_archive on :59110, aquafix on :59081 and vifnet on :59082, wired together. State in .local/ (--reset wipes it). Ctrl-C stops everything. See docs/LOCAL.md.
 EOF
 		exit 0
 		;;
@@ -69,6 +73,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run this from inside
 main_checkout="$(dirname "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)")"
 service_arb="$(dirname "$main_checkout")"
 SITES_DIR="${SITES_DIR:-$service_arb/sites/panel}"
+REVIEW_ARCHIVE_DIR="${REVIEW_ARCHIVE_DIR:-$service_arb/review_archive}"
 AQUAFIX_DIR="${AQUAFIX_DIR:-$service_arb/aquafix}"
 VIFNET_DIR="${VIFNET_DIR:-$service_arb/vifnet}"
 
@@ -84,7 +89,7 @@ printf '*\n' >"$state/.gitignore"
 # ── ports ────────────────────────────────────────────────────────────────────────────────
 
 busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
-ports=("$PANEL_PORT" "$SITES_PORT")
+ports=("$PANEL_PORT" "$SITES_PORT" "$REVIEW_ARCHIVE_PORT")
 [ "$sites" = 1 ] && ports+=("$AQUAFIX_PORT" "$VIFNET_PORT")
 for port in "${ports[@]}"; do
 	busy "$port" && die "port $port is taken — another local stack, or \`lsof -nP -iTCP:$port -sTCP:LISTEN\` says who"
@@ -115,12 +120,36 @@ if [ -z "${SITES_MFE_DIR:-}" ]; then
 	SITES_MFE_DIR="$state/build/sites-mfe"
 fi
 [ -x "$SITES_BIN" ] || die "SITES_BIN $SITES_BIN is not an executable"
+if [ -z "${PANEL_GRAFANA_SERVER:-}" ]; then
+	say "building Grafana (nix build .#grafana-server)"
+	nix build "$root#grafana-server" --out-link "$state/build/grafana-server"
+	PANEL_GRAFANA_SERVER="$state/build/grafana-server"
+fi
+review_archive=1
+if [ -z "${REVIEW_ARCHIVE_BIN:-}" ] || [ -z "${REVIEW_ARCHIVE_MFE_DIR:-}" ]; then
+	if [ -f "$REVIEW_ARCHIVE_DIR/flake.nix" ]; then
+		if [ -z "${REVIEW_ARCHIVE_BIN:-}" ]; then
+			say "building review_archive ($REVIEW_ARCHIVE_DIR#bin)"
+			nix build "$REVIEW_ARCHIVE_DIR#bin" --out-link "$state/build/review_archive"
+			REVIEW_ARCHIVE_BIN="$state/build/review_archive/bin/review_archive"
+		fi
+		if [ -z "${REVIEW_ARCHIVE_MFE_DIR:-}" ]; then
+			say "building review_archive's bundle ($REVIEW_ARCHIVE_DIR#mfe)"
+			nix build "$REVIEW_ARCHIVE_DIR#mfe" --out-link "$state/build/review_archive-mfe"
+			REVIEW_ARCHIVE_MFE_DIR="$state/build/review_archive-mfe"
+		fi
+	else
+		echo "skipping review_archive: no checkout at $REVIEW_ARCHIVE_DIR (REVIEW_ARCHIVE_DIR names it); /api/review_archive answers 502" >&2
+		review_archive=0
+	fi
+fi
 
 # ── the environments ─────────────────────────────────────────────────────────────────────
 
 [ -s "$state/data-key" ] || "$PANEL_BIN" gen-data-key >"$state/data-key"
 origin="http://127.0.0.1:$PANEL_PORT"
 sites_origin="http://127.0.0.1:$SITES_PORT"
+review_archive_origin="http://127.0.0.1:$REVIEW_ARCHIVE_PORT"
 # A key for this machine alone: the 32 bytes 0..31, and its public half for sites_panel.
 assertion_key="local:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
 assertion_public="local:A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
@@ -137,7 +166,9 @@ panel() {
 		PANEL_WEB_DIR="$PANEL_WEB_DIR" \
 		PANEL_ASSERTION_KEY="$assertion_key" \
 		PANEL_SITES_URL="$sites_origin" \
-		PANEL_REVIEW_ARCHIVE_URL="http://127.0.0.1:9" \
+		PANEL_REVIEW_ARCHIVE_URL="$review_archive_origin" \
+		PANEL_GRAFANA_SERVER="$PANEL_GRAFANA_SERVER" \
+		PANEL_GRAFANA_DIR="$state/grafana" \
 		PANEL_PLAYBOOK_URL="http://127.0.0.1:9" \
 		"$PANEL_BIN" "$@"
 }
@@ -149,6 +180,23 @@ sites_panel() {
 		PANEL_ASSERTION_KEYS="$assertion_public" \
 		PANEL_MFE_DIR="$SITES_MFE_DIR" \
 		"$SITES_BIN" "$@"
+}
+
+# review_archive on its own data dir, trusting the conductor's assertions; no Google account is
+# checked at boot and no browser is named: a scan fails, the boards draw what is stored.
+review_archive() {
+	mkdir -p "$state/review_archive"
+	cat >"$state/review_archive/config.toml" <<EOF
+data_dir = "$state/review_archive"
+mfe_dir = "$REVIEW_ARCHIVE_MFE_DIR"
+bind = "127.0.0.1:$REVIEW_ARCHIVE_PORT"
+[browser]
+lean = []
+EOF
+	env -u SENTRY_DSN -u TELEGRAM_BOT_TOKEN -u GOOGLE_MAPS_KEY \
+		APP_ENV=development \
+		PANEL_ASSERTION_KEYS="$assertion_public" \
+		"$REVIEW_ARCHIVE_BIN" --config "$state/review_archive/config.toml" "$@"
 }
 
 # ── seed: idempotent, so every run may do it ─────────────────────────────────────────────
@@ -227,6 +275,14 @@ sites_pid=$!
 groups+=("$sites_pid")
 wait_for sites "$sites_origin/health" 30 "$sites_pid" || die "sites_panel did not start"
 
+if [ "$review_archive" = 1 ]; then
+	say "starting review_archive on $review_archive_origin"
+	prefixed review_archive review_archive serve --no-login-check &
+	review_archive_pid=$!
+	groups+=("$review_archive_pid")
+	wait_for review_archive "$review_archive_origin/health" 60 "$review_archive_pid" || die "review_archive did not start"
+fi
+
 say "starting the conductor on $origin (dev sign-in: $role)"
 prefixed panel panel serve --bind "127.0.0.1:$PANEL_PORT" &
 panel_pid=$!
@@ -271,6 +327,7 @@ fi
 	echo "────────────────────────────────────────────────────────────────────────"
 	echo " panel    $origin   (opens signed in: dev sign-in, $role)"
 	echo "          leads $origin/sites/leads   places $origin/sites/places"
+	[ "$review_archive" = 1 ] && echo "          review_archive $origin/review_archive?grafana=true   Grafana $origin/grafana/"
 	echo " sites    $sites_origin   (behind the conductor: its /api/internal for the landings)"
 	for s in ${started[@]+"${started[@]}"}; do
 		case "${s%%:*}" in

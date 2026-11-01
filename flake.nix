@@ -145,6 +145,55 @@
           '';
         };
 
+        # Grafana (docs/ARCHITECTURE.md, Grafana): the tilers plugin lays out the services' boards
+        tilersPlugin = pkgs.fetchzip {
+          url = "https://github.com/EV-Main/tilers/releases/download/grafana-v0.6.0/evmain-tilers-app-0.6.0.zip";
+          hash = "sha256-NDxPRBj29ZmAb5ROp9SxPCSvrG0C+CVDWYPljcBeW4k=";
+        };
+
+        # Infinity's package for this platform alone: the catalog's default zip carries every platform's backend
+        infinityPlugin = pkgs.grafanaPlugins.grafanaPlugin {
+          pname = "yesoreyeram-infinity-datasource";
+          version = "4.1.0";
+          zipHash = {
+            x86_64-linux = "sha256-pzgHZ2abzFzyKvBIQOTzlirus+AUTE0/VfP2zYnL06I=";
+            aarch64-linux = "sha256-1fZ7v7mkleROOessTSbLB6wQH2HLMbhJdVGiqaaC/pg=";
+          };
+        };
+
+        # Grafana without what no browser here loads: its source maps and API explorer
+        grafanaPruned = pkgs.runCommand "grafana-pruned" { } ''
+          cp -r --no-preserve=mode ${pkgs.grafana} $out
+          chmod +x $out/bin/grafana
+          find $out/share/grafana/public -name '*.map' -delete
+          rm -r $out/share/grafana/public/build-swagger
+        '';
+
+        # PANEL_GRAFANA_SERVER: `serve` gives it its socket, data dir, provisioning, root URL and sign-in
+        # settings; the rest is fixed here, cut to what the dashboards use (docs/ARCHITECTURE.md, Deploy
+        # requirements). Warnings and up on serve's stderr.
+        grafanaServer = pkgs.writeShellScript "grafana-server" ''
+          export GF_PATHS_LOGS="$GF_PATHS_DATA/log"
+          export GF_PATHS_PLUGINS="${pkgs.linkFarm "grafana-plugins" [
+            { name = "yesoreyeram-infinity-datasource"; path = infinityPlugin; }
+            { name = "marcusolsson-dynamictext-panel"; path = pkgs.grafanaPlugins.marcusolsson-dynamictext-panel; }
+            { name = "evmain-tilers-app"; path = tilersPlugin; }
+          ]}"
+          export GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=evmain-tilers-app
+          export GF_SECURITY_ALLOW_EMBEDDING=true
+          export GF_PLUGINS_PREINSTALL_DISABLED=true # its plugin dir is the store's
+          export GF_LIVE_MAX_CONNECTIONS=0
+          export GF_ANALYTICS_REPORTING_ENABLED=false GF_ANALYTICS_CHECK_FOR_UPDATES=false GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
+          export GF_UNIFIED_ALERTING_ENABLED=false GF_NEWS_NEWS_FEED_ENABLED=false GF_PUBLIC_DASHBOARDS_ENABLED=false GF_SNAPSHOTS_ENABLED=false
+          export GF_QUERY_HISTORY_ENABLED=false GF_EXPLORE_ENABLED=false GF_CLOUD_MIGRATION_ENABLED=false GF_RECORDED_QUERIES_ENABLED=false
+          export GF_PROFILE_ENABLED=false GF_HELP_ENABLED=false
+          # its own, not the pod's; Infinity inherits both.
+          # The heap is kept by GOGC: a limit near the live heap (~70 MiB idle, ~105 after a while of loads) spins the GC
+          export GOGC=50 GOMEMLIMIT=200MiB
+          export GF_LOG_MODE=console GF_LOG_LEVEL=warn
+          exec ${grafanaPruned}/bin/grafana server --homepath ${grafanaPruned}/share/grafana
+        '';
+
         # The database: one SQLite file on the pod's volume, created and migrated by `serve` on
         # start (no init container, no migrate step), replicated off the pod by the cluster's
         # litestream — which is what `sqlite` below asks for. One writer: one pod, replaced
@@ -200,6 +249,8 @@
             inherit port;
             mounts = [ "/data" ];
             sqlite = [ dbPath ];
+            # Grafana's own sqlite: its state is provisioned again on every start
+            unreplicated = [ "/data/grafana" ];
             healthPath = "/health";
             # a source that gets a 5xx retries from its outbox; nothing is lost while down
             criticality = "normal";
@@ -210,10 +261,11 @@
             env = {
               APP_ENV = "production";
               PANEL_DB_PATH = dbPath;
+              PANEL_GRAFANA_DIR = "/data/grafana";
             };
             # the epoch versions the sa catalog `serve` publishes to concierge: it must travel with
             # the build, or a tag whose catalog changed boots on the previous epoch and is refused
-            imageEnv = [ "PANEL_WEB_DIR=${frontend}" "PANEL_BUILD_EPOCH=${toString self.lastModified}" ];
+            imageEnv = [ "PANEL_WEB_DIR=${frontend}" "PANEL_GRAFANA_SERVER=${grafanaServer}" "PANEL_BUILD_EPOCH=${toString self.lastModified}" ];
           };
         };
         # `implement` knows no key for the above, and throws on one it does not know.
@@ -234,8 +286,9 @@
             nix build                         the panel binary
             nix build .#${pname}-container    OCI image, the front end in it (Linux only)
             nix build .#frontend              the front end's static export
-            nix run .#local-stack             the conductor, sites_panel and both landings on
-                                              this machine, wired together (docs/LOCAL.md)
+            nix run .#local-stack             the conductor and its Grafana, sites_panel,
+                                              review_archive and both landings on this machine,
+                                              wired together (docs/LOCAL.md)
             nix run .#publish -- major|minor|patch [note]
                                               tag the next vX.Y.Z and push it: CI ships the image
             nix run .#gen                     the front end's mirror of the Rust types
@@ -303,7 +356,7 @@
         packages = {
           default = bin;
           inherit bin frontend;
-        } // lib.optionalAttrs pkgs.stdenv.isLinux containerStd.packages;
+        } // lib.optionalAttrs pkgs.stdenv.isLinux (containerStd.packages // { grafana-server = grafanaServer; });
 
         containers = lib.optionalAttrs pkgs.stdenv.isLinux containers;
 

@@ -353,6 +353,7 @@ async fn setup_with(db: &TestDb, limits: http::Limits) -> (Router, FakeConcierge
 			},
 		),
 		None,
+		None,
 		limits,
 		telegram::BotName::off(),
 	);
@@ -516,6 +517,7 @@ async fn concierge_down_is_a_503_not_a_sign_out() {
 				concierge_origin: "http://concierge.test".to_owned(),
 			},
 		),
+		None,
 		None,
 		http::Limits::default(),
 		telegram::BotName::off(),
@@ -686,8 +688,8 @@ async fn the_profile_links_telegram_and_chooses_rules() {
 			concierge_origin: "http://concierge.test".to_owned(),
 		},
 	);
-	let app = http::app(sign_in.clone(), None, http::Limits::default(), telegram::BotName::on(Some("@evinvest_sa_bot".into())));
-	let off = http::app(sign_in, None, http::Limits::default(), telegram::BotName::off());
+	let app = http::app(sign_in.clone(), None, None, http::Limits::default(), telegram::BotName::on(Some("@evinvest_sa_bot".into())));
+	let off = http::app(sign_in, None, None, http::Limits::default(), telegram::BotName::off());
 	user(&fake, OPERATOR, "investor", SA_OPERATOR.members);
 	// A link whose access was last confirmed long ago, and denied: the gate's GetMe renews it.
 	let pool = db.pool().await;
@@ -761,7 +763,13 @@ async fn no_permission_opens_no_section() {
 			panel_origin: PANEL.to_owned(),
 			concierge_origin: PANEL.to_owned(),
 		};
-		http::app(SignIn::new(panel.clone(), Concierge::dev(who), config), None, http::Limits::default(), telegram::BotName::off())
+		http::app(
+			SignIn::new(panel.clone(), Concierge::dev(who), config),
+			None,
+			None,
+			http::Limits::default(),
+			telegram::BotName::off(),
+		)
 	};
 	let routes = http::api_routes();
 	let open: Vec<&str> = routes.iter().filter(|r| r.section.is_none()).map(|r| r.path).collect();

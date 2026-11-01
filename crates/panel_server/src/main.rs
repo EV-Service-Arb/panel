@@ -17,6 +17,7 @@ use panel_server::{
 	DEFAULT_BIND,
 	concierge::{Concierge, DevIdentity},
 	forward::{Forward, Services},
+	grafana::Grafana,
 	http, live,
 	signin::{SignIn, SignInConfig},
 	telegram::{self, BotApi, BotName},
@@ -152,7 +153,12 @@ async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSign
 				telegram.is_none() || forward.is_some(),
 				"TELEGRAM_BOT_TOKEN needs the forward (PANEL_ASSERTION_KEY and the services' URLs): the bot sends sites' notes"
 			);
-			serve(connect().await?, identity, forward, telegram, settings.web()?, bind).await
+			let grafana = settings.grafana()?;
+			eyre::ensure!(
+				grafana.is_none() || forward.is_some(),
+				"PANEL_GRAFANA_SERVER needs the forward (PANEL_ASSERTION_KEY and the services' URLs): Grafana reads the services through it"
+			);
+			serve(connect().await?, identity, forward, telegram, grafana, settings.web()?, bind).await
 		}
 		Cmd::Source(cmd) => source(&connect().await?, cmd).await,
 		Cmd::GenDataKey => {
@@ -195,7 +201,15 @@ enum Identity {
 	Dev(settings::DevSignIn),
 }
 
-async fn serve(panel: Panel, identity: Identity, services: Option<Services>, telegram: Option<settings::TelegramSettings>, files: Option<Files>, bind: SocketAddr) -> eyre::Result<()> {
+async fn serve(
+	panel: Panel,
+	identity: Identity,
+	services: Option<Services>,
+	telegram: Option<settings::TelegramSettings>,
+	grafana: Option<settings::GrafanaSettings>,
+	files: Option<Files>,
+	bind: SocketAddr,
+) -> eyre::Result<()> {
 	let (concierge, config) = match identity {
 		Identity::Concierge(s) => {
 			tracing::info!(panel_origin = s.panel_origin, "signing in through concierge");
@@ -254,6 +268,7 @@ async fn serve(panel: Panel, identity: Identity, services: Option<Services>, tel
 		}
 	};
 	let bot_name = bot.as_ref().map_or_else(BotName::off, |(_, name)| name.clone());
+	let grafana_root = format!("{}/grafana/", config.panel_origin.trim_end_matches('/'));
 	let sign_in = SignIn::new(panel, concierge, config);
 	let forward = match &services {
 		Some(services) => Some(Forward::new(sign_in.clone(), services.clone())),
@@ -262,7 +277,18 @@ async fn serve(panel: Panel, identity: Identity, services: Option<Services>, tel
 			None
 		}
 	};
-	let app = http::app(sign_in, forward, http::Limits::default(), bot_name);
+	let grafana = match (grafana, &forward) {
+		(Some(g), Some(forward)) => {
+			tracing::info!(root_url = grafana_root, "grafana at /grafana/");
+			Some((Grafana::new(forward.clone(), g.dir), g.server))
+		}
+		(Some(_), None) => unreachable!("refused before serve"),
+		(None, _) => {
+			tracing::warn!("PANEL_GRAFANA_SERVER unset: no Grafana, /grafana is a 404");
+			None
+		}
+	};
+	let app = http::app(sign_in, forward, grafana.as_ref().map(|(g, _)| g), http::Limits::default(), bot_name);
 	let app = match files {
 		Some(files) => web::serve(app, files),
 		None => {
@@ -293,7 +319,12 @@ async fn serve(panel: Panel, identity: Identity, services: Option<Services>, tel
 				live::follow(services, bus.clone(), stopped.clone()).await;
 			}
 		};
-		tokio::join!(bot, feed);
+		let grafana = async {
+			if let Some((grafana, server)) = grafana {
+				grafana.run(&server, &grafana_root, stopped.clone()).await;
+			}
+		};
+		tokio::join!(bot, feed, grafana);
 	};
 	let (served, ()) = tokio::join!(server, hubs);
 	served
