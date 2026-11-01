@@ -3,7 +3,8 @@
 import { Card, CardContent, CardHeader, CardTitle, PageFrame, Skeleton } from "@evinvest/uikit";
 
 import { type Permission, useMe } from "@/entities/session";
-import { type Usage, fetchTokens, fetchUsage } from "@/entities/tokens";
+import { fetchArchive } from "@/entities/gmb";
+import { UsageFigures, fetchUsage } from "@/entities/tokens";
 import { ROUTES } from "@/shared/config/routes";
 import { type MessageKey, useT } from "@/shared/i18n";
 import { useResource } from "@/shared/lib/use-resource";
@@ -28,7 +29,6 @@ export function UsageView() {
   return (
     <PageFrame breakpoint="md" title={t("usage.title")} description={t("usage.description")} width="content">
       <Access />
-      <TokensCard />
       <UsageCard />
       <Section title={t("account.integrations")}>
         <a className="text-sm text-ink hover:underline" href={ROUTES.reviewArchiveTelegram}>
@@ -83,69 +83,18 @@ function Access() {
   );
 }
 
-function TokensCard() {
-  const t = useT();
-  const tokens = useResource("account.tokens", fetchTokens);
-  return (
-    <Section title={t("account.tokens")}>
-      {tokens.status === "loading" && <Skeleton className="h-10 w-48" />}
-      {tokens.status === "error" && <p className="text-sm text-ink-soft">{t("account.tokens.unavailable")}</p>}
-      {tokens.status === "ok" && (
-        <>
-          <Row label={t("account.tokens.now")}>
-            <span className="text-lg font-semibold tabular-nums">{t("tokens.count", { n: tokens.data.balance })}</span>
-          </Row>
-          <p className="text-sm text-ink-soft">{t("account.tokens.renewal", { daily: tokens.data.daily, cap: tokens.data.cap })}</p>
-        </>
-      )}
-      <a className="text-sm text-ink hover:underline" href={ROUTES.reviewArchiveTokens}>
-        {t("account.tokens.history")}
-      </a>
-    </Section>
-  );
-}
-
-const total = (days: Usage["days"], key: "walks" | "tokens") => days.reduce((sum, d) => sum + d[key], 0);
-
 function UsageCard() {
   const t = useT();
   const usage = useResource("account.usage", fetchUsage);
+  const archive = useResource("account.archive", fetchArchive);
   return (
     <Section title={t("account.usage")}>
       {usage.status === "loading" && <Skeleton className="h-24 w-full" />}
       {usage.status === "error" && <p className="text-sm text-ink-soft">{t("account.usage.unavailable")}</p>}
-      {usage.status === "ok" && <UsageFigures usage={usage.data} />}
-    </Section>
-  );
-}
-
-function UsageFigures({ usage }: { usage: Usage }) {
-  const t = useT();
-  const week = usage.days.slice(-7);
-  const peak = Math.max(1, ...usage.days.map((d) => d.tokens));
-  return (
-    <>
-      {[
-        { label: t("account.usage.week"), days: week },
-        { label: t("account.usage.month"), days: usage.days },
-      ].map(({ label, days }) => (
-        <Row key={label} label={label}>
-          {t("account.usage.walks", { n: total(days, "walks") })} · {t("account.usage.spent", { n: total(days, "tokens") })}
-        </Row>
-      ))}
+      {usage.status === "ok" && <UsageFigures days={usage.data} />}
       <Row label={t("account.usage.places")}>
-        <span className="tabular-nums">{usage.places_tracked}</span>
+        <span className="tabular-nums">{archive.status === "ok" && archive.data !== null ? archive.data.places_tracked : "—"}</span>
       </Row>
-      <figure className="flex h-16 items-end gap-0.5 pt-2" aria-label={t("account.usage.chart")} role="img">
-        {usage.days.map((d) => (
-          <span
-            key={d.day}
-            title={`${d.day}: ${t("account.usage.spent", { n: d.tokens })}`}
-            className="flex-1 rounded-t-sm bg-primary/70"
-            style={{ height: `${Math.max(2, (d.tokens / peak) * 100)}%` }}
-          />
-        ))}
-      </figure>
-    </>
+    </Section>
   );
 }
