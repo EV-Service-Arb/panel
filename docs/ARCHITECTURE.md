@@ -139,7 +139,6 @@ reserved paths (`web.rs`) are derived from it.
 /api/sites/*                     → sites /api/v1/*              session + User; CSRF on writes
 /api/hooks/booking/*             → sites (same path)            open: the providers' webhooks
 /sites/mfe/*                     → sites /mfe/*                 open: the sites page's bundle
-/api/review_archive/grafana/*    → review_archive /grafana/*    session + User; a POST is a read
 /api/review_archive/*            → review_archive /*            session + User; CSRF on writes
 /review_archive/mfe/*            → review_archive /mfe/*        open: the dashboard's bundle
 /playbook_mcp/authorize          → playbook (same path)         session + User; no conductor CSRF
@@ -162,8 +161,7 @@ reserved paths (`web.rs`) are derived from it.
   under `/api/sites` and `/api/review_archive` needs the conductor's CSRF header. playbook's
   consent form at `/playbook_mcp/authorize` posts without it: the `SameSite=Lax` session and
   playbook's own single-use nonce guard it; a signed-out `GET` of that page goes to
-  `/auth/login?return_to=` and comes back. Grafana's dashboards query by POST, so every method
-  under `/api/review_archive/grafana` takes the cached `GetMe` and no CSRF.
+  `/auth/login?return_to=` and comes back.
 - **A path stays under its upstream prefix:** a `.` or `..` segment, `%2e`, `%2f`, `%5c` and `\`
   decoded, is a 400.
 - **The outline.** Every signed-in page sits beside it: the open service's own views (the sites:
@@ -207,6 +205,8 @@ conductor ── GET /dashboards (Conductor), every 60 s, conditional ──▶ 
   service that has them is in `forward::DASHBOARDS`, and its `GET /dashboards` answers a JSON
   array of them, each with its `uid`, and an ETag. A pull that fails — no answer, a 404, a uid
   another service serves or Grafana refuses — is reported, and what was served before stays.
+- Grafana's dashboards query by POST, so every method under `/grafana/` takes the cached `GetMe`
+  and no CSRF.
 - Cookies, assertions, `x-sa-csrf` and the viewer header never reach Grafana, its `Set-Cookie`
   never comes down, nothing is upgraded. A Grafana that fails is reported and `/grafana/`
   answers 502; the conductor goes on.

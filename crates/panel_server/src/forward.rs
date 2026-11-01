@@ -6,7 +6,6 @@
 //! /api/sites/*                     → sites /api/v1/*            session + assertion; CSRF on writes
 //! /api/hooks/booking/*             → sites (same path)          open: the providers' webhooks
 //! /sites/mfe/*                     → sites /mfe/*               open: the sites page's bundle
-//! /api/review_archive/grafana/*    → review_archive /grafana/*  session + assertion; a POST is a read
 //! /api/review_archive/*            → review_archive /*          session + assertion; CSRF on writes
 //! /review_archive/mfe/*            → review_archive /mfe/*      open: the dashboard's bundle
 //! /playbook_mcp/authorize          → playbook (same path)       session + assertion; its consent form
@@ -43,15 +42,13 @@ enum Gate {
 	Open,
 }
 
-/// What a method but GET, HEAD and OPTIONS is.
+/// What a write — a method but GET, HEAD and OPTIONS — needs besides concierge asked afresh.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Writes {
-	/// A write: the panel's CSRF header, and concierge asked afresh.
+	/// The panel's CSRF header.
 	Csrf,
-	/// A write the service guards with a nonce of its own: concierge asked afresh.
+	/// Nothing: the service guards it with a nonce of its own.
 	ServiceNonce,
-	/// Not a write: Grafana's queries are POSTs.
-	Reads,
 }
 
 struct Route {
@@ -64,7 +61,7 @@ struct Route {
 }
 
 /// Longest prefixes first: the first match wins.
-const ROUTES: [Route; 10] = [
+const ROUTES: [Route; 9] = [
 	Route {
 		prefix: "/api/sites",
 		upstream: "/api/v1",
@@ -82,12 +79,6 @@ const ROUTES: [Route; 10] = [
 		upstream: "/mfe",
 		service: Service::Sites,
 		gate: Gate::Open,
-	},
-	Route {
-		prefix: "/api/review_archive/grafana",
-		upstream: "/grafana",
-		service: Service::ReviewArchive,
-		gate: Gate::Session(Writes::Reads),
 	},
 	Route {
 		prefix: "/api/review_archive",
@@ -302,7 +293,7 @@ async fn forward(State(f): State<Forward>, req: Request) -> Response {
 	let principal = match route.gate {
 		Gate::Open => None,
 		Gate::Session(writes) => {
-			let write = writes != Writes::Reads && !matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
+			let write = !matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
 			if write && writes == Writes::Csrf && !f.sign_in.cookies().csrf_ok(req.headers()) {
 				return json_error(StatusCode::FORBIDDEN, "csrf");
 			}
@@ -395,11 +386,7 @@ mod tests {
 		assert_eq!(route("/playbook_mcp/token"), Some(("/playbook_mcp", Gate::Open)));
 		assert_eq!(route("/playbook_mcp/authorizer"), Some(("/playbook_mcp", Gate::Open)));
 		assert_eq!(route("/api/review_archive/me"), Some(("/api/review_archive", Gate::Session(Writes::Csrf))));
-		assert_eq!(
-			route("/api/review_archive/grafana/api/ds/query"),
-			Some(("/api/review_archive/grafana", Gate::Session(Writes::Reads)))
-		);
-		assert_eq!(route("/api/review_archive/grafanas"), Some(("/api/review_archive", Gate::Session(Writes::Csrf))));
+		assert_eq!(route("/api/review_archive/grafana/api/ds/query"), Some(("/api/review_archive", Gate::Session(Writes::Csrf))));
 		assert_eq!(route("/api/review_archived"), None);
 		assert_eq!(route("/review_archive"), None, "the page is the front end's");
 		assert_eq!(route("/api/sites/leads"), Some(("/api/sites", Gate::Session(Writes::Csrf))));
