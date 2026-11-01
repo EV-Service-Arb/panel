@@ -1,11 +1,11 @@
 //! The sources that may write events: a key id, the kind of source holding it, the brands
-//! it may write for, and its sealed HMAC secret.
+//! it may write for, its sealed HMAC secret, and a site's origin.
 
 use std::collections::BTreeSet;
 
 use eyre::WrapErr;
 use jiff::Timestamp;
-use panel_core::ids::BrandId;
+use panel_core::ids::{BrandId, SiteOrigin};
 use sa_auth::SourceKind;
 use sqlx::types::Json;
 
@@ -27,6 +27,8 @@ pub struct SourceRow {
 	pub data_key_fp: Vec<u8>,
 	pub created_at: Timestamp,
 	pub revoked_at: Option<Timestamp>,
+	/// A site's; `None` only for one issued before origins and not given one since.
+	pub origin: Option<SiteOrigin>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -38,6 +40,7 @@ struct Row {
 	data_key_fp: Vec<u8>,
 	created_at: i64,
 	revoked_at: Option<i64>,
+	origin: Option<String>,
 }
 
 impl TryFrom<Row> for SourceRow {
@@ -52,12 +55,14 @@ impl TryFrom<Row> for SourceRow {
 			.map(|b| BrandId::parse(b))
 			.collect::<Result<BTreeSet<_>, _>>()
 			.wrap_err_with(|| format!("source {}", r.key_id))?;
+		let origin = r.origin.as_deref().map(SiteOrigin::parse).transpose().wrap_err_with(|| format!("source {}", r.key_id))?;
 		Ok(Self {
 			grant: Grant { key_id: r.key_id, kind, brands },
 			secret_sealed: r.secret_sealed,
 			data_key_fp: r.data_key_fp,
 			created_at: from_db(r.created_at)?,
 			revoked_at: r.revoked_at.map(from_db).transpose()?,
+			origin,
 		})
 	}
 }
@@ -65,20 +70,21 @@ impl TryFrom<Row> for SourceRow {
 // A macro, not a const, so every query stays a literal (`concat!`) that sqlx takes as audited.
 macro_rules! columns {
 	() => {
-		"key_id, kind, brand_ids, secret_sealed, data_key_fp, created_at, revoked_at"
+		"key_id, kind, brand_ids, secret_sealed, data_key_fp, created_at, revoked_at, origin"
 	};
 }
 
 impl Store {
 	/// Adds a source; `false` when the key id is taken.
-	pub async fn insert_source(&self, grant: &Grant, secret_sealed: &[u8], data_key_fp: &[u8]) -> eyre::Result<bool> {
+	pub async fn insert_source(&self, grant: &Grant, origin: Option<&SiteOrigin>, secret_sealed: &[u8], data_key_fp: &[u8]) -> eyre::Result<bool> {
 		let brands: Vec<&str> = grant.brands.iter().map(BrandId::as_str).collect();
-		let inserted = sqlx::query("INSERT INTO sources (key_id, kind, brand_ids, secret_sealed, data_key_fp) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (key_id) DO NOTHING")
+		let inserted = sqlx::query("INSERT INTO sources (key_id, kind, brand_ids, secret_sealed, data_key_fp, origin) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (key_id) DO NOTHING")
 			.bind(&grant.key_id)
 			.bind(grant.kind.as_str())
 			.bind(Json(&brands))
 			.bind(secret_sealed)
 			.bind(data_key_fp)
+			.bind(origin.map(SiteOrigin::as_str))
 			.execute(&self.pool)
 			.await
 			.wrap_err("inserting a source")?
@@ -105,6 +111,19 @@ impl Store {
 			.into_iter()
 			.map(SourceRow::try_from)
 			.collect()
+	}
+
+	/// Gives an active site key the origin it lacks; `false` when there is no such key, or it has
+	/// another origin already. The same origin again is no change.
+	pub async fn set_site_origin(&self, key_id: &str, origin: &SiteOrigin) -> eyre::Result<bool> {
+		let set = sqlx::query("UPDATE sources SET origin = $2 WHERE key_id = $1 AND kind = 'site' AND revoked_at IS NULL AND (origin IS NULL OR origin = $2)")
+			.bind(key_id)
+			.bind(origin.as_str())
+			.execute(&self.pool)
+			.await
+			.wrap_err("setting a site's origin")?
+			.rows_affected();
+		Ok(set == 1)
 	}
 
 	/// Revokes a source; `false` when there is no active one by that id. Its events stay.

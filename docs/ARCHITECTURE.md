@@ -12,9 +12,11 @@ charged from what review_archive tells it.
 ```text
 browser ─session──▶ conductor ─x-sa-assertion (User)──────────────▶ sites /api/v1, review_archive, playbook
 landings/bots ─HMAC▶ conductor ─x-sa-assertion (Source) + raw body ▶ sites /api/ingest/v1
-conductor ◀── pulls (Conductor) ── sites /api/conductor/{changes, notifications, sources/received}
+conductor ◀── pulls (Conductor) ── sites /api/conductor/{changes, notifications, sources/received,
+                                                          internal-reads}
 conductor ◀── pulls (Conductor) ── review_archive /api/conductor/charges
 conductor ─── pushes (Conductor) ─▶ review_archive /api/conductor/gmbs   GMBs, balances, the cursor
+conductor ── GET <origin>/.well-known/sa-site, public :443 ──────▶ each site key's landing
 landings ──────────────────────── direct, in-cluster ────────────▶ sites /api/internal
 ```
 
@@ -45,6 +47,7 @@ crates/panel_server/     the `panel` binary: CLI and HTTP, thin over `Panel`
   src/cookies.rs         __Host- cookies, the double-submit CSRF check
   src/http.rs            the router; the /api/v1 route table and the section each sits under
   src/api.rs             GET /me, /sources
+  src/connected.rs       GET /sources/sites: each site key's landing report beside sites' view
   src/access.rs          /api/v1/access/requests
   src/ingest.rs          the signed requests: authenticated here, forwarded to sites
   src/forward.rs         the services behind the origin; `Services`, the one client and signing
@@ -226,9 +229,11 @@ What a key may write — its kind's types, its brands, a bot's lookup — is sit
 event. An unknown key and a bad signature answer the same 401, so key ids cannot be probed for;
 only a timestamp outside the window is told apart.
 
-**Keys** (`/api/v1/sources`, `panel source add|list|revoke`): one kind and a set of brands each,
-the secret shown once. Kinds `panel` and `booking` are written by sites itself: no key is
-issued for them.
+**Keys** (`/api/v1/sources`, `panel source add|list|set-origin|revoke`): one kind and a set of
+brands each, the secret shown once. Kinds `panel` and `booking` are written by sites itself: no
+key is issued for them. A `site` key carries its landing's origin (`https://<domain>[:port]`,
+nothing after it; plain http on `localhost` / `127.0.0.1` for a landing on this machine): given
+when the key is issued, or once with `set-origin` for a key issued before origins.
 
 ## The conductor's API, `/api/v1`
 
@@ -237,9 +242,12 @@ JSON; timestamps RFC 3339; errors `{"error": "…"}` with 400 / 403 / 404 / 409 
 ```text
 GET    /me                                  {user_id, email, preferred_name, permissions,
                                             dev_sign_in}: every sa permission, every service's
-GET    /sources              Admin          {sources: [{key_id, kind, brands, created_at, revoked_at}]}
-POST   /sources              Admin, fresh   {key_id, kind, brands} → 201 {key_id, secret} (shown
-                                            once), 409 if taken; kind panel or booking → 400
+GET    /sources              Admin          {sources: [{key_id, kind, brands, created_at, revoked_at,
+                                            origin}]}
+POST   /sources              Admin, fresh   {key_id, kind, brands, origin} → 201 {key_id, secret}
+                                            (shown once), 409 if taken; kind panel or booking, a
+                                            site without an origin or another kind with one → 400
+GET    /sources/sites        Admin          the Connected sites table, below
 DELETE /sources/{key_id}     Admin, fresh   204, 404
 POST   /access/requests                     {need} → 201 {need, requested_at}, made now; 200 the one
                                             standing (made within 24 h: nobody told again);
@@ -275,6 +283,20 @@ POST   /admin/tokens/{user}  Tokens, fresh  {set: n, note?} | {add: n, note?} | 
 
 An id in a path that is not the caller's is a 404. Before the import (below) the gmail and GMB
 writes and every tokens route answer 503.
+**Connected sites** (`GET /sources/sites`): for every active site key at once, its landing's own
+report and sites' view of it, all asked together (joined, nothing spawned):
+
+```text
+{sites: [{key_id, brands, origin, report}], received, internal_reads}
+  report          {state: "reported", report: <the landing's /.well-known/sa-site body>}
+                  | {state: "failed", detail} | {state: "no_origin"}
+                  GET <origin>/.well-known/sa-site: no redirect followed, 5 s, ≤ 64 KiB, 200 and
+                  the report's shape, its brand one of the key's — else failed
+  received        sites GET /api/conductor/sources/received  {state: "read", value: {key_id: at}}
+  internal_reads  sites GET /api/conductor/internal-reads    {state: "read", value: {since, reads:
+                  {brand: {locations, pricing, experiments}}}}; either {state: "failed", detail}
+                  (5 s; or no forward)
+```
 
 The page `/access?need=&continue=` (outside the shell) is where a service sends a signed-in user
 lacking `need`: it asks, then reads `/me` every 30 s and goes on to `continue` (a path, the
@@ -427,8 +449,8 @@ delivery (0.5 s)            lead messages noted > 1 h ago dead ("stale"); > 20 w
 - **Grafana holds no identity.** It signs no one in: its fetches reach a service as a viewer only
   through a token the conductor wrote into that viewer's `/grafana/api/ds/query`, on the loopback
   listener, on GETs, for that query's life. The public listener never takes a token.
-- **A source is only ever revoked.** `sources` refuses DELETE and any UPDATE but of `revoked_at`;
-  a key id is never reused.
+- **A source is only ever revoked.** `sources` refuses DELETE and any UPDATE but of `revoked_at`
+  and a site's `origin` set once from NULL (only a `site` has one); a key id is never reused.
 - **Secrets never sit in the clear.** Sources' HMAC secrets, sessions' tokens and queued Telegram
   texts are sealed (XChaCha20-Poly1305, what they belong to as associated data) under
   `PANEL_DATA_KEY`, whose fingerprint is stored beside each.
@@ -473,6 +495,13 @@ delivery (0.5 s)            lead messages noted > 1 h ago dead ("stale"); > 20 w
   `PANEL_DB_PATH`, the volume (`/data`) and the SQLite file on it to replicate, what the ingress
   must not publish or must rate-limit, and the egress. `checks.contract-env` fails the flake
   when its required variables and the binary's `--print-required-vars` disagree.
+- **What it provides and consumes, by contract name.** `provides.ingest` is
+  `/api/ingest/v1/events`; `consumes` names the peers behind `PANEL_SITES_URL` (`sites_panel`),
+  `PANEL_REVIEW_ARCHIVE_URL` (`review_archive`) and `PANEL_PLAYBOOK_URL` (`playbook_web`), whose
+  URLs and egress devops derives. `checks.provided-paths` fails the flake when `provides` and the
+  binary's `--print-provided-paths` (the constants its router mounts) disagree.
+- **The landings, outbound on :443.** The Connected sites page asks each site key's origin; the
+  origins are data, so the egress is public :443, not a host list.
 - **Ingest stays inside the cluster.** Its sources reach it by service DNS; the IngressRoute that
   publishes `sa.evinvest.ltd` must not route `/api/ingest`, and the NetworkPolicy lets in only
   the pods that send.

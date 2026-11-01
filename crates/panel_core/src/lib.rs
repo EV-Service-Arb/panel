@@ -1,7 +1,7 @@
 //! The conductor without I/O: no database, network, clock or randomness. Time comes in as an
 //! argument.
 //!
-//! - [`ids`]: what a source key may name (brands) and how its key id looks;
+//! - [`ids`]: what a source key may name (brands), how its key id looks, and a site key's origin;
 //! - [`signature`]: how a source signs a batch, and how the conductor checks it;
 //! - [`notify`]: the Telegram rules, the conductor's own messages, the buttons' signed data, and
 //!   how a delivery is retried;

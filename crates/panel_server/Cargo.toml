@@ -27,6 +27,7 @@ clap.workspace = true
 color-eyre.workspace = true
 ev_lib = { workspace = true, features = ["settings", "error_monitoring"] }
 eyre.workspace = true
+futures.workspace = true
 getrandom.workspace = true
 http-body-util.workspace = true
 hyper-util.workspace = true
@@ -55,7 +56,6 @@ uuid = { workspace = true, features = ["serde"] }
 zeroize.workspace = true
 
 [dev-dependencies]
-futures.workspace = true
 hex.workspace = true
 hmac.workspace = true
 panel = { workspace = true, features = ["testing"] }

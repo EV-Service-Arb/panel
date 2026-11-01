@@ -582,6 +582,7 @@ async fn a_silent_source_is_told_to_admins_once_a_day() {
 			"aquafix-site",
 			sa_auth::SourceKind::Site,
 			[panel_core::ids::BrandId::parse("aquafix").unwrap()].into_iter().collect(),
+			Some(panel_core::ids::SiteOrigin::parse("https://aquafix.top").unwrap()),
 		)
 		.await
 		.unwrap()
@@ -591,6 +592,7 @@ async fn a_silent_source_is_told_to_admins_once_a_day() {
 			"vifnet-site",
 			sa_auth::SourceKind::Site,
 			[panel_core::ids::BrandId::parse("vifnet").unwrap()].into_iter().collect(),
+			Some(panel_core::ids::SiteOrigin::parse("https://vifnet.site").unwrap()),
 		)
 		.await
 		.unwrap()

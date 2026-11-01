@@ -7,7 +7,8 @@
 //! ```text
 //! sites' change feed    whatever sites committed, with the permission that reads it   → its topic
 //!                       a rebuild there, a reconnect, the feed lagging                → resync
-//! add_source, revoke    the signing keys                                              → sources
+//! add_source, revoke,   the signing keys, a site's origin                             → sources
+//!   set_site_origin
 //! telegram              linked, unlinked, blocked, rules                              → telegram (its user only)
 //! sessions closed       logout, a sign-in replacing one, a refusal  → the sockets of that session end
 //! ```

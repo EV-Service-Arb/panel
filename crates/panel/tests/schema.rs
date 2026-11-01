@@ -13,7 +13,7 @@ use panel::{
 	testing::{TestDb, panel_with, sign},
 };
 use panel_core::{
-	ids::BrandId,
+	ids::{BrandId, SiteOrigin},
 	notify::{Failure, Locale, Rendered, Rule},
 };
 use sa_auth::{PermissionSet, SA_OPERATOR, SourceKind};
@@ -110,7 +110,7 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 		let panel = panel_with(db.store().await, key);
 		let now = Timestamp::now();
 		let secret = panel
-			.add_source("aquafix-site", SourceKind::Site, [BrandId::parse("aquafix").unwrap()].into())
+			.add_source("aquafix-site", SourceKind::Site, [BrandId::parse("aquafix").unwrap()].into(), Some(origin("https://aquafix.top")))
 			.await
 			.unwrap()
 			.unwrap()
@@ -352,6 +352,73 @@ async fn telegram_roles_become_permissions_both_ways() {
 	assert_eq!(roles, [(ann, "operator".to_owned()), (bob, "admin".to_owned())]);
 	let token: String = sqlx::query_scalar("SELECT role FROM telegram_link_tokens").fetch_one(&pool).await.unwrap();
 	assert_eq!(token, "admin");
+}
+
+/// A site key carries the origin its landing answers on; a key from before origins existed gets
+/// one once, and then keeps it.
+#[tokio::test]
+async fn a_site_origin_is_set_once() {
+	let db = TestDb::create().await;
+	let key = DataKey::from_hex(&DataKey::generate_hex().unwrap()).unwrap();
+	let panel = panel_with(db.store().await, key);
+	let aquafix = || [BrandId::parse("aquafix").unwrap()].into();
+	assert!(panel.add_source("aquafix-site", SourceKind::Site, aquafix(), None).await.is_err(), "a site key without an origin");
+	assert!(
+		panel.add_source("aquafix-bot", SourceKind::Bot, aquafix(), Some(origin("https://aquafix.top"))).await.is_err(),
+		"an origin on a key that is not a site's"
+	);
+	panel
+		.add_source("vifnet-site", SourceKind::Site, aquafix(), Some(origin("https://vifnet.site")))
+		.await
+		.unwrap()
+		.unwrap();
+	panel.add_source("aquafix-bot", SourceKind::Bot, aquafix(), None).await.unwrap().unwrap();
+
+	let pool = panel.store().pool();
+	sqlx::query("INSERT INTO sources (key_id, kind, brand_ids, secret_sealed, data_key_fp) VALUES ('aquafix-site', 'site', '[\"aquafix\"]', x'00', zeroblob(32))")
+		.execute(pool)
+		.await
+		.unwrap();
+	let origin_of = |key: &'static str| {
+		let panel = panel.clone();
+		async move {
+			panel
+				.store()
+				.sources()
+				.await
+				.unwrap()
+				.into_iter()
+				.find(|s| s.grant.key_id == key)
+				.unwrap()
+				.origin
+				.map(|o| o.to_string())
+		}
+	};
+	assert_eq!(origin_of("aquafix-site").await, None, "made before origins");
+	panel.set_site_origin("aquafix-site", &origin("https://aquafix.top")).await.unwrap();
+	panel.set_site_origin("aquafix-site", &origin("https://aquafix.top")).await.expect("the same again is no change");
+	assert!(panel.set_site_origin("aquafix-site", &origin("https://elsewhere.top")).await.is_err());
+	assert!(panel.set_site_origin("aquafix-bot", &origin("https://aquafix.top")).await.is_err());
+	assert!(panel.set_site_origin("nobody", &origin("https://aquafix.top")).await.is_err());
+	assert_eq!(origin_of("aquafix-site").await.as_deref(), Some("https://aquafix.top"));
+	assert_eq!(origin_of("vifnet-site").await.as_deref(), Some("https://vifnet.site"));
+
+	for (sql, refusal) in [
+		(
+			"UPDATE sources SET origin = 'https://elsewhere.top' WHERE key_id = 'aquafix-site'",
+			"a source only ever gets revoked",
+		),
+		("UPDATE sources SET origin = NULL WHERE key_id = 'aquafix-site'", "a source only ever gets revoked"),
+		("UPDATE sources SET origin = 'https://aquafix.top' WHERE key_id = 'aquafix-bot'", "CHECK constraint failed"),
+	] {
+		let err = sqlx::query(sqlx::AssertSqlSafe(sql)).execute(pool).await.unwrap_err().to_string();
+		assert!(err.contains(refusal), "{sql}: {err}");
+	}
+	pool.close().await;
+}
+
+fn origin(raw: &str) -> SiteOrigin {
+	SiteOrigin::parse(raw).unwrap()
 }
 
 fn cabinet() -> url::Url {

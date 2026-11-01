@@ -11,6 +11,7 @@ const sourceParser = object({
   brands: arrayOf(str),
   created_at: str,
   revoked_at: nullable(str),
+  origin: nullable(str),
 });
 export type Source = Infer<typeof sourceParser>;
 

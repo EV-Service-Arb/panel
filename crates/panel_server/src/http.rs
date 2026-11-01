@@ -9,6 +9,7 @@ use std::{sync::Arc, time::Duration};
 use axum::{
 	Json, Router,
 	error_handling::HandleErrorLayer,
+	extract::FromRef,
 	handler::Handler,
 	http::{HeaderValue, Method, StatusCode, header},
 	middleware,
@@ -22,8 +23,8 @@ use tower::{BoxError, ServiceBuilder, limit::GlobalConcurrencyLimitLayer};
 use tower_http::timeout::TimeoutLayer;
 
 use crate::{
-	access, api,
-	forward::Forward,
+	access, api, connected,
+	forward::{Forward, Services},
 	gmbs,
 	grafana::Grafana,
 	ingest,
@@ -51,7 +52,23 @@ impl Section {
 	}
 }
 
-/// One `/api/v1` route served on the engine's state, and who passes its gate.
+/// What the `/api/v1` routes are served on.
+#[derive(Clone)]
+pub(crate) struct ApiState {
+	pub(crate) panel: Panel,
+	/// With the forward configured.
+	pub(crate) sites: Option<Services>,
+	/// What the Connected sites page asks the landings with.
+	pub(crate) probe: reqwest::Client,
+}
+
+impl FromRef<ApiState> for Panel {
+	fn from_ref(s: &ApiState) -> Self {
+		s.panel.clone()
+	}
+}
+
+/// One `/api/v1` route, and who passes its gate.
 pub struct ApiRoute {
 	pub method: Method,
 	/// Under `/api/v1`.
@@ -59,11 +76,11 @@ pub struct ApiRoute {
 	/// `None`: every signed-in user.
 	pub section: Option<Section>,
 	freshness: Freshness,
-	handler: MethodRouter<Panel>,
+	handler: MethodRouter<ApiState>,
 }
 
 impl ApiRoute {
-	pub(crate) fn new<H: Handler<T, Panel>, T: 'static>(method: Method, path: &'static str, section: Option<Section>, freshness: Freshness, handler: H) -> Self {
+	pub(crate) fn new<H: Handler<T, ApiState>, T: 'static>(method: Method, path: &'static str, section: Option<Section>, freshness: Freshness, handler: H) -> Self {
 		let filter = MethodFilter::try_from(method.clone()).expect("the routes name standard methods");
 		Self {
 			method,
@@ -75,7 +92,7 @@ impl ApiRoute {
 	}
 }
 
-/// Every `/api/v1` route on the engine's state; the profile's Telegram routes, open to every
+/// Every `/api/v1` route on `ApiState`; the profile's Telegram routes, open to every
 /// signed-in user, are [`crate::telegram`]'s.
 pub fn api_routes() -> Vec<ApiRoute> {
 	[api::routes(), access::routes(), gmbs::routes(), tokens::routes()].into_iter().flatten().collect()
@@ -141,7 +158,12 @@ pub fn app(sign_in: SignIn, forward: Option<Forward>, grafana: Option<&Grafana>,
 		.route_layer(gate(Freshness::Cached, None))
 		.merge(telegram::link_routes().route_layer(gate(Freshness::Fresh, None)))
 		.with_state(telegram_state);
-	let api = bounded(routes.with_state(sign_in.panel.clone()).merge(telegram), limits.api_concurrent, limits.api_timeout);
+	let state = ApiState {
+		panel: sign_in.panel.clone(),
+		sites: forward.as_ref().map(|f| f.services().clone()),
+		probe: connected::probe_client(),
+	};
+	let api = bounded(routes.with_state(state).merge(telegram), limits.api_concurrent, limits.api_timeout);
 	// Its own budget: the bound and the timeout cover the handshake only (the socket lives on
 	// after the 101), and a burst of reconnecting tabs must not shed the API's requests.
 	let live = Router::new().route("/api/v1/live", get(live::upgrade)).with_state(Live::new(sign_in.clone(), limits.live));

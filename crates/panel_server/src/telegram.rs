@@ -20,7 +20,7 @@ use std::{
 
 use axum::{
 	Extension, Json, Router,
-	body::{Body, to_bytes},
+	body::Body,
 	extract::{State, rejection::JsonRejection},
 	http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
 	response::{IntoResponse, Response},
@@ -39,7 +39,12 @@ use tokio::{sync::watch, task::JoinSet};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::{api::ApiError, concierge::Concierge, forward::Services, signin::Caller};
+use crate::{
+	api::ApiError,
+	concierge::Concierge,
+	forward::{SITES_TIMEOUT, Services},
+	signin::Caller,
+};
 
 /// The Bot API's root.
 pub const API_BASE: &str = "https://api.telegram.org";
@@ -487,25 +492,6 @@ impl Directory for Concierge {
 			Err(ConciergeError::Unavailable(why)) => Err(DirectoryError::Unavailable(why)),
 			Err(ConciergeError::Failed(why)) => Err(DirectoryError::Failed(why)),
 		}
-	}
-}
-
-/// How long a call of the hub to sites may take.
-const SITES_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// The most of sites' answer the hub reads: a page of notes, with room.
-const SITES_ANSWER: usize = 16 * 1024 * 1024;
-
-impl Services {
-	/// `GET path?query` of sites as the conductor, its JSON answer.
-	async fn conductor_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> eyre::Result<T> {
-		let call = self.send(Service::Sites, Method::GET, path, HeaderMap::new(), Some(Principal::Conductor), Body::empty());
-		let res = tokio::time::timeout(SITES_TIMEOUT, call)
-			.await
-			.map_err(|_| eyre::eyre!("sites did not answer {path} in time"))??;
-		eyre::ensure!(res.status() == StatusCode::OK, "sites answered {path} with {}", res.status());
-		let body = to_bytes(res.into_body(), SITES_ANSWER).await.map_err(|e| eyre::eyre!("reading sites' answer to {path}: {e}"))?;
-		serde_json::from_slice(&body).map_err(|e| eyre::eyre!("sites' answer to {path}: {e}"))
 	}
 }
 

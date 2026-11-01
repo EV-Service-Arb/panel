@@ -35,7 +35,7 @@ use crate::{forward::Forward, http::Limits};
 /// 500 events of about 8 KiB each: a batch is refused well before it strains anything.
 pub const MAX_BODY: usize = 4 * 1024 * 1024;
 
-const EVENTS: &str = "/api/ingest/v1/events";
+pub(crate) const EVENTS: &str = "/api/ingest/v1/events";
 
 const STALE_MESSAGE: &str = "timestamp outside the replay window";
 const REFUSED_MESSAGE: &str = "invalid key or signature";
