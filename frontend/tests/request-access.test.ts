@@ -38,10 +38,10 @@ describe("continue", () => {
 
 describe("a need held", () => {
   it.each([
-    ["sa:work:read", ["sa:work:read"], true],
-    ["sa:work:read", [], false],
-    ["sa:operator", ["sa:work:read", "sa:work:leads:edit", "sa:work:pii:see"], false],
-    ["sa:operator", ["sa:analysis:read", "sa:work:read", "sa:work:leads:edit", "sa:work:pii:see"], true],
+    ["sa:sites:work:read", ["sa:sites:work:read"], true],
+    ["sa:sites:work:read", [], false],
+    ["sa:operator", ["sa:sites:work:read", "sa:sites:work:leads:edit", "sa:sites:work:pii:see"], false],
+    ["sa:operator", ["sa:sites:analysis:read", "sa:sites:work:read", "sa:sites:work:leads:edit", "sa:sites:work:pii:see"], true],
   ] as const)("%s by %j: %s", (need, permissions, want) => {
     expect(holds([...permissions], need)).toBe(want);
   });

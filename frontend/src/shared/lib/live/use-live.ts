@@ -2,38 +2,56 @@
 
 import { useEffect, useRef } from "react";
 
-import { type LiveMatch, type LiveSignal, liveBus, matchesLive } from "./bus";
+import type { LiveStatus } from "./client";
+import type { LiveMessage } from "./protocol";
+import { LIVE_EVENT, LIVE_STATUS_EVENT } from "./relay";
+
+/** The conductor's own topics (CONTRACT §3); the rest of the socket is the elements'. */
+export type LiveTopic = "sources";
 
 /**
- * Calls `onSignal` with the signals that matched during the last `debounceMs`:
- * a burst (a batch import sends one `changed` per event) is one re-read, not fifty. A `resync`
- * always matches.
+ * Calls `onSignal` on a change on `topic`, if any, on a `resync`, and when the socket comes back
+ * after a drop (what changed meanwhile was not told). The same window events the elements read.
  */
-export function useLiveSignal(match: LiveMatch, onSignal: (signals: LiveSignal[]) => void, debounceMs = 400): void {
-  // The newest of both, without re-subscribing on every render (a topic array
-  // literal is new each time).
-  const latest = useRef({ match, onSignal });
+export function followLive(target: EventTarget, topic: LiveTopic | undefined, onSignal: () => void): () => void {
+  const onMessage = (e: Event) => {
+    const message = (e as CustomEvent<LiveMessage>).detail;
+    if (message.type === "resync" || (message.type === "changed" && message.topic === topic)) onSignal();
+  };
+  let dropped = false;
+  const onStatus = (e: Event) => {
+    const { status } = (e as CustomEvent<{ status: LiveStatus }>).detail;
+    if (status === "live") {
+      if (dropped) onSignal();
+      dropped = false;
+    } else if (status !== "connecting") dropped = true;
+  };
+  target.addEventListener(LIVE_EVENT, onMessage);
+  target.addEventListener(LIVE_STATUS_EVENT, onStatus);
+  return () => {
+    target.removeEventListener(LIVE_EVENT, onMessage);
+    target.removeEventListener(LIVE_STATUS_EVENT, onStatus);
+  };
+}
+
+/** `followLive` on `window`, a burst (a batch sends one change per event) folded into one call per `debounceMs`. */
+export function useLiveSignal(topic: LiveTopic | undefined, onSignal: () => void, debounceMs = 400): void {
+  const latest = useRef(onSignal);
   useEffect(() => {
-    latest.current = { match, onSignal };
+    latest.current = onSignal;
   });
 
   useEffect(() => {
-    let batch: LiveSignal[] = [];
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const flush = () => {
-      timer = null;
-      const signals = batch;
-      batch = [];
-      latest.current.onSignal(signals);
-    };
-    const off = liveBus.subscribe((signal) => {
-      if (!matchesLive(latest.current.match, signal)) return;
-      batch.push(signal);
-      timer ??= setTimeout(flush, debounceMs);
+    const stop = followLive(window, topic, () => {
+      timer ??= setTimeout(() => {
+        timer = null;
+        latest.current();
+      }, debounceMs);
     });
     return () => {
-      off();
+      stop();
       if (timer !== null) clearTimeout(timer);
     };
-  }, [debounceMs]);
+  }, [topic, debounceMs]);
 }

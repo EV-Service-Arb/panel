@@ -1,24 +1,23 @@
 //! Everything the runtime does runs on a freshly migrated database, and the schema itself
-//! refuses what the code must never do: the journal is append-only, a source is only ever
-//! revoked. (On Postgres a runtime role's grants said so; SQLite has no roles, so the tables'
-//! triggers do.)
+//! refuses what the code must never do: a source is only ever revoked. (SQLite has no roles, so
+//! the tables' triggers say what a runtime role's grants would.)
+
+use std::collections::BTreeMap;
 
 use jiff::{SignedDuration, Timestamp};
 use panel::{
-	Outcome, Panel,
-	operator::{Actor, FunnelBy, LeadQuery, NewLead, Payment, Pii},
+	Panel,
 	seal::DataKey,
 	session::{RefreshError, Refresher, SessionKey, Tokens},
 	store::Store,
-	telegram::{Account, Bot, Chat, Directory, DirectoryError, Identity, InlineButton, Notifier, Update},
-	testing::{TestDb, event, sign},
+	telegram::{Account, Bot, Call, Chat, Directory, DirectoryError, Identity, InlineButton, NotePage, Notifier, Sites, Update},
+	testing::{TestDb, sign},
 };
 use panel_core::{
-	event::SourceKind,
-	ids::{BrandId, LocationId},
+	ids::BrandId,
 	notify::{Failure, Locale, Rendered, Rule},
 };
-use sa_auth::{PermissionSet, SA_OPERATOR};
+use sa_auth::{PermissionSet, SA_OPERATOR, SourceKind};
 use serde_json::json;
 use zeroize::Zeroizing;
 
@@ -65,7 +64,7 @@ impl Bot for FakeBot {
 	}
 }
 
-/// Refreshes nothing; says every token is an operator's.
+/// Refreshes nothing; refuses every token.
 struct Operators;
 
 impl Refresher for Operators {
@@ -80,6 +79,28 @@ impl Directory for Operators {
 	}
 }
 
+/// Sites with two new leads to tell of, and nothing else.
+struct TwoLeads;
+
+impl Sites for TwoLeads {
+	async fn notes(&self, after: i64, _: usize) -> eyre::Result<NotePage> {
+		let note = |seq: i64| {
+			json!({"seq": seq, "rule": "new_lead", "event_id": uuid::Uuid::now_v7(), "created_at": Timestamp::now(),
+				"text": {"text": "New lead", "entities": []}, "text_pii": null, "skip_user": null, "buttons": []})
+		};
+		let notes = if after == 0 { vec![note(1), note(2)] } else { vec![] };
+		Ok(serde_json::from_value(json!({"notes": notes, "next": after.max(2)}))?)
+	}
+
+	async fn received(&self) -> eyre::Result<BTreeMap<String, Timestamp>> {
+		Ok(BTreeMap::new())
+	}
+
+	async fn press(&self, _: &Identity, _: &Call, _: &str) -> eyre::Result<u16> {
+		unreachable!("no button here")
+	}
+}
+
 #[tokio::test]
 async fn the_runtime_does_its_work_on_a_fresh_database() {
 	let db = TestDb::create().await;
@@ -88,26 +109,22 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 	{
 		let key = DataKey::from_hex(&DataKey::generate_hex().unwrap()).unwrap();
 		let panel = Panel::new(db.store().await, key);
+		let now = Timestamp::now();
 		let secret = panel
-			.add_source("aquafix-ops", SourceKind::Panel, [BrandId::parse("aquafix").unwrap()].into())
+			.add_source("aquafix-site", SourceKind::Site, [BrandId::parse("aquafix").unwrap()].into())
 			.await
 			.unwrap()
 			.unwrap()
 			.secret
 			.to_string();
-		let now = Timestamp::now();
-		let lead = json!({"brandId": "aquafix", "leadId": "L-1"});
-		let events = [
-			event("lead.created", now - SignedDuration::from_mins(5), "panel", lead.clone(), json!({"channel": "phone_inbound"})),
-			event("call.logged", now, "panel", lead.clone(), json!({"outcome": "answered"})),
-			event("payment.received", now, "panel", lead, json!({"billed": 100, "commission": 10, "currency": "EUR"})),
-		];
-		let got = panel.ingest(sign("aquafix-ops", &secret, &events, now).batch(), now).await.unwrap();
-		assert!(got.iter().all(|v| v.outcome == Outcome::Accepted { unregistered: false }), "{got:?}");
-		assert_eq!(panel.rebuild_projections().await.unwrap().leads, 1);
-		assert!(panel.store().revoke_source("aquafix-ops").await.unwrap());
+		let grant = panel.authenticate(sign("aquafix-site", &secret, b"{}", now).batch(), now).await.unwrap();
+		assert_eq!((grant.key_id.as_str(), grant.kind), ("aquafix-site", SourceKind::Site));
+		assert_eq!(panel.store().sources().await.unwrap().len(), 1);
+		assert!(panel.revoke_source("aquafix-site").await.unwrap());
+		assert!(panel.authenticate(sign("aquafix-site", &secret, b"{}", now).batch(), now).await.is_err(), "revoked");
 
-		// Signed-in users: a session, and what an operator does and reads.
+		// Signed-in users: a session, a rotation (its lease, its guarded write), a redeemed state,
+		// a sign-out everywhere.
 		let tokens = Tokens {
 			access: Zeroizing::new("a".into()),
 			access_expires_at: now + SignedDuration::from_mins(15),
@@ -117,34 +134,7 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 		let user = uuid::Uuid::now_v7();
 		let opened = panel.open_session(user, &tokens, now).await.unwrap();
 		assert_eq!(panel.session(&opened.cookie, now, &Never).await.unwrap().user_id, user);
-		let by = Actor(user);
-		let new_lead = || NewLead {
-			brand: BrandId::parse("aquafix").unwrap(),
-			location: LocationId::parse("paris-11").unwrap(),
-			need: "a boiler".into(),
-			phone: None,
-			channel: panel_core::fact::LeadChannel::PhoneInbound,
-		};
-		let (lead, _) = panel.create_lead(by, new_lead(), now).await.unwrap();
-		let brand = BrandId::parse("aquafix").unwrap();
-		panel.attempt_call(by, &brand, &lead, now).await.unwrap();
-		assert_eq!(panel.leads(&LeadQuery { limit: 10, ..LeadQuery::default() }, Pii::Reveal, now).await.unwrap().leads.len(), 2);
-		assert!(panel.lead_card(&brand, &lead, Pii::Reveal, now).await.unwrap().is_some());
-		let today = now.to_zoned(jiff::tz::TimeZone::UTC).date();
-		assert_eq!(panel.funnel(today, today, None).await.unwrap().manual, 2);
-		let payment = Payment {
-			billed: 100,
-			commission: 10,
-			currency: "EUR".into(),
-		};
-		panel.record_payment(by, &brand, &lead, payment, now).await.unwrap();
-		let slices = panel.funnel_slices(today, today, None, FunnelBy::Location).await.unwrap();
-		assert_eq!(slices[0].payments[0].billed, 100);
-		assert_eq!(panel.places().await.unwrap().len(), 1);
-		assert_eq!(panel.lead_counts(Some(&brand), None, now).await.unwrap().overdue, 0);
 		assert!(panel.close_session(&SessionKey::of_cookie(&opened.cookie).unwrap()).await.unwrap());
-
-		// A rotation (its lease, its guarded write), a redeemed state, a sign-out everywhere.
 		let opened = panel.open_session(user, &tokens, now).await.unwrap();
 		let stale = now + SignedDuration::from_mins(15);
 		assert_eq!(panel.session(&opened.cookie, stale, &Rotates).await.unwrap().access.as_str(), "a2");
@@ -153,12 +143,15 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 		assert!(panel.consume_state("state", now + SignedDuration::from_hours(1)).await.unwrap(), "expired marks are dropped");
 		assert_eq!(panel.close_all_sessions(&SessionKey::of_cookie(&opened.cookie).unwrap()).await.unwrap(), Some(user));
 
-		// Telegram: a link, rules, a fan-out, a delivery, a dead chat, the access checks with
-		// their pruning, the poller.
+		// Access requests, and Telegram: a link, rules, sites' notes and the conductor's own into
+		// the outbox, a delivery, a dead chat, the access checks with their pruning, the poller.
+		let (asked, made) = panel.request_access(user, "o@x.io", "Olga", "sa:operator", now).await.unwrap();
+		assert!(made && asked.need == "sa:operator");
 		let notifier = |blocked| Notifier {
 			panel: panel.clone(),
 			bot: FakeBot { blocked },
 			concierge: Operators,
+			sites: TwoLeads,
 			locale: Locale::Ru,
 			cabinet: cabinet(),
 		};
@@ -170,14 +163,10 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 			from: Account::default(),
 		};
 		notifier(false).handle(start(7), now).await.unwrap();
-		panel.telegram_set_rules(user, &operator, &[(Rule::NewLead, true)]).await.unwrap();
+		panel.telegram_set_rules(user, &operator, &[(Rule::NewLead, true)]).await.unwrap().unwrap();
 		panel.telegram_access_seen(user, &operator, "Olga", now).await.unwrap();
-		// By a colleague: the user's own lead above is not told to them.
-		let colleague = Actor(uuid::Uuid::now_v7());
-		for need in ["a tap", "a sink"] {
-			panel.create_lead(colleague, NewLead { need: need.into(), ..new_lead() }, now).await.unwrap();
-		}
-		assert_eq!(panel.telegram_fan_out(now, Locale::Ru, &cabinet()).await.unwrap(), 2, "the colleague's two leads");
+		assert_eq!(notifier(false).fan_out(now).await.unwrap(), 2, "sites' two leads; an operator is not told of access requests");
+		assert_eq!(panel.telegram_notes_after().await.unwrap(), 2);
 		assert_eq!(notifier(false).deliver(now).await.unwrap().sent, 1);
 		assert_eq!(notifier(true).deliver(now + SignedDuration::from_secs(2)).await.unwrap().dead, 1);
 		assert_eq!(
@@ -202,9 +191,6 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 
 		let pool = panel.store().pool();
 		for (sql, refusal) in [
-			("DELETE FROM events", "events is append-only"),
-			("UPDATE events SET brand_id = 'x'", "events is append-only"),
-			("UPDATE events SET received_at = received_at + 1", "events is append-only"),
 			("DELETE FROM sources", "sources are never deleted"),
 			("UPDATE sources SET brand_ids = '[\"x\"]'", "a source only ever gets revoked"),
 			("INSERT INTO telegram_poller (id) VALUES (2)", "CHECK constraint failed"),
@@ -216,23 +202,80 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 				"INSERT INTO sources (key_id, kind, brand_ids, secret_sealed, data_key_fp) VALUES ('Bad Key', 'site', '[\"x\"]', x'00', zeroblob(32))",
 				"CHECK constraint failed",
 			),
-			("UPDATE leads SET last_event_id = x'00000000000000000000000000000000'", "FOREIGN KEY constraint failed"),
 		] {
 			let err = sqlx::query(sqlx::AssertSqlSafe(sql)).execute(pool).await.unwrap_err().to_string();
 			assert!(err.contains(refusal), "{sql}: {err}");
 		}
-		sqlx::query("UPDATE events SET status = status, status_reason = 'x'")
-			.execute(pool)
-			.await
-			.expect("status and its reason are the journal's one change");
-		sqlx::query("UPDATE sources SET revoked_at = 1 WHERE revoked_at IS NULL")
-			.execute(pool)
-			.await
-			.expect("revoking is the one change to a source");
-		let n: i64 = sqlx::query_scalar("SELECT count(*) FROM reporting_leads").fetch_one(pool).await.unwrap();
-		assert_eq!(n, 4, "the ingested lead and the three taken by phone");
 		pool.close().await;
 	}
+}
+
+/// The database the conductor starts from is the panel's whole: the sites' tables go, the
+/// conductor's rows stay, and a message sent before keeps buttons that call sites for the lead
+/// it named.
+#[tokio::test]
+async fn the_sites_tables_go_and_sent_buttons_name_their_calls() {
+	const MOVED_OUT: i64 = 20261102090000;
+	let db = TestDb::create().await;
+	let pool = db.pool().await;
+	let migrator = sqlx::migrate!("./migrations");
+	migrator.undo(&pool, MOVED_OUT - 1).await.unwrap();
+	for sql in [
+		"INSERT INTO sources (key_id, kind, brand_ids, secret_sealed, data_key_fp) VALUES ('aquafix-site', 'site', '[\"aquafix\"]', x'00', zeroblob(32))",
+		"INSERT INTO events (id, schema, type, type_version, occurred_at, received_at, source_kind, source_id, key_id, brand_id, lead_id, \
+		 status, properties, content_mac) VALUES (zeroblob(16), 'sa.funnel.v1', 'lead.created', 1, 1, 1, 'site', 'aquafix-site', 'aquafix-site', \
+		 'aquafix', 'L-1', 'registered', '{}', zeroblob(32))",
+		"INSERT INTO telegram_outbox (user_id, chat_id, rule, event_id, brand_id, lead_id, buttons, state, next_attempt_at, created_at, sent_at, tg_message_id) \
+		 VALUES (zeroblob(16), 7, 'new_lead', zeroblob(16), 'aquafix', 'L-1', '[\"take\",\"no_answer\"]', 'sent', 1, 1, 1, 9)",
+		"INSERT INTO telegram_outbox (user_id, chat_id, rule, event_id, buttons, text_sealed, data_key_fp, next_attempt_at, created_at) \
+		 VALUES (zeroblob(16), 7, 'access_requested', zeroblob(16), '[]', x'00', zeroblob(32), 1, 1)",
+	] {
+		sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&pool).await.unwrap();
+	}
+
+	migrator.run(&pool).await.unwrap();
+	let tables: Vec<String> =
+		sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE '\\_%' ESCAPE '\\' AND name <> 'sqlite_sequence' ORDER BY name")
+			.fetch_all(&pool)
+			.await
+			.unwrap();
+	assert_eq!(
+		tables,
+		[
+			"access_requests",
+			"consumed_states",
+			"sessions",
+			"sources",
+			"telegram_fanout",
+			"telegram_link_tokens",
+			"telegram_links",
+			"telegram_outbox",
+			"telegram_poller",
+			"telegram_replies",
+			"telegram_rules"
+		]
+	);
+	let sources: i64 = sqlx::query_scalar("SELECT count(*) FROM sources").fetch_one(&pool).await.unwrap();
+	assert_eq!(sources, 1);
+	let rows: Vec<(String, Option<String>)> = sqlx::query_as("SELECT buttons, last_error FROM telegram_outbox ORDER BY id").fetch_all(&pool).await.unwrap();
+	let sent: Vec<panel::telegram::Button> = serde_json::from_str(&rows[0].0).unwrap();
+	assert_eq!(
+		sent.iter()
+			.map(|b| (b.id.as_str(), b.call.method.as_str(), b.call.path.as_str(), &b.call.body, b.leaves.clone()))
+			.collect::<Vec<_>>(),
+		[
+			("take", "POST", "/api/v1/leads/aquafix/L-1/stage", &json!({"stage": "contacted"}), vec![]),
+			("no_answer", "POST", "/api/v1/leads/aquafix/L-1/no_answer", &json!(null), vec!["take".to_owned()]),
+		]
+	);
+	assert_eq!(rows[1].1.as_deref(), Some("cut-over"), "what was queued is given up: its text is of the earlier shape");
+
+	migrator.undo(&pool, MOVED_OUT - 1).await.unwrap();
+	let back: (String, Option<String>, Option<String>) = sqlx::query_as("SELECT buttons, brand_id, lead_id FROM telegram_outbox ORDER BY id LIMIT 1")
+		.fetch_one(&pool)
+		.await
+		.unwrap();
+	assert_eq!(back, (r#"["take","no_answer"]"#.to_owned(), Some("aquafix".to_owned()), Some("L-1".to_owned())));
 }
 
 /// A Telegram link and a link token made under roles carry, after the migration, exactly what
@@ -240,21 +283,22 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 #[tokio::test]
 async fn telegram_roles_become_permissions_both_ways() {
 	const PERMISSIONS: i64 = 20261006090000;
-	// `sa:admin` as the migration wrote it: the alias of that day, frozen. A permission added to
-	// the alias since (`sa:work:invoices:create`) reaches a link when concierge is next asked.
+	// `sa:admin` as the migration wrote it: the alias of that day, frozen (re-spelled under
+	// `sa:sites:` since). A permission added to the alias since (`sa:sites:work:invoices:create`)
+	// reaches a link when concierge is next asked.
 	const ADMIN_WHEN_WRITTEN: &[&str] = &[
 		"sa:admin:sources:manage",
-		"sa:analysis:experiments:edit",
-		"sa:analysis:read",
+		"sa:sites:analysis:experiments:edit",
+		"sa:sites:analysis:read",
 		"sa:playbook:mcp:use",
 		"sa:review_archive:archive:operate",
 		"sa:review_archive:members:act_as",
 		"sa:review_archive:tokens:grant",
-		"sa:work:leads:edit",
-		"sa:work:pii:see",
-		"sa:work:places:edit",
-		"sa:work:pricing:edit",
-		"sa:work:read",
+		"sa:sites:work:leads:edit",
+		"sa:sites:work:pii:see",
+		"sa:sites:work:places:edit",
+		"sa:sites:work:pricing:edit",
+		"sa:sites:work:read",
 	];
 	let db = TestDb::create().await;
 	let pool = db.pool().await;

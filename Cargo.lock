@@ -537,15 +537,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chrono"
-version = "0.4.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "cipher"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3166,7 +3157,6 @@ dependencies = [
  "hmac",
  "jiff",
  "panel",
- "panel_contracts",
  "panel_core",
  "sa_auth",
  "serde",
@@ -3186,14 +3176,8 @@ dependencies = [
 name = "panel_contracts"
 version = "0.1.0"
 dependencies = [
- "pbjson",
- "pbjson-build",
- "pbjson-types",
  "prost",
- "prost-build",
  "protox",
- "serde",
- "serde_json",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
@@ -3203,7 +3187,6 @@ dependencies = [
 name = "panel_core"
 version = "0.1.0"
 dependencies = [
- "ev_lib 0.24.2",
  "hex",
  "hmac",
  "jiff",
@@ -3213,7 +3196,6 @@ dependencies = [
  "subtle",
  "thiserror 2.0.21",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -3221,7 +3203,6 @@ name = "panel_gen"
 version = "0.1.0"
 dependencies = [
  "ev_lib 0.24.2",
- "panel_core",
  "panel_server",
  "sa_auth",
 ]
@@ -3237,12 +3218,15 @@ dependencies = [
  "ev_lib 0.24.2",
  "eyre",
  "futures",
+ "hex",
+ "hmac",
  "http-body-util",
  "hyper-util",
  "jiff",
  "panel",
  "panel_contracts",
  "panel_core",
+ "panel_server",
  "reqwest",
  "sa_auth",
  "serde",
@@ -3290,43 +3274,6 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-link",
-]
-
-[[package]]
-name = "pbjson"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8edd1efdd8ab23ba9cb9ace3d9987a72663d5d7c9f74fa00b51d6213645cf6c"
-dependencies = [
- "base64 0.22.1",
- "serde",
-]
-
-[[package]]
-name = "pbjson-build"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ed4d5c6ae95e08ac768883c8401cf0e8deb4e6e1d6a4e1fd3d2ec4f0ec63200"
-dependencies = [
- "heck",
- "itertools",
- "prost",
- "prost-types",
-]
-
-[[package]]
-name = "pbjson-types"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a14e2757d877c0f607a82ce1b8560e224370f159d66c5d52eb55ea187ef0350e"
-dependencies = [
- "bytes",
- "chrono",
- "pbjson",
- "pbjson-build",
- "prost",
- "prost-build",
- "serde",
 ]
 
 [[package]]
@@ -3984,8 +3931,10 @@ dependencies = [
  "concierge_iam",
  "ed25519-dalek",
  "getrandom 0.3.4",
+ "hex",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror 2.0.21",
 ]
 

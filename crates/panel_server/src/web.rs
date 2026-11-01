@@ -4,7 +4,9 @@
 //! ```text
 //! /api, /auth, /health, /grafana,  never the front end: a route of theirs, else a JSON 404
 //! /cabinet, the forward's prefixes
-//! /review_archive/<view>           the review_archive page: the dashboard routes inside it
+//! /review_archive/<view>,          the review_archive page, the sites page: the element routes
+//! /sites/<view>                    inside it; /…/<view>/<file.txt> is the page's own <file.txt>,
+//!                                  the payload Next's client-side navigation asks for
 //! a directory                      its index.html (the export writes leads/index.html);
 //!                                  /leads is redirected to /leads/ first
 //! a file                           itself
@@ -178,21 +180,30 @@ fn reserved(path: &str) -> bool {
 	RESERVED.iter().copied().chain(crate::forward::prefixes()).any(|r| crate::forward::under(path, r))
 }
 
-/// The page the dashboard's own views load from, when a link to one of them is opened.
-const DASHBOARD: &str = "/review_archive";
+/// The pages a mounted element routes inside of: a link to one of its views loads its page.
+const ELEMENT_PAGES: [&str; 2] = ["/review_archive", "/sites"];
 
-/// A view of the dashboard: below its page, and not a file (the export's payloads have a dot).
-fn dashboard_view(path: &str) -> bool {
-	path.strip_prefix(DASHBOARD)
-		.is_some_and(|rest| rest.starts_with('/') && rest.len() > 1 && !rest.rsplit('/').next().is_some_and(|last| last.contains('.')))
+/// What a path below an element's page is served from: a view (no dot in its last segment) is
+/// the page itself, and a file below a view is the page's file of that name.
+fn element_page(path: &str) -> Option<String> {
+	ELEMENT_PAGES.into_iter().find_map(|page| {
+		let rest = path.strip_prefix(page)?.strip_prefix('/')?;
+		let (view, last) = rest.rsplit_once('/').unwrap_or(("", rest));
+		match (view.is_empty(), last.contains('.')) {
+			(_, false) if !rest.is_empty() => Some(format!("{page}/")),
+			(false, true) => Some(format!("{page}/{last}")),
+			_ => None,
+		}
+	})
 }
 
 async fn page(mut files: Files, mut req: Request) -> Response {
 	if reserved(req.uri().path()) {
 		return dressed((StatusCode::NOT_FOUND, Json(json!({ "error": "not found" }))).into_response(), false, &files.csp);
 	}
-	if dashboard_view(req.uri().path()) {
-		*req.uri_mut() = axum::http::Uri::from_static("/review_archive/");
+	if let Some(page) = element_page(req.uri().path()) {
+		let query = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
+		*req.uri_mut() = format!("{page}{query}").parse().expect("a part of a URI stays one");
 	}
 	let path = req.uri().path();
 	let hashed = path.starts_with(HASHED);
@@ -249,21 +260,43 @@ mod tests {
 			"/_next/static/a.js",
 			"/review_archive",
 			"/review_archive/gmails/3",
+			"/sites/leads",
 		] {
 			assert!(!reserved(p), "{p}");
 		}
-		for p in ["/review_archive/mfe/x.js", "/playbook_mcp/token", "/.well-known/oauth-protected-resource/playbook_mcp"] {
+		for p in [
+			"/review_archive/mfe/x.js",
+			"/sites/mfe/mfe-sites.js",
+			"/api/sites/leads",
+			"/playbook_mcp/token",
+			"/.well-known/oauth-protected-resource/playbook_mcp",
+		] {
 			assert!(reserved(p), "{p}");
 		}
 	}
 
 	#[test]
-	fn the_dashboards_views_load_its_page() {
+	fn an_elements_views_load_its_page() {
+		let page = |p: &str| element_page(p);
 		for p in ["/review_archive/gmails/3", "/review_archive/members/1/tokens", "/review_archive/telegram"] {
-			assert!(dashboard_view(p), "{p}");
+			assert_eq!(page(p).as_deref(), Some("/review_archive/"), "{p}");
 		}
-		for p in ["/review_archive", "/review_archive/", "/review_archive/index.txt", "/review_archived/x"] {
-			assert!(!dashboard_view(p), "{p}");
+		for p in ["/sites/leads", "/sites/leads/", "/sites/leads/aquafix/L-1"] {
+			assert_eq!(page(p).as_deref(), Some("/sites/"), "{p}");
+		}
+		assert_eq!(page("/sites/leads/index.txt").as_deref(), Some("/sites/index.txt"));
+		assert_eq!(page("/sites/leads/aquafix/__next._tree.txt").as_deref(), Some("/sites/__next._tree.txt"));
+		for p in [
+			"/review_archive",
+			"/review_archive/",
+			"/review_archive/index.txt",
+			"/review_archived/x",
+			"/sites",
+			"/sites/",
+			"/sites/index.txt",
+			"/sitesx/a",
+		] {
+			assert_eq!(page(p), None, "{p}");
 		}
 	}
 }

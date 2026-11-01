@@ -3,7 +3,7 @@
 // `<mfe-banking-wallet>` and `<mfe-banking-pay-invoice>`. Names must stay in step.
 
 /** The one origin that may carry out a money action and report its result. */
-export const WALLET_ORIGIN = "https://evinvest.ltd";
+const WALLET_ORIGIN = "https://evinvest.ltd";
 
 /**
  * Where banking publishes the bundle (`/wallet/mfe/wallet.js`, as its registry.json says).

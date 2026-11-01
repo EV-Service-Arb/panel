@@ -2,10 +2,10 @@ import { type Infer, arrayOf, nullable, object, oneOf, str } from "@/shared/lib/
 
 import { SOURCE_KINDS } from "./generated";
 
-export { KEYED_SOURCE_KINDS, SOURCE_KINDS } from "./generated";
+export { KEYED_SOURCE_KINDS } from "./generated";
 export type { KeyedSourceKind, SourceKind } from "./generated";
 
-export const sourceParser = object({
+const sourceParser = object({
   key_id: str,
   kind: oneOf(SOURCE_KINDS),
   brands: arrayOf(str),

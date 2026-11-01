@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { backoffDelay } from "@/shared/lib/live/backoff";
-import { createLiveBus, matchesLive } from "@/shared/lib/live/bus";
 import { type LiveStatus, type SocketEvents, createLiveClient } from "@/shared/lib/live/client";
-import { type ChangedEvent, parseLiveMessage } from "@/shared/lib/live/protocol";
+import type { LiveMessage } from "@/shared/lib/live/protocol";
 
 /** Timers on a clock the test moves. */
 function fakeTimers() {
@@ -39,7 +38,7 @@ function fakeTimers() {
 function harness(random = () => 0.5) {
   const clock = fakeTimers();
   const sockets: { url: string; on: SocketEvents; closed: number | null }[] = [];
-  const log = { statuses: [] as LiveStatus[], changed: [] as ChangedEvent[], resyncs: 0, unauthenticated: 0, forbidden: 0 };
+  const log = { statuses: [] as LiveStatus[], messages: [] as LiveMessage[], unauthenticated: 0, forbidden: 0 };
   const client = createLiveClient(
     {
       url: "ws://panel.test/api/v1/live",
@@ -53,8 +52,7 @@ function harness(random = () => 0.5) {
     },
     {
       status: (s) => log.statuses.push(s),
-      changed: (e) => log.changed.push(e),
-      resync: () => void (log.resyncs += 1),
+      message: (m) => log.messages.push(m),
       unauthenticated: () => void (log.unauthenticated += 1),
       forbidden: () => void (log.forbidden += 1),
     },
@@ -79,7 +77,7 @@ describe("backoff", () => {
 });
 
 describe("the live client", () => {
-  it("connects once, goes live, and hands on changes", () => {
+  it("connects once, goes live, and hands on every message as it came, whatever its topic", () => {
     const h = harness();
     h.client.start();
     expect(h.sockets).toHaveLength(1);
@@ -87,22 +85,25 @@ describe("the live client", () => {
     h.last().on.open();
     h.last().on.message(JSON.stringify({ type: "hello", at: "2026-10-03T10:00:00Z", user_id: "u" }));
     h.last().on.message(changed("leads", { brand_id: "aquafix", id: "L-1" }));
+    h.last().on.message(JSON.stringify({ type: "resync" }));
     expect(h.log.statuses).toEqual(["connecting", "live"]);
-    expect(h.log.changed).toEqual([{ topic: "leads", brand_id: "aquafix", id: "L-1", at: "2026-10-03T10:00:00Z" }]);
-    // The first open is the page's own first read: nothing was missed yet.
-    expect(h.log.resyncs).toBe(0);
+    expect(h.log.messages).toEqual([
+      { type: "hello", at: "2026-10-03T10:00:00Z", user_id: "u" },
+      { type: "changed", topic: "leads", at: "2026-10-03T10:00:00Z", brand_id: "aquafix", id: "L-1" },
+      { type: "resync" },
+    ]);
   });
 
-  it("ignores frames it cannot read rather than failing", () => {
+  it("refuses a frame that is not a typed JSON object, and stays live", () => {
     const h = harness();
     h.client.start();
     h.last().on.open();
-    for (const junk of ["not json", JSON.stringify({ type: "changed", topic: "weather", at: "x" }), JSON.stringify({ topic: "leads" }), 42]) h.last().on.message(junk);
-    expect(h.log.changed).toEqual([]);
+    for (const junk of ["not json", JSON.stringify({ topic: "leads" }), JSON.stringify({ type: 1 }), 42]) expect(() => h.last().on.message(junk)).toThrow();
+    expect(h.log.messages).toEqual([]);
     expect(h.status()).toBe("live");
   });
 
-  it("reconnects with growing, jittered waits and re-reads everything once back", () => {
+  it("reconnects with growing, jittered waits, and says so by its status alone", () => {
     const h = harness(() => 0);
     h.client.start();
     h.last().on.open();
@@ -115,19 +116,11 @@ describe("the live client", () => {
     expect(h.clock.delays()).toEqual([1000]);
     h.clock.advance(1000);
     h.last().on.open();
-    expect(h.status()).toBe("live");
-    expect(h.log.resyncs).toBe(1);
+    expect(h.log.statuses).toEqual(["connecting", "live", "reconnecting", "live"]);
+    expect(h.log.messages).toEqual([]);
     // Back to the first step after a good connection.
     h.last().on.close(1001);
     expect(h.clock.delays()).toEqual([500]);
-  });
-
-  it("re-reads everything when the server says resync", () => {
-    const h = harness();
-    h.client.start();
-    h.last().on.open();
-    h.last().on.message(JSON.stringify({ type: "resync" }));
-    expect(h.log.resyncs).toBe(1);
   });
 
   it("sends the person to sign-in on 4401 and stops", () => {
@@ -150,22 +143,17 @@ describe("the live client", () => {
     expect(h.sockets).toHaveLength(1);
   });
 
-  it("falls back to a re-read every minute when the socket never opens, and stops once it does", () => {
+  it("calls itself offline after three attempts that never open, and keeps trying", () => {
     const h = harness(() => 0);
     h.client.start();
     for (let i = 0; i < 3; i++) {
       h.last().on.close(1006); // a 429 or a 404 before the upgrade
       h.clock.advance(4_000);
     }
-    expect(h.log.statuses).toContain("offline");
-    const before = h.log.resyncs;
-    h.clock.advance(60_000);
-    expect(h.log.resyncs).toBeGreaterThan(before);
+    expect(h.log.statuses).toEqual(["connecting", "reconnecting", "offline"]);
+    expect(h.sockets).toHaveLength(4);
     h.last().on.open();
     expect(h.status()).toBe("live");
-    const after = h.log.resyncs;
-    h.clock.advance(180_000);
-    expect(h.log.resyncs).toBe(after);
   });
 
   it("ignores a socket it has already replaced", () => {
@@ -177,7 +165,7 @@ describe("the live client", () => {
     h.clock.advance(2_000);
     first.on.message(changed("leads"));
     first.on.close(4401);
-    expect(h.log.changed).toEqual([]);
+    expect(h.log.messages).toEqual([]);
     expect(h.log.unauthenticated).toBe(0);
   });
 
@@ -188,7 +176,7 @@ describe("the live client", () => {
     h.client.pause();
     expect(h.status()).toBe("live");
     h.last().on.message(changed("leads"));
-    expect(h.log.changed).toHaveLength(1);
+    expect(h.log.messages).toHaveLength(1);
     h.last().on.close(1006);
     expect(h.status()).toBe("paused");
     h.clock.advance(120_000);
@@ -196,7 +184,7 @@ describe("the live client", () => {
     h.client.resume();
     expect(h.sockets).toHaveLength(2);
     h.last().on.open();
-    expect(h.log.resyncs).toBe(1);
+    expect(h.status()).toBe("live");
   });
 
   it("drops a pending attempt when hidden and reconnects at once when shown", () => {
@@ -226,35 +214,5 @@ describe("the live client", () => {
     h.client.stop();
     expect(h.last().closed).toBe(1000);
     expect(h.status()).toBe("closed");
-  });
-});
-
-describe("the bus", () => {
-  const event = (topic: ChangedEvent["topic"]): ChangedEvent => ({ topic, brand_id: "aquafix", id: "x", at: "t" });
-
-  it("hands a change to the readers that follow its topic, and a resync to every reader", () => {
-    expect(matchesLive(["leads", "lead"], { kind: "changed", event: event("lead") })).toBe(true);
-    expect(matchesLive(["places"], { kind: "changed", event: event("lead") })).toBe(false);
-    expect(matchesLive((e) => e.id === "x", { kind: "changed", event: event("sources") })).toBe(true);
-    expect(matchesLive([], { kind: "resync" })).toBe(true);
-  });
-
-  it("lets a reader leave while being told", () => {
-    const bus = createLiveBus();
-    const heard: string[] = [];
-    const offA = bus.subscribe(() => {
-      heard.push("a");
-      offA();
-    });
-    bus.subscribe(() => heard.push("b"));
-    bus.emit({ kind: "resync" });
-    bus.emit({ kind: "resync" });
-    expect(heard).toEqual(["a", "b", "b"]);
-  });
-
-  it("reads the wire format", () => {
-    expect(parseLiveMessage(changed("places", { brand_id: null }))).toEqual({ type: "changed", topic: "places", brand_id: null, id: null, at: "2026-10-03T10:00:00Z" });
-    expect(parseLiveMessage(JSON.stringify({ type: "resync" }))).toEqual({ type: "resync" });
-    expect(parseLiveMessage(JSON.stringify({ type: "goodbye" }))).toBeNull();
   });
 });

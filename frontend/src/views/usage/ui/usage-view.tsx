@@ -1,26 +1,24 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle, Skeleton } from "@evinvest/uikit";
+import { Card, CardContent, CardHeader, CardTitle, PageFrame, Skeleton } from "@evinvest/uikit";
 
 import { type Permission, useMe } from "@/entities/session";
 import { type Usage, fetchTokens, fetchUsage } from "@/entities/tokens";
 import { ROUTES } from "@/shared/config/routes";
 import { type MessageKey, useT } from "@/shared/i18n";
 import { useResource } from "@/shared/lib/use-resource";
-import { ScreenFrame } from "@/shared/ui/screen-frame";
 
-/** The rail's sections, by a permission's second segment. */
+/** Who grants it, by a permission's second segment: the service, or the conductor's own admin. */
 const SECTION: Record<string, MessageKey> = {
-  work: "nav.group.work",
-  analysis: "nav.group.analysis",
-  admin: "nav.group.admin",
-  review_archive: "nav.group.archive",
+  sites: "nav.sites",
+  admin: "usage.access.admin",
+  review_archive: "nav.reviewArchive",
   playbook: "account.access.playbook",
 };
 
 function sectionOf(p: Permission): MessageKey {
   const key = SECTION[p.split(":")[1] ?? ""];
-  if (key === undefined) throw new Error(`no rail section for ${p}`);
+  if (key === undefined) throw new Error(`no section for ${p}`);
   return key;
 }
 
@@ -28,7 +26,7 @@ function sectionOf(p: Permission): MessageKey {
 export function UsageView() {
   const t = useT();
   return (
-    <ScreenFrame title={t("usage.title")} description={t("usage.description")} back={ROUTES.more} width="content">
+    <PageFrame breakpoint="md" title={t("usage.title")} description={t("usage.description")} width="content">
       <Access />
       <TokensCard />
       <UsageCard />
@@ -38,7 +36,7 @@ export function UsageView() {
         </a>
         <p className="text-sm text-ink-soft">{t("account.telegram.hint")}</p>
       </Section>
-    </ScreenFrame>
+    </PageFrame>
   );
 }
 

@@ -6,7 +6,7 @@
 export type OverlayState = "idle" | "open" | "dismissed";
 
 /** Inlined at build time by Next; anything but "1" keeps the full redirect. */
-export const SIGNIN_OVERLAY_ENABLED = process.env.NEXT_PUBLIC_SIGNIN_OVERLAY === "1";
+const SIGNIN_OVERLAY_ENABLED = process.env.NEXT_PUBLIC_SIGNIN_OVERLAY === "1";
 
 let state: OverlayState = "idle";
 let hosts = 0;

@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# The panel and both landings on this machine, wired together: a lead posted on a site lands
-# in the panel, a place edited in the panel shows on the site. See docs/LOCAL.md.
+# The conductor, sites_panel and both landings on this machine, wired together: a lead posted on
+# a landing lands in sites_panel through the conductor's ingest, a place edited on the sites page
+# shows on the landing. See docs/LOCAL.md.
 #
 #   nix run .#local-stack                  build, seed, start everything; Ctrl-C stops it all
-#   nix run .#local-stack -- --reset       wipe .local/ (database, keys, the sites' leads) first
-#   nix run .#local-stack -- --no-sites    the panel alone
+#   nix run .#local-stack -- --reset       wipe .local/ (databases, keys, the landings' leads) first
+#   nix run .#local-stack -- --no-sites    the conductor and sites_panel, no landings
 #   nix run .#local-stack -- --role operator
 #
-# The panel and its front end come from `nix build .#bin` / `.#frontend` of this checkout,
-# unless PANEL_BIN / PANEL_WEB_DIR name others (PANEL_BIN=target/debug/panel for a cargo
-# build). AQUAFIX_DIR and VIFNET_DIR name the sites' checkouts, by default beside the panel's.
+# The conductor and its front end come from `nix build .#bin` / `.#frontend` of this checkout,
+# unless PANEL_BIN / PANEL_WEB_DIR name others (PANEL_BIN=target/debug/panel for a cargo build);
+# sites_panel and its bundle from its checkout's, unless SITES_BIN / SITES_MFE_DIR do. SITES_DIR,
+# AQUAFIX_DIR and VIFNET_DIR name the checkouts, by default beside this one's.
 set -euo pipefail
 
 PANEL_PORT=59120
+SITES_PORT=59121
 AQUAFIX_PORT=59081
 VIFNET_PORT=59082
 AQUAFIX_PLACES=(royat clermont-ferrand desgenettes lyon-est la-mouche lyon-nord)
@@ -33,8 +36,8 @@ while [ $# -gt 0 ]; do
 		cat <<'EOF'
 local-stack [--reset] [--no-sites] [--role admin|operator]
 
-  The panel on http://127.0.0.1:59120 (dev sign-in), aquafix on :59081 and vifnet on :59082,
-  wired to it. State in .local/ (--reset wipes it). Ctrl-C stops everything. See docs/LOCAL.md.
+  The conductor on http://127.0.0.1:59120 (dev sign-in), sites_panel on :59121, aquafix on
+  :59081 and vifnet on :59082, wired together. State in .local/ (--reset wipes it). Ctrl-C stops everything. See docs/LOCAL.md.
 EOF
 		exit 0
 		;;
@@ -59,12 +62,13 @@ die() {
 	exit 1
 }
 
-root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run this from inside the panel checkout"
-[ -f "$root/crates/panel_server/Cargo.toml" ] || die "$root is not the panel checkout"
-# The sites sit beside the panel's main checkout (service_arb/{panel,aquafix,vifnet}), also
-# when this is one of its worktrees.
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run this from inside the conductor's checkout"
+[ -f "$root/crates/panel_server/Cargo.toml" ] || die "$root is not the conductor's checkout"
+# The others sit beside the conductor's main checkout (_sa/{site_conductor,sites/panel,aquafix,
+# vifnet}), also when this is one of its worktrees.
 main_checkout="$(dirname "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)")"
 service_arb="$(dirname "$main_checkout")"
+SITES_DIR="${SITES_DIR:-$service_arb/sites/panel}"
 AQUAFIX_DIR="${AQUAFIX_DIR:-$service_arb/aquafix}"
 VIFNET_DIR="${VIFNET_DIR:-$service_arb/vifnet}"
 
@@ -80,16 +84,16 @@ printf '*\n' >"$state/.gitignore"
 # ── ports ────────────────────────────────────────────────────────────────────────────────
 
 busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
-ports=("$PANEL_PORT")
+ports=("$PANEL_PORT" "$SITES_PORT")
 [ "$sites" = 1 ] && ports+=("$AQUAFIX_PORT" "$VIFNET_PORT")
 for port in "${ports[@]}"; do
 	busy "$port" && die "port $port is taken — another local stack, or \`lsof -nP -iTCP:$port -sTCP:LISTEN\` says who"
 done
 
-# ── the panel's builds ───────────────────────────────────────────────────────────────────
+# ── the builds ───────────────────────────────────────────────────────────────────────────
 
 if [ -z "${PANEL_BIN:-}" ]; then
-	say "building the panel (nix build .#bin)"
+	say "building the conductor (nix build .#bin)"
 	nix build "$root#bin" --out-link "$state/build/bin"
 	PANEL_BIN="$state/build/bin/bin/panel"
 fi
@@ -99,29 +103,59 @@ if [ -z "${PANEL_WEB_DIR:-}" ]; then
 	PANEL_WEB_DIR="$state/build/frontend"
 fi
 [ -x "$PANEL_BIN" ] || die "PANEL_BIN $PANEL_BIN is not an executable"
+if [ -z "${SITES_BIN:-}" ]; then
+	[ -f "$SITES_DIR/flake.nix" ] || die "no sites_panel checkout at $SITES_DIR: SITES_DIR names it"
+	say "building sites_panel ($SITES_DIR#bin)"
+	nix build "$SITES_DIR#bin" --out-link "$state/build/sites"
+	SITES_BIN="$state/build/sites/bin/sites_panel"
+fi
+if [ -z "${SITES_MFE_DIR:-}" ]; then
+	say "building the sites' bundle ($SITES_DIR#frontend)"
+	nix build "$SITES_DIR#frontend" --out-link "$state/build/sites-mfe"
+	SITES_MFE_DIR="$state/build/sites-mfe"
+fi
+[ -x "$SITES_BIN" ] || die "SITES_BIN $SITES_BIN is not an executable"
 
-# ── the panel's environment ──────────────────────────────────────────────────────────────
+# ── the environments ─────────────────────────────────────────────────────────────────────
 
 [ -s "$state/data-key" ] || "$PANEL_BIN" gen-data-key >"$state/data-key"
 origin="http://127.0.0.1:$PANEL_PORT"
-# Whatever the calling shell exports for a deployed panel must not leak in: concierge's
-# variables would refuse the dev sign-in, PostHog's would start the hourly import.
+sites_origin="http://127.0.0.1:$SITES_PORT"
+# A key for this machine alone: the 32 bytes 0..31, and its public half for sites_panel.
+assertion_key="local:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+assertion_public="local:A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
+# Whatever the calling shell exports for a deployed conductor must not leak in: concierge's
+# variables would refuse the dev sign-in, a bot token would start the bot.
 panel() {
 	env -u CONCIERGE_PUBLIC_ORIGIN -u CONCIERGE_GRPC_ADDR -u RP_CLIENT_SECRET_SA \
-		-u TELEGRAM_BOT_TOKEN -u POSTHOG_PROJECT_ID -u POSTHOG_PERSONAL_API_KEY -u SENTRY_DSN \
+		-u TELEGRAM_BOT_TOKEN -u SENTRY_DSN \
 		APP_ENV=development \
 		PANEL_DB_PATH="$state/panel.db" \
 		PANEL_DATA_KEY="$(cat "$state/data-key")" \
 		PANEL_PUBLIC_ORIGIN="$origin" \
 		PANEL_DEV_SIGN_IN="sa:$role" \
 		PANEL_WEB_DIR="$PANEL_WEB_DIR" \
+		PANEL_ASSERTION_KEY="$assertion_key" \
+		PANEL_SITES_URL="$sites_origin" \
+		PANEL_REVIEW_ARCHIVE_URL="http://127.0.0.1:9" \
+		PANEL_PLAYBOOK_URL="http://127.0.0.1:9" \
 		"$PANEL_BIN" "$@"
+}
+sites_panel() {
+	env -u POSTHOG_PROJECT_API_KEY -u POSTHOG_PROJECT_ID -u SENTRY_DSN \
+		APP_ENV=development \
+		PANEL_DB_PATH="$state/sites_panel.db" \
+		PANEL_DATA_KEY="$(cat "$state/data-key")" \
+		PANEL_ASSERTION_KEYS="$assertion_public" \
+		PANEL_MFE_DIR="$SITES_MFE_DIR" \
+		"$SITES_BIN" "$@"
 }
 
 # ── seed: idempotent, so every run may do it ─────────────────────────────────────────────
 
-say "seeding $state/panel.db"
+say "seeding $state/panel.db and $state/sites_panel.db"
 panel migrate
+sites_panel migrate
 # A source's secret is shown once: kept in .local/secrets/<key id> for the next run.
 source_secret() {
 	local key_id="$1" brand="$2" file="$state/secrets/$1"
@@ -136,7 +170,7 @@ source_secret() {
 AQUAFIX_SECRET="$(source_secret aquafix-site aquafix)"
 VIFNET_SECRET="$(source_secret vifnet-site vifnet)"
 register() {
-	panel place register "$1" "$2" >/dev/null 2>>"$state/logs/seed.log" || die "registering $1/$2 failed: see $state/logs/seed.log"
+	sites_panel place register "$1" "$2" >/dev/null 2>>"$state/logs/seed.log" || die "registering $1/$2 failed: see $state/logs/seed.log"
 }
 for slug in "${AQUAFIX_PLACES[@]}"; do register aquafix "$slug"; done
 for slug in "${VIFNET_PLACES[@]}"; do register vifnet "$slug"; done
@@ -187,15 +221,21 @@ wait_for() {
 	return 1
 }
 
-say "starting the panel on $origin (dev sign-in: $role)"
+say "starting sites_panel on $sites_origin"
+prefixed sites sites_panel serve --bind "127.0.0.1:$SITES_PORT" &
+sites_pid=$!
+groups+=("$sites_pid")
+wait_for sites "$sites_origin/health" 30 "$sites_pid" || die "sites_panel did not start"
+
+say "starting the conductor on $origin (dev sign-in: $role)"
 prefixed panel panel serve --bind "127.0.0.1:$PANEL_PORT" &
 panel_pid=$!
 groups+=("$panel_pid")
-wait_for panel "$origin/health" 30 "$panel_pid" || die "the panel did not start"
+wait_for panel "$origin/health" 30 "$panel_pid" || die "the conductor did not start"
 
 started=()
-# A site's own dev command (`nix run .#dev`, kitstart's next dev) in its checkout, with what
-# the panel needs of it; its leads in a file of ours, analytics off.
+# A landing's own dev command (`nix run .#dev`, kitstart's next dev) in its checkout: its leads
+# to the conductor's ingest, its places from sites_panel; its leads in a file of ours, analytics off.
 start_site() {
 	local name="$1" dir="$2" port="$3" brand="$4" key_id="$5" secret="$6"
 	if [ ! -f "$dir/package.json" ] || [ ! -f "$dir/flake.nix" ]; then
@@ -209,7 +249,7 @@ start_site() {
 			LEAD_WEBHOOK_URL="$origin/api/ingest/v1/events" \
 			LEAD_WEBHOOK_KEY_ID="$key_id" \
 			LEAD_WEBHOOK_SECRET="$secret" \
-			LOCATIONS_API_URL="$origin/api/internal/brands/$brand" \
+			LOCATIONS_API_URL="$sites_origin/api/internal/brands/$brand" \
 			LEADS_DB_PATH="$state/$name-leads.db" \
 			nix run .#dev
 	) &
@@ -230,7 +270,8 @@ fi
 	echo
 	echo "────────────────────────────────────────────────────────────────────────"
 	echo " panel    $origin   (opens signed in: dev sign-in, $role)"
-	echo "          leads $origin/leads/   places $origin/places/"
+	echo "          leads $origin/sites/leads   places $origin/sites/places"
+	echo " sites    $sites_origin   (behind the conductor: its /api/internal for the landings)"
 	for s in ${started[@]+"${started[@]}"}; do
 		case "${s%%:*}" in
 		aquafix)
@@ -245,7 +286,7 @@ fi
 	echo "────────────────────────────────────────────────────────────────────────"
 } >&2
 
-# Until Ctrl-C, or until the panel stops (then everything does). Polled rather than `wait -n`,
-# which macOS's bash 3.2 lacks.
-while kill -0 "$panel_pid" 2>/dev/null; do sleep 1; done
-say "the panel stopped — see $state/logs/panel.log"
+# Until Ctrl-C, or until the conductor or sites_panel stops (then everything does). Polled rather
+# than `wait -n`, which macOS's bash 3.2 lacks.
+while kill -0 "$panel_pid" 2>/dev/null && kill -0 "$sites_pid" 2>/dev/null; do sleep 1; done
+say "the conductor or sites_panel stopped — see $state/logs/"

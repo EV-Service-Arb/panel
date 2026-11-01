@@ -4,7 +4,6 @@
 //! ```text
 //! GET /api/v1/live    Origin = PANEL_PUBLIC_ORIGIN, exactly                 else 403
 //!                     the session, as the /api/v1 gate                      else 401 / 503
-//!                     the Work section's permission (sa:work:read)          else 403
 //!                     ≤ 5 sockets per user, ≤ 200 in all                    else 429
 //!                     → 101; the bus subscribed before the answer, so nothing committed after
 //!                       it is missed
@@ -14,9 +13,11 @@
 //!                     {"type":"resync"}                                     fell behind; read all
 //!                     Ping every 25 s; no Pong for 60 s → dropped
 //! closes              4401 the session ended (sign-out, replaced, refused, expired)
-//!                     4403 the permission is gone
 //!                     1001 the server is stopping
 //! ```
+//!
+//! What sites changed comes from its feed ([`follow`]): one subscriber per process, each line
+//! onto the bus with the permission that reads it.
 //!
 //! Only the server speaks: the client's frames are read for Pong and Close and otherwise
 //! ignored. CSRF has no say over a GET, so the `Origin` header is what keeps another site's
@@ -54,16 +55,13 @@ use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::{
-	api::ApiError,
 	cookies,
-	http::Section,
+	forward::Services,
 	signin::{self, Caller, Denied, Freshness, SignIn},
 };
 
 /// The session ended: sign in again.
 pub const CLOSE_SESSION_ENDED: u16 = 4401;
-/// Signed in, and no longer let into the panel.
-pub const CLOSE_NO_ACCESS: u16 = 4403;
 /// RFC 6455's "going away": the server is stopping.
 pub const CLOSE_GOING_AWAY: u16 = 1001;
 
@@ -173,7 +171,7 @@ enum Out<'a> {
 		user_id: String,
 	},
 	Changed {
-		topic: &'static str,
+		topic: &'a str,
 		#[serde(skip_serializing_if = "Option::is_none")]
 		brand_id: Option<&'a str>,
 		#[serde(skip_serializing_if = "Option::is_none")]
@@ -186,8 +184,8 @@ enum Out<'a> {
 impl<'a> Out<'a> {
 	fn changed(c: &'a Change) -> Self {
 		Self::Changed {
-			topic: c.topic.as_str(),
-			brand_id: c.brand.as_ref().map(|b| b.as_str()),
+			topic: &c.topic,
+			brand_id: c.brand.as_deref(),
 			id: c.id.as_deref(),
 			at: c.at.to_string(),
 		}
@@ -222,9 +220,6 @@ pub async fn upgrade(State(live): State<Live>, headers: HeaderMap, ws: Result<We
 		Ok(c) => c,
 		Err(denied) => return denied.into_response(&live.sign_in),
 	};
-	if !Section::Work.may(&caller.permissions) {
-		return ApiError::Forbidden.into_response();
-	}
 	let ws = match ws {
 		Ok(ws) => ws,
 		Err(rejection) => return rejection.into_response(),
@@ -317,7 +312,6 @@ impl Connection {
 				}
 				_ = ping.tick() => Step::Send(Message::Ping(Default::default())),
 				_ = recheck.tick() => match signin::check(&self.live.sign_in, &self.cookie, Freshness::Cached).await {
-					Ok(caller) if !Section::Work.may(&caller.permissions) => Step::Close(CLOSE_NO_ACCESS, "no access to the panel"),
 					Ok(caller) => {
 						self.caller = caller;
 						Step::Nothing
@@ -379,6 +373,114 @@ impl Connection {
 	}
 }
 
+/// How long the feed may say nothing (sites pings every 25 s) before it is taken for dead.
+const FEED_IDLE: Duration = Duration::from_secs(60);
+
+/// The longest line sites' feed may send.
+const FEED_LINE: usize = 64 * 1024;
+
+/// The waits between reconnections: doubling from the first to the last.
+const FEED_BACKOFF: (Duration, Duration) = (Duration::from_secs(1), Duration::from_secs(30));
+
+/// A line of sites' feed (`GET /api/conductor/changes`).
+#[derive(serde::Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum Line {
+	Changed {
+		topic: String,
+		brand_id: Option<String>,
+		id: Option<String>,
+		at: jiff::Timestamp,
+		permission: String,
+	},
+	Resync,
+	Ping,
+}
+
+/// Follows sites' change feed until `shutdown`, onto `bus`: reconnected with a backoff whenever
+/// it ends, fails, or goes quiet; sites sends `resync` first on every connection, so whatever
+/// was missed meanwhile is read again.
+pub async fn follow(services: Services, bus: panel::live::Bus, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+	let mut wait = FEED_BACKOFF.0;
+	while !*shutdown.borrow() {
+		let heard = tokio::select! {
+			r = feed(&services, &bus) => r,
+			_ = shutdown.changed() => return,
+		};
+		match heard {
+			Ok(true) => wait = FEED_BACKOFF.0,
+			Ok(false) => {}
+			Err(e) => tracing::warn!(error = format!("{e:#}"), "live: sites' feed broke off"),
+		}
+		tokio::select! {
+			() = tokio::time::sleep(wait) => {}
+			_ = shutdown.changed() => return,
+		}
+		wait = (wait * 2).min(FEED_BACKOFF.1);
+	}
+}
+
+/// One connection to the feed, until it ends: whether a line came through it.
+async fn feed(services: &Services, bus: &panel::live::Bus) -> eyre::Result<bool> {
+	use http_body_util::BodyExt;
+
+	let res = services
+		.send(
+			sa_auth::Service::Sites,
+			axum::http::Method::GET,
+			"/api/conductor/changes",
+			HeaderMap::new(),
+			Some(sa_auth::Principal::Conductor),
+			axum::body::Body::empty(),
+		)
+		.await?;
+	eyre::ensure!(res.status() == StatusCode::OK, "sites answered {}", res.status());
+	let mut body = res.into_body();
+	let mut pending: Vec<u8> = Vec::new();
+	let mut heard = false;
+	loop {
+		let frame = match tokio::time::timeout(FEED_IDLE, body.frame()).await {
+			Ok(Some(frame)) => frame?,
+			Ok(None) => return Ok(heard),
+			Err(_) => eyre::bail!("nothing for {}s", FEED_IDLE.as_secs()),
+		};
+		let Ok(data) = frame.into_data() else { continue };
+		pending.extend_from_slice(&data);
+		while let Some(end) = pending.iter().position(|b| *b == b'\n') {
+			let line: Vec<u8> = pending.drain(..=end).collect();
+			let line = line.trim_ascii();
+			if line.is_empty() {
+				continue;
+			}
+			heard = true;
+			match serde_json::from_slice::<Line>(line)? {
+				Line::Changed {
+					topic,
+					brand_id,
+					id,
+					at,
+					permission,
+				} => {
+					eyre::ensure!(
+						permission.starts_with(sa_auth::Service::Sites.prefix()),
+						"a change readable by {permission}, outside sites' permissions"
+					);
+					bus.changed(Change {
+						topic,
+						brand: brand_id,
+						id,
+						at,
+						audience: panel::live::Audience::Holders(permission),
+					});
+				}
+				Line::Resync => bus.publish(Signal::Resync),
+				Line::Ping => {}
+			}
+		}
+		eyre::ensure!(pending.len() <= FEED_LINE, "a line longer than {FEED_LINE} bytes");
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -404,11 +506,11 @@ mod tests {
 	#[test]
 	fn frames_are_the_contract() {
 		let c = Change {
-			topic: panel::live::Topic::Places,
-			brand: Some(panel_core::ids::BrandId::parse("aquafix").unwrap()),
+			topic: "places".into(),
+			brand: Some("aquafix".into()),
 			id: Some("royat".into()),
-			user: None,
 			at: "2026-10-03T10:00:00Z".parse().unwrap(),
+			audience: panel::live::Audience::User(Uuid::nil()),
 		};
 		let Message::Text(t) = Out::changed(&c).message() else { panic!("text") };
 		assert_eq!(t.as_str(), r#"{"type":"changed","topic":"places","brand_id":"aquafix","id":"royat","at":"2026-10-03T10:00:00Z"}"#);

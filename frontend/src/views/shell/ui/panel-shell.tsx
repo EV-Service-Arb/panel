@@ -4,9 +4,6 @@ import { Toaster } from "@evinvest/uikit";
 import { type ReactNode, useState } from "react";
 
 import { MeProvider, fetchMe } from "@/entities/session";
-import { goToSignIn } from "@/shared/api";
-import { LiveProvider } from "@/shared/lib/live";
-import { DESKTOP_QUERY, useMediaQuery } from "@/shared/lib/use-media-query";
 import { useResource } from "@/shared/lib/use-resource";
 import { ErrorState } from "@/shared/ui/error-state";
 
@@ -18,7 +15,7 @@ import { SignInOverlay } from "./signin-overlay";
  * Everything behind sign-in. `/api/v1/me` decides what shows: a 401 has already
  * sent the browser to `/auth/login`, or opened the sign-in overlay when that is on (the skeleton stays up meanwhile), a 403 is
  * "no access", a 503 is "try again" without signing anyone out. The live socket
- * can end the session the same two ways later (4401, 4403).
+ * can end the session the same two ways later (4401, 4403), an element by `sa:unauthenticated`.
  */
 export function PanelShell({ children }: { children: ReactNode }) {
   // Mounted from the first render: the 401 of `/me` can land before anything else has.
@@ -32,7 +29,6 @@ export function PanelShell({ children }: { children: ReactNode }) {
 
 function PanelBody({ children }: { children: ReactNode }) {
   const me = useResource("me", fetchMe);
-  const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const [accessLost, setAccessLost] = useState(false);
 
   if (accessLost) return <NoAccessScreen />;
@@ -56,11 +52,8 @@ function PanelBody({ children }: { children: ReactNode }) {
 
   return (
     <MeProvider me={me.data}>
-      <LiveProvider onUnauthenticated={goToSignIn} onForbidden={() => setAccessLost(true)}>
-        <ShellFrame>{children}</ShellFrame>
-      </LiveProvider>
-      {/* On a phone the bottom is the tab bar and the sheets; toasts come from the top. */}
-      <Toaster position={isDesktop ? "bottom-right" : "top-center"} />
+      <ShellFrame onForbidden={() => setAccessLost(true)}>{children}</ShellFrame>
+      <Toaster position="bottom-right" />
     </MeProvider>
   );
 }

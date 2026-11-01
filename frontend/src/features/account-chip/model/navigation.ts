@@ -2,21 +2,9 @@ import { ROUTES } from "@/shared/config/routes";
 
 // The panel's own screens: a chip link to one of them is a soft navigation through the router.
 // Deliberately absent: the review archive's own views (tokens, act-as — the chip's `external`
-// items) and Grafana, which the backend forwards to other services, and everything outside the
-// app (`/auth`, `/api`, `/cabinet`): those stay full navigations.
-const SOFT_ROUTES: readonly string[] = [
-  "/",
-  ROUTES.overview,
-  ROUTES.leads,
-  ROUTES.places,
-  ROUTES.pricing,
-  ROUTES.experiments,
-  ROUTES.sources,
-  ROUTES.more,
-  ROUTES.usage,
-  ROUTES.account,
-  ROUTES.reviewArchive,
-];
+// items) and the sites' (their element routes them), and everything outside the app (`/auth`,
+// `/api`, `/cabinet`): those stay full navigations.
+const SOFT_ROUTES: readonly string[] = ["/", ROUTES.sources, ROUTES.usage, ROUTES.account, ROUTES.wallet, ROUTES.reviewArchive];
 
 // The export is built with `trailingSlash`, so `/usage` and `/usage/` are one screen.
 const bare = (path: string) => (path.length > 1 ? path.replace(/\/+$/, "") : path);

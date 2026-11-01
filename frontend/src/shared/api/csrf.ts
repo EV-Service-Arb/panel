@@ -19,3 +19,8 @@ export function readCsrf(cookie: string): string | null {
   const find = (name: string) => pairs.find(([k, v]) => k === name && v !== "")?.[1] ?? null;
   return find(`__Host-${CSRF_COOKIE}`) ?? find(CSRF_COOKIE);
 }
+
+/** The name the backend gives the cookie on this page's scheme, for an element that reads it itself; browser only. */
+export function csrfCookieName(): string {
+  return window.location.protocol === "https:" ? `__Host-${CSRF_COOKIE}` : CSRF_COOKIE;
+}

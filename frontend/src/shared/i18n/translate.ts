@@ -1,7 +1,7 @@
 import { CATALOGUES, type MessageKey } from "./catalogue";
 
 export type Locale = "en" | "ru";
-export type Vars = Record<string, string | number>;
+type Vars = Record<string, string | number>;
 export type T = (key: MessageKey, vars?: Vars) => string;
 
 

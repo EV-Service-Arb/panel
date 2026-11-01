@@ -42,7 +42,7 @@ export interface HttpDeps {
   onUnauthenticated: () => void;
 }
 
-export type Query = Record<string, string | number | boolean | null | undefined>;
+type Query = Record<string, string | number | boolean | null | undefined>;
 
 function withQuery(path: string, query?: Query): string {
   if (!query) return path;
@@ -80,7 +80,7 @@ async function errorBody(res: Response): Promise<ErrorBody> {
   }
 }
 
-export async function failureOf(res: Response): Promise<ApiFailure> {
+async function failureOf(res: Response): Promise<ApiFailure> {
   const { message, fields, path, body } = await errorBody(res);
   switch (res.status) {
     case 401:
@@ -106,7 +106,7 @@ export async function failureOf(res: Response): Promise<ApiFailure> {
 }
 
 /** What a write may ask of `fetch` beyond the defaults. `keepalive`: the request outlives the page, for a write that a navigation follows at once. */
-export type SendInit = Pick<RequestInit, "keepalive">;
+type SendInit = Pick<RequestInit, "keepalive">;
 
 export interface Http {
   get<T>(path: string, parser: Parser<T>, query?: Query): Promise<T>;

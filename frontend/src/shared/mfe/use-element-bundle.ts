@@ -3,10 +3,10 @@ import { useEffect, useState } from "react";
 import { containRemoteStyles } from "./contain-remote-styles";
 
 /** `loading` until the bundle answers; `failed` is final for this mount (the caller keeps its fallback). */
-export type BundleState = "loading" | "ready" | "failed";
+type BundleState = "loading" | "ready" | "failed";
 
 /** The slice of `customElements` the wait needs; a parameter so it runs without a DOM. */
-export interface ElementRegistry {
+interface ElementRegistry {
   get(tag: string): CustomElementConstructor | undefined;
   whenDefined(tag: string): Promise<CustomElementConstructor>;
 }
@@ -16,7 +16,7 @@ export interface ElementRegistry {
  * the contract has no static `apiVersion`, and rendering it with the new attributes would
  * half-work (an older chip reads the cabinet session the host does not have).
  */
-export function speaksApi(ctor: unknown, min: number): boolean {
+function speaksApi(ctor: unknown, min: number): boolean {
   if (typeof ctor !== "function") return false;
   const version: unknown = (ctor as { apiVersion?: unknown }).apiVersion;
   return typeof version === "number" && version >= min;
@@ -26,7 +26,7 @@ export function speaksApi(ctor: unknown, min: number): boolean {
  * Settles true once `tag` is defined by a bundle speaking `minApiVersion`; false on `failure`
  * (the script did not load), on `timeoutMs`, or on an older bundle. Never rejects.
  */
-export function awaitElement(
+function awaitElement(
   registry: ElementRegistry,
   tag: string,
   minApiVersion: number,
@@ -44,7 +44,7 @@ export function awaitElement(
   return Promise.race([defined, timeout, failure.then(() => false)]).finally(() => clearTimeout(timer));
 }
 
-export interface ElementBundleOptions {
+interface ElementBundleOptions {
   minApiVersion: number;
   /** The script's Subresource Integrity (`sha256-…`): the browser refuses other bytes. Null: unpinned. */
   integrity: string | null;

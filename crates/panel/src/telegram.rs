@@ -1,44 +1,43 @@
-//! Telegram notifications in private chats (spec §8): linking a chat to a panel user, the
-//! rules' fan-out into the outbox, delivering the outbox, and what the bot does with the
-//! updates it receives — `/start <token>`, `/stop` and the buttons under a lead.
+//! Telegram notifications in private chats: linking a chat to a user, the rules' messages into
+//! the outbox, delivering the outbox, and what the bot does with the updates it receives —
+//! `/start <token>`, `/stop` and the buttons under a message.
 //!
 //! ```text
 //! POST /api/v1/telegram/link ─ token (256 bits; its hash, 10 min) ─ t.me/<bot>?start=<token>
 //!                         /start <token> in a private chat ─ link user ⇄ chat
-//! journal ─ fan-out (a rule × a new lead / overdue lead / payment / silent source) ─ outbox
+//! sites' notes (a page, the cursor in the same transaction) ┐
+//! source_silent, access_requested (the conductor's own)     ┴─ a rule × its recipients ─ outbox
 //! outbox ─ claim (1/s per chat, ≤ 25/s in all, across replicas) ─ sendMessage ─ sent | retry | dead
-//! button ─ signed data ─ the chat's user, access asked of concierge now ─ event, as the API writes it
+//! button ─ signed data ─ the chat's user, access asked of concierge now ─ sites, as that user
 //! ```
 //!
-//! **Who has access.** The panel learns a user's permissions only from concierge's `GetMe`,
+//! **Who has access.** The conductor learns a user's permissions only from concierge's `GetMe`,
 //! which takes the user's own access token. A link keeps what concierge last confirmed and when:
 //! the `/api/v1` gate records every answer it gets, and [`Notifier::recheck_access`] asks
-//! again through the user's newest panel session for a link not confirmed in
-//! [`RECHECK_AFTER`] — through a session the user used within [`SESSION_IDLE`], so the bot
-//! never keeps an abandoned one alive. A message is queued, and again sent, only to a link
-//! confirmed within [`ACCESS_TTL`]. So: a grant revoked at concierge, or a session concierge
-//! refuses to rotate, stops messages at the next check (within about [`RECHECK_AFTER`]),
-//! and what was queued for the user is dropped; a user with no session used within
-//! [`SESSION_IDLE`], or concierge unreachable, stops them after [`ACCESS_TTL`] — PII does not
-//! flow on a stale answer. A button asks concierge at the moment it is pressed, and without
-//! such a session to ask with, the user is told to open the panel: nothing is written on a
-//! cached answer.
+//! again through the user's newest session for a link not confirmed in [`RECHECK_AFTER`] —
+//! through a session the user used within [`SESSION_IDLE`], so the bot never keeps an abandoned
+//! one alive. A message is queued, and again sent, only to a link confirmed within
+//! [`ACCESS_TTL`]. So: a grant revoked at concierge, or a session concierge refuses to rotate,
+//! stops messages at the next check, and what was queued for the user is dropped; a user with
+//! no session used within [`SESSION_IDLE`], or concierge unreachable, stops them after
+//! [`ACCESS_TTL`] — PII does not flow on a stale answer. A button asks concierge at the moment
+//! it is pressed, and without such a session to ask with, the user is told to open the panel.
 //!
-//! The Bot API is the server's; this sees it through [`Bot`], and concierge through
-//! [`Directory`] and [`Refresher`].
+//! The Bot API is the server's; this sees it through [`Bot`], concierge through [`Directory`]
+//! and [`Refresher`], and sites through [`Sites`].
 
-use std::future::Future;
+use std::{collections::BTreeMap, future::Future};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use eyre::WrapErr;
 use futures::{StreamExt, TryStreamExt};
 use jiff::{SignedDuration, Timestamp};
 use panel_core::{
-	funnel::CONTACT_SLA,
-	ids::{BrandId, LeadId},
-	notify::{self, BookingChange, Button, Entity, Failure, LeadNote, Locale, Next, Note, Rendered, Reply, Rule},
+	Invalid,
+	notify::{self, Failure, Locale, MAX_NAME, Next, Note, Rendered, Reply, Rule},
 };
-use sa_auth::{Leads, PermissionSet, Pii};
+use sa_auth::{PermissionSet, Pii};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -47,10 +46,9 @@ use zeroize::Zeroizing;
 pub use crate::store::telegram::Account;
 use crate::{
 	Panel,
-	operator::{ActionError, Actor, StageMove},
-	seal::{pii_aad, telegram_text_aad},
+	seal::telegram_text_aad,
 	session::{Refresher, SessionError},
-	store::telegram::{self as db, LeadCandidate, NewMessage},
+	store::telegram::{self as db, NewMessage},
 };
 
 /// How long a link token may wait for its `/start`.
@@ -75,23 +73,16 @@ pub const BACKLOG: i64 = 20;
 /// only when the replica is gone.
 pub const SEND_LEASE: SignedDuration = SignedDuration::from_secs(60);
 
-/// A lead is told of as new while its creation is younger than this; older ones, when the
-/// bot starts late, are left to the SLA reminder.
-const NEW_LEAD_WINDOW: SignedDuration = SignedDuration::from_hours(1);
+/// Notes asked of sites at once.
+pub const NOTES_PAGE: usize = 500;
 
-/// A lead is reminded of while it has been overdue for less than this.
-const OVERDUE_WINDOW: SignedDuration = SignedDuration::from_hours(6);
+/// A lead message noted longer ago than this is news nobody needs.
+const STALE_AFTER: SignedDuration = SignedDuration::from_hours(1);
 
-/// A payment is told of while its record is younger than this.
-const PAYMENT_WINDOW: SignedDuration = SignedDuration::from_hours(24);
-
-/// A booking made, moved or canceled is told of while its event is younger than this.
-const BOOKING_WINDOW: SignedDuration = SignedDuration::from_hours(6);
-
-/// Fan-out marks and finished messages are kept this long; the windows above are shorter.
+/// Fan-out marks and finished messages are kept this long.
 const KEEP: SignedDuration = SignedDuration::from_hours(24 * 7);
 
-/// Candidates taken per rule per pass.
+/// Access requests taken per pass.
 const BATCH: i64 = 50;
 
 /// Messages sent at once in a pass.
@@ -104,7 +95,7 @@ const RECHECKS: i64 = 20;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InlineButton {
 	/// Pressed, it comes back to the bot with its signed data.
-	Callback { label: &'static str, data: String },
+	Callback { label: String, data: String },
 	/// Opens `url`.
 	Url { label: String, url: String },
 }
@@ -112,7 +103,7 @@ pub enum InlineButton {
 /// The Bot API, as the notifier needs it. Every call answers the failure as
 /// [`notify::Failure`], so the outbox can decide what becomes of the message.
 pub trait Bot: Sync {
-	/// Sends a plain-text message (its `code` spans marked) to a chat; the id Telegram gave it.
+	/// Sends a plain-text message with its entities to a chat; the id Telegram gave it.
 	fn send(&self, chat_id: i64, message: &Rendered, buttons: &[InlineButton]) -> impl Future<Output = Result<i64, Failure>> + Send;
 	/// Replaces a message's text and buttons (none: the keyboard is removed).
 	fn edit(&self, chat_id: i64, message_id: i64, message: &Rendered, buttons: &[InlineButton]) -> impl Future<Output = Result<(), Failure>> + Send;
@@ -120,13 +111,21 @@ pub trait Bot: Sync {
 	fn answer(&self, callback_id: &str, text: &str) -> impl Future<Output = Result<(), Failure>> + Send;
 }
 
-/// Who concierge says the holder of an access token is, as the panel reads it.
+/// Who concierge says the holder of an access token is.
 #[derive(Clone, Debug)]
 pub struct Identity {
 	pub user_id: Uuid,
+	pub email: String,
+	pub email_verified: bool,
+	pub preferred_name: String,
 	pub permissions: PermissionSet,
+}
+
+impl Identity {
 	/// preferred_name, or the email when there is none.
-	pub display_name: String,
+	pub fn display_name(&self) -> &str {
+		if self.preferred_name.trim().is_empty() { &self.email } else { &self.preferred_name }
+	}
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -145,6 +144,69 @@ pub trait Directory: Sync {
 	fn me(&self, access: &str) -> impl Future<Output = Result<Identity, DirectoryError>> + Send;
 }
 
+/// What sites does for a press: `call` sent as `who`; the status sites answered.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Call {
+	pub method: String,
+	pub path: String,
+	/// `null`: no body.
+	pub body: Value,
+}
+
+/// A button under a message, as sites describes it: what it says, what pressing it calls,
+/// what the message then says, and which buttons it leaves.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Button {
+	pub id: String,
+	pub label: String,
+	pub pressed: String,
+	pub call: Call,
+	pub leaves: Vec<String>,
+}
+
+/// A text as sites renders it: Telegram `MessageEntity` objects over it, sent as given.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NoteText {
+	pub text: String,
+	pub entities: Vec<Value>,
+}
+
+/// One of sites' notes (`GET /api/conductor/notifications`).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SitesNote {
+	pub seq: i64,
+	pub rule: String,
+	pub event_id: Uuid,
+	pub created_at: Timestamp,
+	pub text: NoteText,
+	/// Present iff the note carries PII: for holders of `sa:sites:work:pii:see` only.
+	pub text_pii: Option<NoteText>,
+	/// Who did what it tells of, and so is not told.
+	pub skip_user: Option<Uuid>,
+	pub buttons: Vec<Button>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotePage {
+	pub notes: Vec<SitesNote>,
+	pub next: i64,
+}
+
+/// sites, as the hub needs it.
+pub trait Sites: Sync {
+	/// Up to `limit` notes after `after`.
+	fn notes(&self, after: i64, limit: usize) -> impl Future<Output = eyre::Result<NotePage>> + Send;
+	/// When each source key's last event arrived there.
+	fn received(&self) -> impl Future<Output = eyre::Result<BTreeMap<String, Timestamp>>> + Send;
+	/// `call` made as `who`, under `idempotency_key`: the status sites answered.
+	fn press(&self, who: &Identity, call: &Call, idempotency_key: &str) -> impl Future<Output = eyre::Result<u16>> + Send;
+}
+
 /// A chat an update came from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Chat {
@@ -153,7 +215,7 @@ pub struct Chat {
 	pub private: bool,
 }
 
-/// What the bot received, as far as the panel cares.
+/// What the bot received, as far as the conductor cares.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Update {
 	/// `/start`, with the payload of a `t.me/<bot>?start=<payload>` link when there is one,
@@ -184,8 +246,8 @@ pub enum Update {
 /// What concierge said of a user just now.
 #[derive(Clone, Debug)]
 pub enum Access {
-	Granted(PermissionSet, String),
-	/// No live panel session to ask with, or concierge refused its token.
+	Granted(Identity),
+	/// No live session to ask with, or concierge refused its token.
 	NoSession,
 	Unavailable,
 }
@@ -210,6 +272,41 @@ pub struct Delivered {
 	pub dead: usize,
 }
 
+/// What a recipient is sent.
+struct Outgoing {
+	text: Rendered,
+	links: Vec<(String, String)>,
+	buttons: Vec<Button>,
+}
+
+/// The rule a note is under, if the note is one the hub can send: its buttons callable and
+/// their data within Telegram's bounds, its entities entities.
+fn check(note: &SitesNote) -> eyre::Result<Rule> {
+	let rule: Rule = note.rule.parse().map_err(|e: Invalid| eyre::eyre!("note {}: {e}", note.seq))?;
+	let fail = |why: String| Err(eyre::eyre!("note {} ({rule}): {why}", note.seq));
+	for b in &note.buttons {
+		if !notify::is_button_id(&b.id) || note.buttons.iter().filter(|o| o.id == b.id).count() > 1 {
+			return fail(format!("button id {:?} is not 2–16 of [a-z0-9_], once", b.id));
+		}
+		if let Some(gone) = b.leaves.iter().find(|l| !note.buttons.iter().any(|o| &o.id == *l)) {
+			return fail(format!("button {} leaves {gone:?}, which is not one of the note's", b.id));
+		}
+		let path = &b.call.path;
+		let plain = path.strip_prefix("/api/v1/").is_some_and(|rest| rest.split('/').all(|s| !s.is_empty() && s != "." && s != ".."))
+			&& path.bytes().all(|c| c.is_ascii_graphic() && c != b'?' && c != b'#');
+		if !matches!(b.call.method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") || !plain {
+			return fail(format!("button {} calls {} {path}", b.id, b.call.method));
+		}
+	}
+	for t in std::iter::once(&note.text).chain(&note.text_pii) {
+		let shaped = |e: &Value| e["type"].is_string() && e["offset"].is_u64() && e["length"].is_u64();
+		if let Some(bad) = t.entities.iter().find(|e| !shaped(e)) {
+			return fail(format!("{bad} is not a MessageEntity"));
+		}
+	}
+	Ok(rule)
+}
+
 fn link_token_hash(token: &str) -> [u8; 32] {
 	let mut h = Sha256::new();
 	h.update(b"sa-panel/tg-link/v1/");
@@ -217,7 +314,7 @@ fn link_token_hash(token: &str) -> [u8; 32] {
 	h.finalize().into()
 }
 
-/// The id a rule fans out under for something that is not a journal event: a UUID (version 8)
+/// The id a rule fans out under for what the conductor tells of itself: a UUID (version 8)
 /// named by its parts.
 pub(crate) fn derived_event_id(parts: &[&str]) -> Uuid {
 	let mut h = Sha256::new();
@@ -235,16 +332,12 @@ pub(crate) fn derived_event_id(parts: &[&str]) -> Uuid {
 /// A user's link or rules changed. Stamped here: the calls that change them take no clock.
 fn telegram_changed(user: Uuid) -> crate::live::Change {
 	crate::live::Change {
-		topic: crate::live::Topic::Telegram,
+		topic: "telegram".into(),
 		brand: None,
 		id: None,
-		user: Some(user),
 		at: Timestamp::now(),
+		audience: crate::live::Audience::User(user),
 	}
-}
-
-fn text_field(pii: &Value, field: &str) -> Option<String> {
-	pii.get(field).and_then(Value::as_str).map(str::to_owned)
 }
 
 impl Panel {
@@ -289,9 +382,9 @@ impl Panel {
 
 	/// Turns rules on or off for the user. A rule their permissions do not open is refused,
 	/// not stored: it would only mislead the profile.
-	pub async fn telegram_set_rules(&self, user: Uuid, permissions: &PermissionSet, rules: &[(Rule, bool)]) -> Result<(), ActionError> {
+	pub async fn telegram_set_rules(&self, user: Uuid, permissions: &PermissionSet, rules: &[(Rule, bool)]) -> eyre::Result<Result<(), Invalid>> {
 		if let Some((r, _)) = rules.iter().find(|(r, _)| !r.open_to(permissions)) {
-			return Err(ActionError::Invalid(panel_core::Invalid::new(format!("{r} is not a rule your permissions open"))));
+			return Ok(Err(Invalid::new(format!("{r} is not a rule your permissions open"))));
 		}
 		let mut tx = self.store.begin_write().await?;
 		for (rule, on) in rules {
@@ -299,7 +392,7 @@ impl Panel {
 		}
 		tx.commit().await.wrap_err("committing a rules change")?;
 		self.live.changed(telegram_changed(user));
-		Ok(())
+		Ok(Ok(()))
 	}
 
 	/// What concierge just told the `/api/v1` gate of a user: their permissions and name.
@@ -309,120 +402,24 @@ impl Panel {
 		db::access_seen(&mut conn, user, permissions, display, now).await
 	}
 
-	/// Queues what the rules say is due at `now`: new leads, overdue leads, payments, silent
-	/// sources, bookings and access requests, each told once per recipient. Safe on several
-	/// replicas at once: each candidate is claimed, and the outbox refuses a second `(rule,
-	/// event, chat)`. `cabinet` is concierge's origin, where the admins grant access. How many
-	/// messages were queued.
-	pub async fn telegram_fan_out(&self, now: Timestamp, locale: Locale, cabinet: &url::Url) -> eyre::Result<usize> {
-		let confirmed_since = now - ACCESS_TTL;
+	/// Queues what the conductor's own rules say is due at `now`: silent sources (by `received`,
+	/// sites' last receipt per key) and access requests, each told once per recipient. Safe on
+	/// several replicas at once: each candidate is claimed, and the outbox refuses a second
+	/// `(rule, event, chat)`. `cabinet` is concierge's origin, where the admins grant access. How
+	/// many messages were queued.
+	pub async fn telegram_fan_out(&self, now: Timestamp, locale: Locale, cabinet: &url::Url, received: &BTreeMap<String, Timestamp>) -> eyre::Result<usize> {
 		let mut conn = self.store.pool().acquire().await.wrap_err("a connection for the fan-out")?;
-		let new = db::new_leads(&mut conn, now - NEW_LEAD_WINDOW, BATCH).await?;
-		let overdue = db::overdue_leads(&mut conn, now - CONTACT_SLA - OVERDUE_WINDOW, now - CONTACT_SLA, BATCH).await?;
-		let payments = db::new_payments(&mut conn, now - PAYMENT_WINDOW, BATCH).await?;
-		let silent = db::silent_sources(&mut conn, now - notify::SOURCE_SILENCE).await?;
-		let mut queued = 0;
-		for c in &new {
-			let lead = Some((c.brand_id.as_str(), c.lead_id.as_str()));
-			let note = |permissions: &PermissionSet| {
-				let lead = self.lead_note(c, permissions)?;
-				Ok(match c.suspect {
-					None => Note::NewLead(lead),
-					Some(suspect) => Note::SuspectLead { lead, suspect },
-				})
-			};
-			// Whoever typed the lead in knows of it already.
-			queued += self
-				.fan_out_one(&mut conn, Rule::NewLead, c.event_id, lead, c.entered_by, note, confirmed_since, now, locale, cabinet)
-				.await?;
-		}
-		for c in &overdue {
-			let lead = Some((c.brand_id.as_str(), c.lead_id.as_str()));
-			let waiting = c.created_at.map_or(CONTACT_SLA, |at| now.duration_since(at));
-			let note = |permissions: &PermissionSet| {
-				Ok(Note::ContactOverdue {
-					lead: self.lead_note(c, permissions)?,
-					waiting,
-				})
-			};
-			queued += self
-				.fan_out_one(&mut conn, Rule::ContactOverdue, c.event_id, lead, None, note, confirmed_since, now, locale, cabinet)
-				.await?;
-		}
-		for p in payments {
-			let note = Note::PaymentReceived {
-				brand: p.brand_id,
-				lead: p.lead_id,
-				billed: p.billed,
-				commission: p.commission,
-				currency: p.currency,
-			};
-			queued += self
-				.fan_out_one(
-					&mut conn,
-					Rule::PaymentReceived,
-					p.event_id,
-					None,
-					None,
-					|_| Ok(note.clone()),
-					confirmed_since,
-					now,
-					locale,
-					cabinet,
-				)
-				.await?;
-		}
-		for s in silent {
+		let mut local = Vec::new();
+		for (key_id, kind, created_at) in db::active_sources(&mut conn).await? {
+			let last = received.get(&key_id).copied();
+			let since = last.unwrap_or(created_at);
+			if since >= now - notify::SOURCE_SILENCE {
+				continue;
+			}
 			// One message per full day of the same silence: at 24 h, at 48 h, …
-			let days = now.duration_since(s.since).as_hours() / 24;
-			let event = derived_event_id(&["source_silent", &s.key_id, &s.since.to_string(), &days.to_string()]);
-			let note = Note::SourceSilent {
-				key_id: s.key_id,
-				kind: s.kind,
-				last: s.last,
-			};
-			queued += self
-				.fan_out_one(&mut conn, Rule::SourceSilent, event, None, None, |_| Ok(note.clone()), confirmed_since, now, locale, cabinet)
-				.await?;
-		}
-		for t in crate::store::bookings::to_tell(&mut conn, now - BOOKING_WINDOW, BATCH).await? {
-			let change = match (t.kind.as_str(), t.moved) {
-				("created", true) => BookingChange::Moved,
-				("created" | "set", _) => BookingChange::Booked,
-				_ => BookingChange::Canceled,
-			};
-			let lead = match &t.lead_id {
-				Some(l) => {
-					let (brand, lead) = (BrandId::parse(&t.brand_id)?, LeadId::parse(l)?);
-					crate::store::reads::lead(&mut conn, &brand, &lead).await?
-				}
-				None => None,
-			};
-			let candidate = lead.map(|row| LeadCandidate {
-				event_id: row.creation.as_ref().map_or(t.event_id, |c| c.event_id),
-				pii: row.creation.and_then(|c| c.pii),
-				brand_id: row.brand_id,
-				lead_id: row.lead_id,
-				location_id: row.location_id,
-				created_at: row.created_at,
-				entered_by: None,
-				suspect: None,
-			});
-			let slot = t.start_at.map(place_time);
-			let note = |permissions: &PermissionSet| {
-				Ok(Note::Booking {
-					change,
-					brand: t.brand_id.clone(),
-					lead: candidate.as_ref().map(|c| self.lead_note(c, permissions)).transpose()?,
-					slot: slot.clone(),
-					provider: t.provider.clone().unwrap_or_else(|| "manual".to_owned()),
-				})
-			};
-			let lead = candidate.as_ref().map(|c| (c.brand_id.as_str(), c.lead_id.as_str()));
-			// Whoever set or closed the slot knows of it already.
-			queued += self
-				.fan_out_one(&mut conn, Rule::Booked, t.event_id, lead, t.by, note, confirmed_since, now, locale, cabinet)
-				.await?;
+			let days = now.duration_since(since).as_hours() / 24;
+			let event = derived_event_id(&["source_silent", &key_id, &since.to_string(), &days.to_string()]);
+			local.push((event, Note::SourceSilent { key_id, kind, last }));
 		}
 		for r in crate::store::access::to_tell(&mut conn, now - crate::access::ASK_AGAIN_AFTER, BATCH).await? {
 			let note = Note::AccessRequested {
@@ -430,67 +427,96 @@ impl Panel {
 				name: r.name,
 				need: r.need,
 			};
-			queued += self
-				.fan_out_one(
-					&mut conn,
-					Rule::AccessRequested,
-					r.event_id,
-					None,
-					None,
-					|_| Ok(note.clone()),
-					confirmed_since,
-					now,
-					locale,
-					cabinet,
-				)
-				.await?;
+			local.push((r.event_id, note));
+		}
+		let mut queued = 0;
+		for (event, note) in local {
+			let outgoing = |_: &PermissionSet| Outgoing {
+				text: note.render(locale),
+				links: note.link(locale, cabinet).into_iter().map(|(label, url)| (label.to_owned(), url)).collect(),
+				buttons: Vec::new(),
+			};
+			let mut tx = crate::store::begin_write(&mut conn).await?;
+			queued += self.fan_out_one(&mut tx, note.rule(), event, None, outgoing, now, now).await?;
+			tx.commit().await.wrap_err("committing a fan-out")?;
 		}
 		Ok(queued)
 	}
 
-	/// One candidate: claimed, then queued for everyone who may hear of it but `skip` — in
-	/// one transaction, so a claim never stands without its messages.
+	/// The last of sites' notes already in the outbox: where the next page starts.
+	pub async fn telegram_notes_after(&self) -> eyre::Result<i64> {
+		let mut conn = self.store.pool().acquire().await.wrap_err("a connection for the notes' cursor")?;
+		db::notes_after(&mut conn).await
+	}
+
+	/// A page of sites' notes, which started after `after`, into the outbox: each note claimed and
+	/// queued for its recipients, and the cursor moved to the page's `next`, in one transaction.
+	/// A note the hub cannot send (an unknown rule, a button it cannot call) fails the page whole:
+	/// the cursor stays, and the next pass stops on it again. How many messages were queued.
+	pub async fn telegram_take_notes(&self, page: NotePage, after: i64, now: Timestamp) -> eyre::Result<usize> {
+		eyre::ensure!(page.next >= after, "sites answered next {} for notes after {after}", page.next);
+		let rules = page.notes.iter().map(check).collect::<eyre::Result<Vec<_>>>()?;
+		let mut tx = self.store.begin_write().await?;
+		let mut queued = 0;
+		for (note, rule) in page.notes.iter().zip(rules) {
+			let outgoing = |permissions: &PermissionSet| {
+				let text = match &note.text_pii {
+					Some(pii) if permissions.may(Pii::See) => pii,
+					_ => &note.text,
+				};
+				Outgoing {
+					text: Rendered {
+						text: text.text.clone(),
+						entities: text.entities.clone(),
+					},
+					links: Vec::new(),
+					buttons: note.buttons.clone(),
+				}
+			};
+			queued += self.fan_out_one(&mut tx, rule, note.event_id, note.skip_user, outgoing, note.created_at, now).await?;
+		}
+		db::set_notes_after(&mut tx, page.next).await?;
+		tx.commit().await.wrap_err("committing a page of notes")?;
+		Ok(queued)
+	}
+
+	/// One candidate, inside the caller's write transaction: claimed, then queued for everyone
+	/// who may hear of it but `skip`, so a claim never stands without its messages.
 	#[expect(clippy::too_many_arguments, reason = "the candidate and the pass's context, each named at the call site")]
 	async fn fan_out_one(
 		&self,
-		conn: &mut sqlx::SqliteConnection,
+		tx: &mut sqlx::SqliteConnection,
 		rule: Rule,
 		event: Uuid,
-		lead: Option<(&str, &str)>,
 		skip: Option<Uuid>,
-		note: impl Fn(&PermissionSet) -> eyre::Result<Note>,
-		confirmed_since: Timestamp,
+		outgoing: impl Fn(&PermissionSet) -> Outgoing,
+		noted_at: Timestamp,
 		now: Timestamp,
-		locale: Locale,
-		cabinet: &url::Url,
 	) -> eyre::Result<usize> {
-		let mut tx = crate::store::begin_write(&mut *conn).await?;
-		if !db::claim_fanout(&mut tx, rule, event, now).await? {
+		if !db::claim_fanout(tx, rule, event, now).await? {
 			return Ok(0);
 		}
 		let mut queued = 0;
-		for r in db::recipients(&mut tx, rule, confirmed_since).await? {
+		for r in db::recipients(tx, rule, now - ACCESS_TTL).await? {
 			if !rule.open_to(&r.permissions) || skip == Some(r.user_id) {
 				continue;
 			}
-			let note = note(&r.permissions)?;
-			let links: Vec<_> = note.link(locale, cabinet).into_iter().collect();
-			let sealed = self.seal_message(rule, event, r.chat_id, &note.render(locale), &links)?;
+			let out = outgoing(&r.permissions);
+			let sealed = self.seal_message(rule, event, r.chat_id, &out.text, &out.links)?;
 			let message = NewMessage {
 				user_id: r.user_id,
 				chat_id: r.chat_id,
 				rule,
 				event_id: event,
-				lead,
-				buttons: note.buttons().iter().map(|b| b.as_str()).collect(),
+				buttons: &out.buttons,
 				text_sealed: &sealed,
 				data_key_fp: self.key.fingerprint(),
+				created_at: noted_at,
 			};
-			if db::enqueue(&mut tx, &message, now).await? {
+			if db::enqueue(tx, &message, now).await? {
 				queued += 1;
 			}
 		}
-		tx.commit().await.wrap_err("committing a fan-out")?;
 		if queued > 0 {
 			tracing::info!(%rule, %event, queued, "telegram: queued");
 		}
@@ -499,9 +525,8 @@ impl Panel {
 
 	/// A queued message and its links (`(label, url)`), sealed: its text is PII, and so may a
 	/// link be.
-	fn seal_message(&self, rule: Rule, event: Uuid, chat: i64, m: &Rendered, links: &[(&str, String)]) -> eyre::Result<Vec<u8>> {
-		let code: Vec<[usize; 2]> = m.code.iter().map(|e| [e.offset, e.length]).collect();
-		let plain = Zeroizing::new(serde_json::to_vec(&serde_json::json!({"text": m.text, "code": code, "links": links})).wrap_err("serializing a message")?);
+	fn seal_message(&self, rule: Rule, event: Uuid, chat: i64, m: &Rendered, links: &[(String, String)]) -> eyre::Result<Vec<u8>> {
+		let plain = Zeroizing::new(serde_json::to_vec(&serde_json::json!({"text": m.text, "entities": m.entities, "links": links})).wrap_err("serializing a message")?);
 		Ok(self.key.seal(&telegram_text_aad(rule.as_str(), event, chat), &plain)?)
 	}
 
@@ -509,74 +534,50 @@ impl Panel {
 		#[derive(serde::Deserialize)]
 		struct Plain {
 			text: String,
-			code: Vec<[usize; 2]>,
-			#[serde(default)] // queued before messages had links
+			entities: Vec<Value>,
 			links: Vec<(String, String)>,
 		}
 		eyre::ensure!(d.data_key_fp.as_slice() == self.key.fingerprint(), "sealed under another PANEL_DATA_KEY");
 		let plain = self.key.open(&telegram_text_aad(&d.rule, d.event_id, d.chat_id), &d.text_sealed).wrap_err("does not open")?;
 		let p: Plain = serde_json::from_slice(&plain).wrap_err("is not a message")?;
-		let message = Rendered {
-			text: p.text,
-			code: p.code.into_iter().map(|[offset, length]| Entity { offset, length }).collect(),
-		};
-		Ok((message, p.links))
-	}
-
-	/// A lead as a message to someone holding `permissions` shows it: the PII of its creation
-	/// only to whoever sees PII in the panel.
-	fn lead_note(&self, c: &LeadCandidate, permissions: &PermissionSet) -> eyre::Result<LeadNote> {
-		let mut note = LeadNote {
-			brand: c.brand_id.clone(),
-			location: c.location_id.clone(),
-			..LeadNote::default()
-		};
-		if !permissions.may(Pii::See) {
-			return Ok(note);
-		}
-		if let Some((blob, fp)) = &c.pii {
-			eyre::ensure!(fp.as_slice() == self.key.fingerprint(), "the PII of event {} was sealed under another PANEL_DATA_KEY", c.event_id);
-			let plain = self.key.open(&pii_aad(c.event_id), blob).wrap_err_with(|| format!("opening the PII of event {}", c.event_id))?;
-			let pii: Value = serde_json::from_slice(&plain).wrap_err("stored PII is not JSON")?;
-			note.name = text_field(&pii, "name");
-			note.need = text_field(&pii, "need");
-			note.phone = text_field(&pii, "phone");
-		}
-		Ok(note)
+		Ok((Rendered { text: p.text, entities: p.entities }, p.links))
 	}
 }
 
-/// A slot as the place reads it: Paris time (every place is in France, v1), or UTC, said so,
-/// where the system has no time zone database.
-fn place_time(at: Timestamp) -> String {
-	match jiff::tz::TimeZone::get("Europe/Paris") {
-		Ok(tz) => at.to_zoned(tz).strftime("%Y-%m-%d %H:%M (Paris)").to_string(),
-		Err(_) => at.strftime("%Y-%m-%d %H:%M UTC").to_string(),
-	}
-}
-
-/// The bot's side of the panel: what it sends and what it does with what it receives.
+/// The bot's side of the conductor: what it sends and what it does with what it receives.
 #[derive(Clone, Debug)]
-pub struct Notifier<B, C> {
+pub struct Notifier<B, C, S> {
 	pub panel: Panel,
 	pub bot: B,
 	/// concierge: to rotate a session's tokens and to ask `GetMe` with them.
 	pub concierge: C,
+	/// Where the lead rules' notes come from, and what a button calls.
+	pub sites: S,
 	pub locale: Locale,
 	/// concierge's origin: where the admins grant the access a user asks for.
 	pub cabinet: url::Url,
 }
 
-impl<B: Bot, C: Refresher + Directory> Notifier<B, C> {
-	fn buttons(&self, chat_id: i64, message: i64, buttons: impl IntoIterator<Item = Button>) -> Vec<InlineButton> {
+impl<B: Bot, C: Refresher + Directory, S: Sites> Notifier<B, C, S> {
+	fn buttons<'a>(&self, chat_id: i64, message: i64, buttons: impl IntoIterator<Item = &'a Button>) -> Vec<InlineButton> {
 		let key = self.panel.key.telegram_callback_key();
 		buttons
 			.into_iter()
 			.map(|b| InlineButton::Callback {
-				label: b.label(self.locale),
-				data: notify::callback_data(&key, chat_id, message, b),
+				label: b.label.clone(),
+				data: notify::callback_data(&key, chat_id, message, &b.id),
 			})
 			.collect()
+	}
+
+	/// Queues what is due: the conductor's own rules, then a page of sites' notes.
+	pub async fn fan_out(&self, now: Timestamp) -> eyre::Result<usize> {
+		let received = self.sites.received().await?;
+		let mut queued = self.panel.telegram_fan_out(now, self.locale, &self.cabinet, &received).await?;
+		let after = self.panel.telegram_notes_after().await?;
+		let page = self.sites.notes(after, NOTES_PAGE).await?;
+		queued += self.panel.telegram_take_notes(page, after, now).await?;
+		Ok(queued)
 	}
 
 	/// Sends what is due at `now`, within the pace (see `store::telegram::claim_due`). First,
@@ -585,7 +586,7 @@ impl<B: Bot, C: Refresher + Directory> Notifier<B, C> {
 	pub async fn deliver(&self, now: Timestamp) -> eyre::Result<Delivered> {
 		let due = {
 			let mut conn = self.panel.store.pool().acquire().await.wrap_err("a connection to claim messages")?;
-			db::expire_stale(&mut conn, now - NEW_LEAD_WINDOW).await?;
+			db::expire_stale(&mut conn, now - STALE_AFTER).await?;
 			for (chat, user, _) in db::crowded(&mut conn, BACKLOG, now).await? {
 				self.summarize(&mut conn, chat, user, now).await?;
 			}
@@ -618,10 +619,10 @@ impl<B: Bot, C: Refresher + Directory> Notifier<B, C> {
 			chat_id: chat,
 			rule: Rule::NewLead,
 			event_id: event,
-			lead: None,
-			buttons: Vec::new(),
+			buttons: &[],
 			text_sealed: &sealed,
 			data_key_fp: self.panel.key.fingerprint(),
+			created_at: now,
 		};
 		db::enqueue(&mut tx, &message, now).await?;
 		tx.commit().await.wrap_err("committing a summary")?;
@@ -653,7 +654,7 @@ impl<B: Bot, C: Refresher + Directory> Notifier<B, C> {
 				return Ok(Outcome::Dead);
 			}
 		};
-		let mut buttons = self.buttons(d.chat_id, d.id, d.buttons.iter().filter_map(|b| Button::from_name(b)));
+		let mut buttons = self.buttons(d.chat_id, d.id, &d.buttons);
 		buttons.extend(links.into_iter().map(|(label, url)| InlineButton::Url { label, url }));
 		// No pool connection is held while Telegram is asked.
 		drop(conn);
@@ -744,9 +745,9 @@ impl<B: Bot, C: Refresher + Directory> Notifier<B, C> {
 		};
 		match answer {
 			Ok(id) if id.user_id != user => Err(eyre::eyre!("GetMe answered another user than the session's")),
-			Ok(Identity { permissions, display_name, .. }) => {
-				db::access_seen(&mut *conn().await?, user, &permissions, &display_name, now).await?;
-				Ok(Access::Granted(permissions, display_name))
+			Ok(identity) => {
+				db::access_seen(&mut *conn().await?, user, &identity.permissions, identity.display_name(), now).await?;
+				Ok(Access::Granted(identity))
 			}
 			Err(DirectoryError::Refused) => {
 				// The token is dead at concierge: so is the session, and whatever it vouched for.
@@ -769,7 +770,7 @@ impl<B: Bot, C: Refresher + Directory> Notifier<B, C> {
 	}
 
 	async fn say(&self, chat: i64, text: String) {
-		let message = Rendered { text, code: Vec::new() };
+		let message = Rendered { text, entities: Vec::new() };
 		if let Err(f) = self.bot.send(chat, &message, &[]).await {
 			tracing::warn!(failure = ?f, "telegram: a reply was not delivered");
 		}
@@ -819,11 +820,11 @@ impl<B: Bot, C: Refresher + Directory> Notifier<B, C> {
 				message,
 			} => {
 				let (reply, edit) = self.press(chat_id, &data, now).await?;
-				if let Some((outbox, button, who)) = edit {
+				if let Some(Pressed { outbox, line, left }) = edit {
 					let mut edited = message;
 					edited.push("\n\n");
-					edited.push(&notify::pressed_line(button, &who, self.locale));
-					let buttons = self.buttons(chat_id, outbox, notify::after_press(button).iter().copied());
+					edited.push(&line);
+					let buttons = self.buttons(chat_id, outbox, &left);
 					if let Err(f) = self.bot.edit(chat_id, message_id, &edited, &buttons).await {
 						tracing::warn!(failure = ?f, "telegram: a pressed message was not updated");
 					}
@@ -863,11 +864,11 @@ impl<B: Bot, C: Refresher + Directory> Notifier<B, C> {
 	}
 
 	/// A button pressed in `chat_id`: what to answer, and — when something was recorded now —
-	/// the message, the button and who pressed it, for the message's new text. Nothing in the
-	/// button is trusted but its signature: the message it names must be this chat's, the chat
-	/// must be linked to the message's user, and that user's access is asked of concierge now.
-	async fn press(&self, chat_id: i64, data: &str, now: Timestamp) -> eyre::Result<(Reply, Option<(i64, Button, String)>)> {
-		let Some((outbox, button)) = notify::parse_callback(&self.panel.key.telegram_callback_key(), chat_id, data) else {
+	/// how the message changes. Nothing in the button is trusted but its signature: the message
+	/// it names must be this chat's, the chat must be linked to the message's user, and that
+	/// user's access is asked of concierge now; sites then judges the call as that user's.
+	async fn press(&self, chat_id: i64, data: &str, now: Timestamp) -> eyre::Result<(Reply, Option<Pressed>)> {
+		let Some((outbox, id)) = notify::parse_callback(&self.panel.key.telegram_callback_key(), chat_id, data) else {
 			tracing::warn!("telegram: a button with data the panel did not sign");
 			return Ok((Reply::BadButton, None));
 		};
@@ -875,43 +876,53 @@ impl<B: Bot, C: Refresher + Directory> Notifier<B, C> {
 		let message = db::message(&mut conn, outbox).await?;
 		let link = db::link_of_chat(&mut conn, chat_id).await?;
 		drop(conn);
-		let Some(message) = message.filter(|m| m.chat_id == chat_id && m.buttons.iter().any(|b| b == button.as_str())) else {
+		let Some((message, button)) = message
+			.filter(|m| m.chat_id == chat_id)
+			.and_then(|m| m.buttons.iter().find(|b| b.id == id).cloned().map(|b| (m, b)))
+		else {
 			return Ok((Reply::BadButton, None));
 		};
 		let Some(link) = link.filter(|l| l.user_id == message.user_id && !l.dead) else {
 			return Ok((Reply::NotLinked, None));
 		};
-		let (permissions, who) = match self.confirm_access(link.user_id, now).await? {
-			Access::Granted(permissions, who) => (permissions, who),
+		let identity = match self.confirm_access(link.user_id, now).await? {
+			Access::Granted(identity) => identity,
 			Access::NoSession => return Ok((Reply::OpenPanel, None)),
 			Access::Unavailable => return Ok((Reply::TryLater, None)),
 		};
-		if !permissions.may(Leads::Edit) {
-			return Ok((Reply::NoAccess, None));
-		}
-		let (Some(brand), Some(lead)) = (message.brand_id.as_deref(), message.lead_id.as_deref()) else {
-			return Ok((Reply::BadButton, None));
-		};
-		let (brand, lead) = (BrandId::parse(brand).wrap_err("a queued brand id")?, LeadId::parse(lead).wrap_err("a queued lead id")?);
 		// The same button of the same message is one action, however often it is pressed or
-		// its update delivered: the event ids derive from it.
-		let key = format!("tg/{outbox}/{}", button.as_str());
-		let by = Actor(link.user_id);
-		let done = match button {
-			Button::Take => self.panel.move_lead_once(by, &brand, &lead, StageMove::Contacted { channel: None }, now, Some(&key)).await,
-			Button::NoAnswer => self.panel.no_answer_once(by, &brand, &lead, now, &key).await,
-		};
-		match done {
-			Ok(done) if done.replayed => Ok((Reply::AlreadyDone, None)),
-			Ok(_) => {
-				tracing::info!(user_id = %link.user_id, button = button.as_str(), %brand, "telegram: a button recorded");
-				Ok((Reply::Done, Some((outbox, button, who))))
+		// its update delivered: sites derives its event ids from this key.
+		let key = format!("tg/{outbox}/{}", button.id);
+		let status = match self.sites.press(&identity, &button.call, &key).await {
+			Ok(status) => status,
+			Err(e) => {
+				tracing::warn!(error = format!("{e:#}"), "telegram: sites did not take a press");
+				return Ok((Reply::TryLater, None));
 			}
-			Err(ActionError::NotFound) => Ok((Reply::LeadGone, None)),
-			Err(ActionError::Conflict(_) | ActionError::Invalid(_)) => Ok((Reply::AlreadyDone, None)),
-			Err(ActionError::Internal(e)) => Err(e),
-		}
+		};
+		Ok(match status {
+			201 => {
+				tracing::info!(user_id = %link.user_id, button = button.id, "telegram: a button recorded");
+				let line = format!("{}: {}", button.pressed, notify::one_line(identity.display_name(), MAX_NAME));
+				let left = message.buttons.into_iter().filter(|b| button.leaves.contains(&b.id)).collect();
+				(Reply::Done, Some(Pressed { outbox, line, left }))
+			}
+			200 | 400 | 409 => (Reply::AlreadyDone, None),
+			404 => (Reply::LeadGone, None),
+			403 => (Reply::NoAccess, None),
+			other => {
+				tracing::warn!(status = other, button = button.id, "telegram: sites refused a press");
+				(Reply::TryLater, None)
+			}
+		})
 	}
+}
+
+/// A press sites recorded: the message's line saying so, and the buttons it leaves.
+struct Pressed {
+	outbox: i64,
+	line: String,
+	left: Vec<Button>,
 }
 
 enum Outcome {

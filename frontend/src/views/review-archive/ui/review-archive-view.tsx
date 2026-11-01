@@ -2,18 +2,16 @@
 
 import { useSyncExternalStore } from "react";
 
-import { SIGN_IN_PATH } from "@/shared/api";
+import { SIGN_IN_PATH, csrfCookieName } from "@/shared/api";
 import { useT } from "@/shared/i18n";
 import { RemoteElement } from "@/shared/mfe";
 
 const never = () => () => {};
-// the panel names its CSRF cookie by the scheme it is served over: known in the browser only
-const csrfCookie = () => (window.location.protocol === "https:" ? "__Host-sa_csrf" : "sa_csrf");
 
 /** review_archive's dashboard, its API and bundle forwarded by the panel (docs/ARCHITECTURE.md, Forward). */
 export function ReviewArchiveView() {
   const t = useT();
-  const csrf = useSyncExternalStore(never, csrfCookie, () => null);
+  const csrf = useSyncExternalStore(never, csrfCookieName, () => null);
   if (csrf === null) return null;
   return (
     <RemoteElement

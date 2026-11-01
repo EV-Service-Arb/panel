@@ -1,18 +1,16 @@
-//! Telegram: link tokens, links, the users' rules, the fan-out marks, the outbox and the
-//! poller's lease. Every timestamp is the caller's `now`, never the database's clock, so the
+//! Telegram: link tokens, links, the users' rules, the fan-out marks, the outbox, the poller's
+//! lease and the cursor into sites' notes. Every timestamp is the caller's `now`, never the database's clock, so the
 //! pacing can be driven by a test's virtual time.
 
 use eyre::WrapErr;
 use jiff::{SignedDuration, Timestamp};
-use panel_core::{
-	fact::LeadSuspect,
-	notify::{GLOBAL_PER_SECOND, PER_CHAT_GAP, Rule},
-};
+use panel_core::notify::{GLOBAL_PER_SECOND, PER_CHAT_GAP, Rule};
 use sa_auth::PermissionSet;
 use sqlx::{SqliteConnection, types::Json};
 use uuid::Uuid;
 
 use super::{begin_write, from_db, to_db};
+use crate::telegram::Button;
 
 // ── link tokens ─────────────────────────────────────────────────────────────────────────
 
@@ -332,166 +330,13 @@ pub async fn recipients(conn: &mut SqliteConnection, rule: Rule, confirmed_since
 
 // ── fan-out ─────────────────────────────────────────────────────────────────────────────
 
-/// A lead's creation not yet fanned out for `rule`, with its sealed PII.
-#[derive(Clone, Debug)]
-pub struct LeadCandidate {
-	pub event_id: Uuid,
-	pub brand_id: String,
-	pub lead_id: String,
-	pub location_id: Option<String>,
-	pub created_at: Option<Timestamp>,
-	pub pii: Option<(Vec<u8>, Vec<u8>)>,
-	/// The panel user who typed the lead in (its creation of kind `panel`), if one did.
-	pub entered_by: Option<Uuid>,
-	/// Why the landing's antispam doubted it; `None` for an ordinary lead.
-	pub suspect: Option<LeadSuspect>,
-}
-
-type LeadCandidateDb = (
-	Uuid,
-	String,
-	String,
-	Option<String>,
-	Option<i64>,
-	Option<Vec<u8>>,
-	Option<Vec<u8>>,
-	Option<String>,
-	Option<String>,
-);
-
-fn lead_candidate((event_id, brand_id, lead_id, location_id, created_at, pii, fp, entered_by, suspect): LeadCandidateDb) -> eyre::Result<LeadCandidate> {
-	Ok(LeadCandidate {
-		suspect: suspect
-			.as_deref()
-			.map(LeadSuspect::parse)
-			.transpose()
-			.wrap_err_with(|| format!("stored suspect mark of lead {brand_id}/{lead_id}"))?,
-		event_id,
-		brand_id,
-		lead_id,
-		location_id,
-		created_at: created_at.map(from_db).transpose()?,
-		pii: pii.zip(fp),
-		// A panel event's source id is the user's concierge id; anything else names no one.
-		entered_by: entered_by.and_then(|id| Uuid::parse_str(&id).ok()),
-	})
-}
-
-/// Leads whose creation (the one that counts: the first journaled) arrived at or after
-/// `since`, still waiting for their first contact, and not yet told of.
-pub async fn new_leads(conn: &mut SqliteConnection, since: Timestamp, limit: i64) -> eyre::Result<Vec<LeadCandidate>> {
-	let rows: Vec<LeadCandidateDb> = sqlx::query_as(
-		"SELECT e.id, l.brand_id, l.lead_id, l.location_id, l.created_at, e.pii_sealed, e.data_key_fp, \
-		 CASE WHEN e.source_kind = 'panel' THEN e.source_id END, l.suspect \
-		 FROM events e JOIN leads l ON l.brand_id = e.brand_id AND l.lead_id = e.lead_id \
-		 WHERE e.type = 'lead.created' AND e.status = 'registered' AND e.received_at >= $1 AND l.stage = 'created' \
-		 AND NOT EXISTS (SELECT 1 FROM events f WHERE f.brand_id = e.brand_id AND f.lead_id = e.lead_id AND f.type = 'lead.created' \
-		                 AND f.status = 'registered' AND (f.received_at, f.id) < (e.received_at, e.id)) \
-		 AND NOT EXISTS (SELECT 1 FROM telegram_fanout t WHERE t.rule = 'new_lead' AND t.event_id = e.id) \
-		 ORDER BY e.received_at, e.id LIMIT $2",
-	)
-	.bind(to_db(since))
-	.bind(limit)
-	.fetch_all(&mut *conn)
-	.await
-	.wrap_err("finding new leads to tell of")?;
-	rows.into_iter().map(lead_candidate).collect()
-}
-
-/// Leads created in `[since, before)` and still not contacted — past the SLA when `before`
-/// is now minus it — not yet reminded of. Keyed by their creation event. A lead the antispam
-/// doubted is told of once, as such, and never chased: its SLA is nobody's promise.
-pub async fn overdue_leads(conn: &mut SqliteConnection, since: Timestamp, before: Timestamp, limit: i64) -> eyre::Result<Vec<LeadCandidate>> {
-	let rows: Vec<LeadCandidateDb> = sqlx::query_as(
-		"SELECT c.id, l.brand_id, l.lead_id, l.location_id, l.created_at, c.pii_sealed, c.data_key_fp, \
-		 CASE WHEN c.source_kind = 'panel' THEN c.source_id END, l.suspect FROM leads l \
-		 JOIN events c ON c.id = ( \
-		   SELECT e.id FROM events e \
-		   WHERE e.brand_id = l.brand_id AND e.lead_id = l.lead_id AND e.type = 'lead.created' AND e.status = 'registered' \
-		   ORDER BY e.received_at, e.id LIMIT 1 \
-		 ) \
-		 WHERE l.stage = 'created' AND l.contacted_at IS NULL AND l.created_at >= $1 AND l.created_at < $2 AND l.suspect IS NULL \
-		 AND NOT EXISTS (SELECT 1 FROM telegram_fanout t WHERE t.rule = 'contact_overdue' AND t.event_id = c.id) \
-		 ORDER BY l.created_at LIMIT $3",
-	)
-	.bind(to_db(since))
-	.bind(to_db(before))
-	.bind(limit)
-	.fetch_all(&mut *conn)
-	.await
-	.wrap_err("finding overdue leads to remind of")?;
-	rows.into_iter().map(lead_candidate).collect()
-}
-
-/// A payment not yet told of.
-#[derive(Clone, Debug)]
-pub struct PaymentCandidate {
-	pub event_id: Uuid,
-	pub brand_id: String,
-	pub lead_id: String,
-	pub billed: i64,
-	pub commission: i64,
-	pub currency: String,
-}
-
-/// Payments journaled at or after `since`, not yet told of.
-pub async fn new_payments(conn: &mut SqliteConnection, since: Timestamp, limit: i64) -> eyre::Result<Vec<PaymentCandidate>> {
-	let rows: Vec<(Uuid, String, String, i64, i64, String)> = sqlx::query_as(
-		"SELECT p.event_id, p.brand_id, p.lead_id, p.billed, p.commission, p.currency FROM payments p JOIN events e ON e.id = p.event_id \
-		 WHERE e.received_at >= $1 AND NOT EXISTS (SELECT 1 FROM telegram_fanout t WHERE t.rule = 'payment_received' AND t.event_id = p.event_id) \
-		 ORDER BY e.received_at, e.id LIMIT $2",
-	)
-	.bind(to_db(since))
-	.bind(limit)
-	.fetch_all(&mut *conn)
-	.await
-	.wrap_err("finding payments to tell of")?;
-	Ok(rows
-		.into_iter()
-		.map(|(event_id, brand_id, lead_id, billed, commission, currency)| PaymentCandidate {
-			event_id,
-			brand_id,
-			lead_id,
-			billed,
-			commission,
-			currency,
-		})
-		.collect())
-}
-
-/// An active source that sent nothing since `before` (or never, and was added before it).
-#[derive(Clone, Debug)]
-pub struct SilentSource {
-	pub key_id: String,
-	pub kind: String,
-	/// Its last event, if it ever sent one.
-	pub last: Option<Timestamp>,
-	/// Since when it is silent: its last event, or when it was added.
-	pub since: Timestamp,
-}
-
-pub async fn silent_sources(conn: &mut SqliteConnection, before: Timestamp) -> eyre::Result<Vec<SilentSource>> {
-	type Row = (String, String, Option<i64>, i64);
-	let rows: Vec<Row> = sqlx::query_as(
-		"SELECT key_id, kind, last, COALESCE(last, created_at) FROM ( \
-		   SELECT s.key_id, s.kind, s.created_at, (SELECT max(e.received_at) FROM events e WHERE e.key_id = s.key_id) AS last \
-		   FROM sources s WHERE s.revoked_at IS NULL \
-		 ) WHERE COALESCE(last, created_at) < $1 ORDER BY key_id",
-	)
-	.bind(to_db(before))
-	.fetch_all(&mut *conn)
-	.await
-	.wrap_err("finding silent sources")?;
-	rows.into_iter()
-		.map(|(key_id, kind, last, since)| {
-			Ok(SilentSource {
-				key_id,
-				kind,
-				last: last.map(from_db).transpose()?,
-				since: from_db(since)?,
-			})
-		})
-		.collect()
+/// An active source: its key id, kind and when it was added.
+pub async fn active_sources(conn: &mut SqliteConnection) -> eyre::Result<Vec<(String, String, Timestamp)>> {
+	let rows: Vec<(String, String, i64)> = sqlx::query_as("SELECT key_id, kind, created_at FROM sources WHERE revoked_at IS NULL ORDER BY key_id")
+		.fetch_all(&mut *conn)
+		.await
+		.wrap_err("listing the active sources")?;
+	rows.into_iter().map(|(key_id, kind, created_at)| Ok((key_id, kind, from_db(created_at)?))).collect()
 }
 
 /// Marks `(rule, event_id)` as fanned out; `false` when it already was (by another replica).
@@ -513,28 +358,28 @@ pub struct NewMessage<'a> {
 	pub chat_id: i64,
 	pub rule: Rule,
 	pub event_id: Uuid,
-	pub lead: Option<(&'a str, &'a str)>,
-	pub buttons: Vec<&'static str>,
+	pub buttons: &'a [Button],
 	pub text_sealed: &'a [u8],
 	pub data_key_fp: [u8; 32],
+	/// When what it tells of was noted: the stale rule counts from it.
+	pub created_at: Timestamp,
 }
 
 /// Queues a message; `false` when `(rule, event, chat)` is queued already.
 pub async fn enqueue(conn: &mut SqliteConnection, m: &NewMessage<'_>, now: Timestamp) -> eyre::Result<bool> {
 	let done = sqlx::query(
-		"INSERT INTO telegram_outbox (user_id, chat_id, rule, event_id, brand_id, lead_id, buttons, text_sealed, data_key_fp, next_attempt_at, created_at) \
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) ON CONFLICT (rule, event_id, chat_id) DO NOTHING",
+		"INSERT INTO telegram_outbox (user_id, chat_id, rule, event_id, buttons, text_sealed, data_key_fp, next_attempt_at, created_at) \
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (rule, event_id, chat_id) DO NOTHING",
 	)
 	.bind(m.user_id)
 	.bind(m.chat_id)
 	.bind(m.rule.as_str())
 	.bind(m.event_id)
-	.bind(m.lead.map(|(b, _)| b))
-	.bind(m.lead.map(|(_, l)| l))
-	.bind(Json(&m.buttons))
+	.bind(Json(m.buttons))
 	.bind(m.text_sealed)
 	.bind(m.data_key_fp.as_slice())
 	.bind(to_db(now))
+	.bind(to_db(m.created_at))
 	.execute(&mut *conn)
 	.await
 	.wrap_err("queueing a message")?
@@ -568,7 +413,7 @@ pub struct Due {
 	pub chat_id: i64,
 	pub rule: String,
 	pub event_id: Uuid,
-	pub buttons: Vec<String>,
+	pub buttons: Vec<Button>,
 	pub text_sealed: Vec<u8>,
 	pub data_key_fp: Vec<u8>,
 	/// Tries so far, this one included.
@@ -603,7 +448,7 @@ pub async fn claim_due(conn: &mut SqliteConnection, now: Timestamp, lease_until:
 		tx.commit().await.wrap_err("ending a claim")?;
 		return Ok(Vec::new());
 	}
-	type Row = (i64, Uuid, i64, String, Uuid, Json<Vec<String>>, Vec<u8>, Vec<u8>, i32);
+	type Row = (i64, Uuid, i64, String, Uuid, Json<Vec<Button>>, Vec<u8>, Vec<u8>, i32);
 	// `pick`: each free chat's oldest due message (the lowest id of its group).
 	let rows: Vec<Row> = sqlx::query_as(
 		"WITH busy AS ( \
@@ -772,25 +617,36 @@ pub async fn dead(conn: &mut SqliteConnection, id: i64, error: &str) -> eyre::Re
 pub struct SentMessage {
 	pub user_id: Uuid,
 	pub chat_id: i64,
-	pub brand_id: Option<String>,
-	pub lead_id: Option<String>,
-	pub buttons: Vec<String>,
+	pub buttons: Vec<Button>,
 }
 
 pub async fn message(conn: &mut SqliteConnection, id: i64) -> eyre::Result<Option<SentMessage>> {
-	type Row = (Uuid, i64, Option<String>, Option<String>, Json<Vec<String>>);
-	let row: Option<Row> = sqlx::query_as("SELECT user_id, chat_id, brand_id, lead_id, buttons FROM telegram_outbox WHERE id = $1 AND state = 'sent'")
+	type Row = (Uuid, i64, Json<Vec<Button>>);
+	let row: Option<Row> = sqlx::query_as("SELECT user_id, chat_id, buttons FROM telegram_outbox WHERE id = $1 AND state = 'sent'")
 		.bind(id)
 		.fetch_optional(&mut *conn)
 		.await
 		.wrap_err("reading a sent message")?;
-	Ok(row.map(|(user_id, chat_id, brand_id, lead_id, buttons)| SentMessage {
-		user_id,
-		chat_id,
-		brand_id,
-		lead_id,
-		buttons: buttons.0,
-	}))
+	Ok(row.map(|(user_id, chat_id, Json(buttons))| SentMessage { user_id, chat_id, buttons }))
+}
+
+// ── sites' notes ────────────────────────────────────────────────────────────────────────
+
+/// The last of sites' notes already in the outbox.
+pub async fn notes_after(conn: &mut SqliteConnection) -> eyre::Result<i64> {
+	sqlx::query_scalar("SELECT notes_after FROM telegram_poller")
+		.fetch_one(&mut *conn)
+		.await
+		.wrap_err("reading the notes' cursor")
+}
+
+pub async fn set_notes_after(conn: &mut SqliteConnection, after: i64) -> eyre::Result<()> {
+	sqlx::query("UPDATE telegram_poller SET notes_after = max(notes_after, $1)")
+		.bind(after)
+		.execute(&mut *conn)
+		.await
+		.wrap_err("moving the notes' cursor")?;
+	Ok(())
 }
 
 // ── the poller ──────────────────────────────────────────────────────────────────────────

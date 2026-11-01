@@ -1,4 +1,4 @@
-//! For tests only (feature `testing`): a throwaway database per test, and signed batches.
+//! For tests only (feature `testing`): a throwaway database per test, and signed requests.
 //!
 //! Each test gets its own SQLite file in the system's temp directory, removed when the
 //! [`TestDb`] is dropped: no server, nothing to set up, so the database tests run everywhere
@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 use panel_core::signature;
-use serde_json::{Value, json};
 use sqlx::sqlite::SqlitePoolOptions;
 use uuid::Uuid;
 
@@ -92,31 +91,14 @@ impl Signed {
 	}
 }
 
-/// `{"events": events}`, signed at `at` with `secret`, as a source sends it: each event's
-/// `source.id` set to the key id, which is what a source is called.
-pub fn sign(key_id: &str, secret: &str, events: &[Value], at: Timestamp) -> Signed {
-	let events: Vec<Value> = events
-		.iter()
-		.cloned()
-		.map(|mut e| {
-			if let Some(source) = e.get_mut("source").and_then(Value::as_object_mut) {
-				source.insert("id".to_owned(), json!(key_id));
-			}
-			e
-		})
-		.collect();
-	sign_verbatim(key_id, secret, &events, at)
-}
-
-/// [`sign`], leaving the events exactly as given.
-pub fn sign_verbatim(key_id: &str, secret: &str, events: &[Value], at: Timestamp) -> Signed {
-	let body = serde_json::to_vec(&json!({ "events": events })).expect("JSON");
+/// `body`, signed at `at` with `secret`, as a source sends a batch.
+pub fn sign(key_id: &str, secret: &str, body: &[u8], at: Timestamp) -> Signed {
 	let timestamp = at.as_second().to_string();
 	Signed {
 		key_id: key_id.to_owned(),
-		signature: signature::sign(secret.as_bytes(), &timestamp, &body),
+		signature: signature::sign(secret.as_bytes(), &timestamp, body),
 		timestamp,
-		body,
+		body: body.to_vec(),
 	}
 }
 
@@ -130,35 +112,6 @@ pub fn sign_get(key_id: &str, secret: &str, path: &str, at: Timestamp) -> Signed
 		timestamp,
 		body: Vec::new(),
 	}
-}
-
-/// A messenger lead as a landing sends it: `lead.created` with its channel and ref, the
-/// customer's need and locality (and a phone and a name, which a lookup must never give back)
-/// in its PII.
-pub fn messenger_lead(occurred_at: Timestamp, brand: &str, lead: &str, channel: &str, message_ref: &str) -> Value {
-	let mut e = event(
-		"lead.created",
-		occurred_at,
-		"site",
-		json!({"brandId": brand, "locationId": "royat", "leadId": lead}),
-		json!({"channel": channel, "messageRef": message_ref}),
-	);
-	e["pii"] = json!({"need": "fuite sous l'évier", "locality": "Royat", "phone": "+33612345678", "name": "Jean Dupont"});
-	e
-}
-
-/// An event as a source writes it, with a fresh id.
-pub fn event(r#type: &str, occurred_at: Timestamp, kind: &str, subject: Value, properties: Value) -> Value {
-	json!({
-		"id": Uuid::now_v7().to_string(),
-		"schema": "sa.funnel.v1",
-		"type": r#type,
-		"typeVersion": 1,
-		"occurredAt": occurred_at.to_string(),
-		"source": {"kind": kind, "id": "test"},
-		"subject": subject,
-		"properties": properties,
-	})
 }
 
 /// What `sa:operator` holds.

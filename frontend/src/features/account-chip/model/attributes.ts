@@ -12,10 +12,10 @@ export const CHIP_API_VERSION = 2;
 /** Every attribute the panel may set, so one it stops sending is removed rather than left stale. */
 export const CHIP_ATTRIBUTE_NAMES = ["data-mode", "data-name", "data-email", "data-profile-href", "data-switch-href", "data-groups"] as const;
 
-export type ChipAttributeName = (typeof CHIP_ATTRIBUTE_NAMES)[number];
+type ChipAttributeName = (typeof CHIP_ATTRIBUTE_NAMES)[number];
 export type ChipAttributes = Partial<Record<ChipAttributeName, string>>;
 
-export interface ChipItem {
+interface ChipItem {
   id: string;
   href: string;
   label: string;
@@ -37,14 +37,10 @@ function clip(value: string): string {
   return chars.length > MAX_TEXT ? chars.slice(0, MAX_TEXT).join("") : chars.join("");
 }
 
-/** The panel's own menu entries, the ones the kit's AccountMenu showed before. */
+/** The chip is the account's: past the profile it holds only acting as a member, for whoever may. */
 export function panelGroups(me: Caller, t: T): ChipGroup[] {
-  const items: ChipItem[] = [];
-  if (may(me, "sa:review_archive:members:act_as")) {
-    items.push({ id: "act-as", href: ROUTES.reviewArchiveActAs, label: t("account.actAs"), external: true });
-  }
-  items.push({ id: "tokens", href: ROUTES.reviewArchiveTokens, label: t("account.tokens.history"), external: true });
-  return [{ id: "sa", items }];
+  if (!may(me, "sa:review_archive:members:act_as")) return [];
+  return [{ id: "sa", items: [{ id: "act-as", href: ROUTES.reviewArchiveActAs, label: t("account.actAs"), external: true }] }];
 }
 
 /** The element's attributes for `me` on `pathname`; an absent value is an absent attribute. */

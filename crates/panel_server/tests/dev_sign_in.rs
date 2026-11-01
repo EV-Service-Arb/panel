@@ -50,6 +50,7 @@ fn production(db: &str) -> Vec<(&'static str, String)> {
 		("PANEL_ASSERTION_KEY", "k1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=".to_owned()),
 		("PANEL_REVIEW_ARCHIVE_URL", "http://review-archive:59110".to_owned()),
 		("PANEL_PLAYBOOK_URL", "http://playbook-web.personal:59082".to_owned()),
+		("PANEL_SITES_URL", "http://sites-panel:59121".to_owned()),
 	]
 }
 
@@ -103,11 +104,15 @@ async fn the_binary_takes_an_alias_or_a_list_of_permissions() {
 			("PANEL_PUBLIC_ORIGIN", ORIGIN),
 		])
 	};
-	for who in ["sa:operator", "sa:work:read, sa:work:leads:edit", "none"] {
+	for who in ["sa:operator", "sa:sites:work:read, sa:sites:work:leads:edit", "none"] {
 		let (code, stderr) = with(who);
 		assert_eq!(code, Some(0), "{who}: {stderr}");
 	}
-	for (who, named) in [("operator", "`operator`"), ("sa:work:read,sa:work:everything", "`sa:work:everything`"), ("sa:*", "`sa:*`")] {
+	for (who, named) in [
+		("operator", "`operator`"),
+		("sa:sites:work:read,sa:sites:work:everything", "`sa:sites:work:everything`"),
+		("sa:*", "`sa:*`"),
+	] {
 		let (code, stderr) = with(who);
 		assert_eq!(code, Some(78), "{who}: {stderr}");
 		assert!(stderr.contains(named), "{who}: {stderr}");
@@ -169,7 +174,12 @@ async fn dev_app(db: &TestDb, permissions: PermissionSet, email: &str) -> Router
 		panel_origin: ORIGIN.to_owned(),
 		concierge_origin: ORIGIN.to_owned(),
 	};
-	http::app(SignIn::new(panel(db).await, Concierge::dev(who), config))
+	http::app(
+		SignIn::new(panel(db).await, Concierge::dev(who), config),
+		None,
+		Default::default(),
+		panel_server::telegram::BotName::off(),
+	)
 }
 
 #[tokio::test]
@@ -205,13 +215,6 @@ async fn dev_sign_in_holds_what_it_was_given() {
 	assert_eq!(status, StatusCode::OK, "{me}");
 	assert_eq!(serde_json::from_value::<PermissionSet>(me["permissions"].clone()).unwrap(), operator());
 	assert_eq!(b.send(&app, Method::GET, "/api/v1/sources").await.0, StatusCode::FORBIDDEN, "not an operator's screen");
-
-	let db = TestDb::create().await;
-	let app = dev_app(&db, ["sa:work:read"].into_iter().collect(), "dev-reader@localhost").await;
-	let mut b = Browser::default();
-	b.sign_in(&app).await;
-	assert_eq!(b.send(&app, Method::GET, "/api/v1/leads").await.0, StatusCode::OK, "work");
-	assert_eq!(b.send(&app, Method::GET, "/api/v1/experiments").await.0, StatusCode::FORBIDDEN, "no analysis");
 }
 
 #[tokio::test]

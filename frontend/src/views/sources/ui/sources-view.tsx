@@ -1,17 +1,15 @@
 "use client";
 
-import { Settled, Skeleton } from "@evinvest/uikit";
+import { PageFrame, Settled, Skeleton } from "@evinvest/uikit";
 import { useState } from "react";
 
 import { may, useMe } from "@/entities/session";
 import { type AddedSource, fetchSources } from "@/entities/source";
 import { AddSourceForm, SecretDialog } from "@/features/manage-sources";
-import { ROUTES } from "@/shared/config/routes";
 import { useT } from "@/shared/i18n";
 import { useResource } from "@/shared/lib/use-resource";
 import { EmptyState } from "@/shared/ui/empty-state";
 import { ErrorState } from "@/shared/ui/error-state";
-import { ScreenFrame } from "@/shared/ui/screen-frame";
 
 import { SourcesTable } from "./sources-table";
 
@@ -19,19 +17,19 @@ import { SourcesTable } from "./sources-table";
 export function SourcesView() {
   const t = useT();
   const me = useMe();
-  const sources = useResource("sources", fetchSources, "sources", { live: ["sources"] });
+  const sources = useResource("sources", fetchSources, "sources", { live: "sources" });
   const [added, setAdded] = useState<AddedSource | null>(null);
 
   if (!may(me, "sa:admin:sources:manage")) {
     return (
-      <ScreenFrame title={t("sources.title")} back={ROUTES.more}>
+      <PageFrame breakpoint="md" title={t("sources.title")}>
         <ErrorState failure={{ kind: "forbidden", message: "" }} />
-      </ScreenFrame>
+      </PageFrame>
     );
   }
 
   return (
-    <ScreenFrame title={t("sources.title")} back={ROUTES.more}>
+    <PageFrame breakpoint="md" title={t("sources.title")}>
       <AddSourceForm
         onAdded={(a) => {
           setAdded(a);
@@ -46,6 +44,6 @@ export function SourcesView() {
         )}
       </Settled>
       <SecretDialog added={added} onClose={() => setAdded(null)} />
-    </ScreenFrame>
+    </PageFrame>
   );
 }
