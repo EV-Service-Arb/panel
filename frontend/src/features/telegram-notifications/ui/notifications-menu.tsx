@@ -4,7 +4,7 @@ import { Button, NavDot, Popover, PopoverContent, PopoverTrigger, Skeleton, Swit
 import { Bell } from "lucide-react";
 import { useState } from "react";
 
-import { type Rule, linkTelegram, setRules, unlinkTelegram, useTelegram } from "@/entities/telegram";
+import { RULES, type Rule, linkTelegram, setRules, unlinkTelegram, useTelegram } from "@/entities/telegram";
 import { useT } from "@/shared/i18n";
 import { ErrorState } from "@/shared/ui/error-state";
 import { notifyFailure } from "@/shared/ui/notify";
@@ -92,7 +92,10 @@ export function NotificationsMenu() {
 
 function Rules({ rules, busy, onToggle }: { rules: Partial<Record<Rule, boolean>>; busy: boolean; onToggle: (rule: Rule, on: boolean) => void }) {
   const t = useT();
-  const open = Object.entries(rules) as [Rule, boolean][];
+  const open = RULES.flatMap((rule) => {
+    const on = rules[rule];
+    return on === undefined ? [] : [[rule, on] as const];
+  });
   if (open.length === 0) return <p className="text-sm text-ink-soft">{t("telegram.none")}</p>;
   return (
     <section className="space-y-2 border-t border-border pt-3">

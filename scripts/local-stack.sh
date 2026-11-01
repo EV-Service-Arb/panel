@@ -317,7 +317,9 @@ if [ "$watch" = 1 ]; then
 	(
 		cd "$root/frontend"
 		[ -d node_modules ] || prefixed web npm ci
-		PANEL_DEV_BACKEND="$origin" prefixed web npx next dev --port "$WEB_DEV_PORT"
+		# the image's build switches (flake.nix, the frontend's env)
+		NEXT_PUBLIC_SIGNIN_OVERLAY=1 NEXT_PUBLIC_WALLET_PAGE=1 PANEL_DEV_BACKEND="$origin" \
+			prefixed web npx next dev --port "$WEB_DEV_PORT"
 	) &
 	web_pid=$!
 	groups+=("$web_pid")

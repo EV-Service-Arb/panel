@@ -233,7 +233,7 @@ function OwnScreens({ className, onNavigate }: { className?: string; onNavigate?
       {ownScreens(me, WALLET_PAGE_ENABLED).map((id) => {
         const here = pathname.startsWith(ROUTES[id]);
         return (
-          <Link key={id} href={ROUTES[id]} onClick={() => onNavigate?.()} aria-current={here ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "justify-start", here && "bg-hover/50")}>
+          <Link key={id} href={ROUTES[id]} onClick={() => onNavigate?.()} aria-current={here ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "justify-start gap-2", here && "bg-hover/50")}>
             {id === "wallet" && <Wallet aria-hidden className="size-4" />}
             {/* the wallet is an icon in the bar, a labelled row in the sheet */}
             <span className={cn(id === "tokens" && "tabular-nums", id === "wallet" && "md:sr-only")}>{label[id]}</span>
