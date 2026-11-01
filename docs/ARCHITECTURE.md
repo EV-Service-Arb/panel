@@ -1,16 +1,20 @@
 # Architecture
 
 The conductor is Service-Arb's host on `sa.evinvest.ltd`: who a person is (sessions through
-concierge), who a machine is (the source keys), the shell the browser loads, and the forward to
-the services behind the origin — sites_panel (the sites business: leads, places, pricing,
-experiments, bookings, invoices), review_archive and playbook. Each service trusts only the
-assertion the conductor signs for a request; none of them sees a session. Live updates and
-Telegram are the conductor's hubs, fed by what sites tells it.
+concierge), what they hold across the services (the gmails and GMBs they manage, their tokens),
+who a machine is (the source keys), the shell the browser loads, and the forward to the services
+behind the origin — sites_panel (the sites business: leads, places, pricing, experiments,
+bookings, invoices), review_archive and playbook. Each service trusts only the assertion the
+conductor signs for a request; none of them sees a session, and none calls the conductor: it
+reads them. Live updates and Telegram are its hubs, fed by what sites tells it; tokens are
+charged from what review_archive tells it.
 
 ```text
 browser ─session──▶ conductor ─x-sa-assertion (User)──────────────▶ sites /api/v1, review_archive, playbook
 landings/bots ─HMAC▶ conductor ─x-sa-assertion (Source) + raw body ▶ sites /api/ingest/v1
 conductor ◀── pulls (Conductor) ── sites /api/conductor/{changes, notifications, sources/received}
+conductor ◀── pulls (Conductor) ── review_archive /api/conductor/charges
+conductor ─── pushes (Conductor) ─▶ review_archive /api/conductor/gmbs   GMBs, balances, the cursor
 landings ──────────────────────── direct, in-cluster ────────────▶ sites /api/internal
 ```
 
@@ -19,15 +23,21 @@ A cargo workspace; dependencies point inwards only.
 ```text
 crates/panel_core/       no I/O: brand ids, the HMAC of a signed request and its window, the
                          Telegram rules, the conductor's own messages, the buttons' signed data,
-                         retry and pacing
+                         retry and pacing, tokens' renewal and a charge's split
 crates/panel/            the engine: `Panel` (sources and their authentication, sessions, access
                          requests, the hubs' state), `seal` (XChaCha20-Poly1305 at rest), `store`
                          (SQLite, migrations/ applied on open, writes BEGIN IMMEDIATE), `telegram`
                          (links, rules, outbox, delivery, buttons; the Bot, Directory and Sites
-                         ports), `live` (the in-process bus)
+                         ports), `live` (the in-process bus), `gmbs`, `tokens` (the ledger,
+                         review_archive's charges, the snapshot), `import` (review_archive's,
+                         once)
 crates/sa_auth/          the `sa` permissions (concierge_iam derives), the aliases `sa:operator` /
                          `sa:admin`, and the assertion: a User, a Source or the Conductor, for one
                          request of one service
+crates/sa_places/        a Google place from what a person pastes (an id, a Maps URL, a Places
+                         API search); review_archive takes it too
+crates/sa_ui/            Dioxus components the services' front ends share
+crates/panel_contracts/  concierge's gRPC contract (tonic, from contracts/proto)
 crates/panel_server/     the `panel` binary: CLI and HTTP, thin over `Panel`
   src/signin.rs          /auth/login, /auth/callback, /auth/logout; the /api/v1 gate
   src/concierge.rs       concierge over gRPC: ExchangeCode, RefreshClientToken, GetMe,
@@ -40,12 +50,15 @@ crates/panel_server/     the `panel` binary: CLI and HTTP, thin over `Panel`
   src/forward.rs         the services behind the origin; `Services`, the one client and signing
                          key every call to them goes through
   src/live.rs            GET /api/v1/live, and the follower of sites' change feed
+  src/gmbs.rs            /api/v1/gmails, /api/v1/gmbs
+  src/tokens.rs          /api/v1/tokens, /api/v1/admin/tokens; review_archive followed and told
   src/telegram.rs        the Bot API, sites as the bot reads it, the bot's work in `serve`,
                          /api/v1/telegram
   src/web.rs             the front end's static export (PANEL_WEB_DIR), behind every other route
   src/settings.rs        the environment (ev_lib `settings!`)
 crates/panel_gen/        `nix run .#gen`: the front end's mirror of Rust types (ev_lib `ts_gen`),
-                         into frontend/src/entities/{session,source}/model/generated.ts, committed;
+                         into frontend/src/entities/{session,source,gmb,tokens}/model/generated.ts,
+                         committed;
                          the pre-commit hook re-runs it
 contracts/proto/concierge/v1/  concierge's auth and directory protos, vendored at the commit in
                                REV (`sync.sh` refreshes them)
@@ -79,7 +92,9 @@ POST /auth/logout    CSRF; every session of the user is closed
 - **Permissions, no admission.** Any active concierge account signs in. `GetMe` answers the
   concrete `sa` permissions the user holds (no alias, no wildcard; anything outside `sa` is a
   failed answer). Every `/api/v1` route sits under one section — Admin
-  (`sa:admin:sources:manage`) — or none (`/me`, `/access/requests*`, `/telegram*`).
+  (`sa:admin:sources:manage`), Tokens (`sa:admin:tokens:grant`) — or none (`/me`,
+  `/access/requests*`, `/telegram*`, the caller's own gmails, GMBs and tokens). Each fresh
+  `GetMe` upserts the user (`users`: id, email, name), whom tokens and gmails belong to.
   `http::api_routes` is the table the router is built from and the tests walk.
 - **The catalog.** `serve` publishes `Catalog::collect("sa", PANEL_BUILD_EPOCH)` — the whole `sa`
   namespace, every service's permissions — with `PublishCatalog` before it serves (the image
@@ -157,8 +172,8 @@ reserved paths (`web.rs`) are derived from it.
   wallet load straight from `https://evinvest.ltd`, admitted by the CSP's directories (Deploy
   requirements). `/cabinet` stays reserved: a JSON 404, never the front end's page.
 - Without `PANEL_ASSERTION_KEY`, `PANEL_REVIEW_ARCHIVE_URL`, `PANEL_PLAYBOOK_URL` and
-  `PANEL_SITES_URL` (all four, or none), nothing is forwarded, nothing ingested, and the hubs
-  hear nothing of sites.
+  `PANEL_SITES_URL` (all four, or none), nothing is forwarded, nothing ingested, the hubs hear
+  nothing of sites, and review_archive is neither followed nor told.
 
 ## Ingest
 
@@ -211,7 +226,26 @@ POST   /telegram/link        fresh          → 201 {url: "https://t.me/<bot>?st
 DELETE /telegram/link                       204, 404
 PUT    /telegram/rules                      {rules: {new_lead: false, …}} → 200 as GET; 400 for a
                                             rule they do not open
+GET    /gmails                              {gmails: [{id, gmail, created_at, gmbs: [{id, place_id,
+                                            name, address, gbp_account, gbp_location, created_at}]}]}
+                                            the caller's, removed ones left out
+POST   /gmails                              {gmail} → 201 the gmail; 409 held already
+DELETE /gmails/{id}                         204; its GMBs count as removed
+GET    /gmbs/resolve?place=                 {candidates: [{place_id, name, address}]} (sa_places)
+POST   /gmails/{id}/gmbs                    {place_id} → 201 the GMB; 409 under that gmail already
+DELETE /gmbs/{id}                           204
+GET    /tokens                              {balance, daily, cap, kickbacks}: renewed, the
+                                            kick-backs not claimed
+GET    /tokens/ledger?before=&limit=        {entries, next}: newest first, limit 1–200
+GET    /tokens/usage                        {days: [{day, charges, tokens}]}: 30 UTC days
+POST   /tokens/claim                        → 200 as GET /tokens
+GET    /admin/tokens         Tokens         {users: [{user_id, email, name, balance}]}
+POST   /admin/tokens/{user}  Tokens, fresh  {set: n, note?} | {add: n, note?} | {grant: n, note}
+                                            → 200 {balance}; a grant is owed until claimed
 ```
+
+An id in a path that is not the caller's is a 404. Before the import (below) the gmail and GMB
+writes and every tokens route answer 503.
 
 The page `/access?need=&continue=` (outside the shell) is where a service sends a signed-in user
 lacking `need`: it asks, then reads `/me` every 30 s and goes on to `continue` (a path, the
@@ -255,6 +289,40 @@ closes              4401 the session ended   1001 the server is stopping
 - **The session is asked again** every 60 s, and at once when a session ends: a sign-out (every
   socket of the user), a sign-in replacing the browser's session, concierge refusing a rotation
   or `GetMe`. Concierge unreachable keeps the socket.
+
+## Tokens and GMBs
+
+A person's gmails and the GMBs (Google places) each manages are the conductor's; the services
+store their ids. Tokens are a ledger: a balance is its rows' sum, renewed a day's worth when
+read (`TOKENS_DAILY` up to `TOKENS_CAP`; a first balance `TOKENS_START_CAP_MULTIPLE` caps). What
+spends them — today review_archive's walks — charges after the fact.
+
+```text
+follow (10 s)   GET review_archive /api/conductor/charges?after=<cursor>&limit=500 (Conductor)
+                → one write transaction, taken only if the cursor is still `after`: each charge's
+                payers (subs) renewed, its cost split over them within their balances, a
+                `charge` row each (service, key `run:<id>`, label), what a failed walk owes back
+                as kick-backs, the cursor moved; an unknown sub fails the page, the cursor stays
+push (a change, a page, 60 s)
+                PUT review_archive /api/conductor/gmbs (Conductor): every GMB ever (removed ones
+                marked), every user's balance renewed, and the cursor they were read at, from
+                one transaction
+```
+
+- **The archive's allowance** is that snapshot's balance less its own charges past the cursor,
+  so a walk is neither counted twice nor missed, and walks go on while the conductor is away.
+  Two services spending one balance could overlap by at most a walk each; holds come with a
+  second spender.
+- **A 404 on `/api/conductor/*`** is an archive not cut over yet: told once at info, asked again
+  every 60 s.
+- **The import opens it.** `panel import review-archive <file>` (review_archive's
+  `scripts/export_members.sql`) writes its people, gmails, GMBs (ids kept), ledger and pending
+  kick-backs in one transaction, refused unless the tables are empty, and creates the cursor.
+  Until then tokens and GMBs are closed and `serve` neither follows nor pushes: a balance read
+  writes a renewal, which would make the import refuse. A fresh install imports an empty
+  document.
+- **A place's site** is sites': its `places.gmb_id`. The `/gmbs` page reads each service's tags
+  from that service, through the forward; a service down or refusing loses only its tags.
 
 ## Telegram
 
@@ -333,15 +401,20 @@ delivery (0.5 s)            lead messages noted > 1 h ago dead ("stale"); > 20 w
   texts are sealed (XChaCha20-Poly1305, what they belong to as associated data) under
   `PANEL_DATA_KEY`, whose fingerprint is stored beside each.
 - **A note is in the outbox before the cursor passes it**: the page and the cursor move in one
-  transaction.
+  transaction. **So is a charge in the ledger**, and a page is taken only from where the cursor
+  stands.
+- **The ledger is append-only, and nothing a service stores an id of is deleted.**
+  `token_ledger` refuses UPDATE and DELETE; gmails and GMBs only get `removed_at`, kick-backs
+  only `claimed_at`, each once.
 - **One file, migrated on open.** `PANEL_DB_PATH` names it (`/data/panel.db` in the image); every
   command creates it if missing and applies the migrations it lacks first (`panel migrate` does
   only that). A migration newer than the build is let be. Tables are STRICT, foreign keys
   enforced, timestamps INTEGER microseconds since the epoch, UUIDs 16-byte blobs.
 - **Secrets come from the environment only** (`PANEL_DATA_KEY`, `SENTRY_DSN`,
-  `RP_CLIENT_SECRET_SA`, `PANEL_ASSERTION_KEY`, `TELEGRAM_BOT_TOKEN`), through `ev_lib::settings`;
-  with `APP_ENV=production` the database, the data key, the four sign-in variables and the
-  forward's four are required at boot (`panel --print-required-vars` lists them).
+  `RP_CLIENT_SECRET_SA`, `PANEL_ASSERTION_KEY`, `TELEGRAM_BOT_TOKEN`, `GOOGLE_MAPS_KEY`), through
+  `ev_lib::settings`; with `APP_ENV=production` the database, the data key, the four sign-in
+  variables, the forward's four and `TOKENS_START_CAP_MULTIPLE` are required at boot
+  (`panel --print-required-vars` lists them).
 
 ## Deploy requirements
 
@@ -374,6 +447,8 @@ delivery (0.5 s)            lead messages noted > 1 h ago dead ("stale"); > 20 w
 - **concierge within reach.** The pods call concierge's gRPC (`CONCIERGE_GRPC_ADDR`) for every
   sign-in, rotation and `GetMe`. concierge must register client `sa` with redirect URI
   `<PANEL_PUBLIC_ORIGIN>/auth/callback` exactly and hold the hash of `RP_CLIENT_SECRET_SA`.
+- **Places, outbound.** With `GOOGLE_MAPS_KEY` the pods need egress to
+  `places.googleapis.com:443` (a pasted URL without a place id, a GMB's name and address).
 - **Telegram, outbound only.** With `TELEGRAM_BOT_TOKEN` the pods need egress to
   `api.telegram.org:443`; no webhook is set on the bot (`getUpdates` refuses to run while one is).
 - **`/api/v1/live` through the public IngressRoute, as a WebSocket.** Nothing in front may buffer
