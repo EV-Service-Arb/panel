@@ -49,7 +49,7 @@ async fn a_signed_in_call_reaches_the_service_with_an_assertion_and_without_the_
 	let Principal::User(a) = a.principal else { panic!("a session's call is a user's") };
 	assert_eq!(a.email, "dev-admin@localhost");
 	assert!(
-		a.permissions.iter().all(|p| p.starts_with("sa:review_archive:")) && a.permissions.iter().count() == 3,
+		a.permissions.iter().all(|p| p.starts_with("sa:review_archive:")) && a.permissions.iter().count() == 2,
 		"{:?}",
 		a.permissions
 	);
