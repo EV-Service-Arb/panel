@@ -524,6 +524,16 @@ pub(crate) async fn check(s: &SignIn, headers: &HeaderMap, freshness: Freshness)
 		if let Err(e) = s.panel.telegram_access_seen(me.user_id, &me.permissions, display, Timestamp::now()).await {
 			crate::report(&e, "recording a user's access for Telegram");
 		}
+		// The user's gmails and tokens hang on this row.
+		let user = panel::tokens::User {
+			user_id: me.user_id,
+			email: me.email.clone(),
+			name: me.preferred_name.clone(),
+		};
+		if let Err(e) = s.panel.user_seen(&user, Timestamp::now()).await {
+			crate::report(&e, "recording a user seen");
+			return Err(Denied::Failed(StatusCode::INTERNAL_SERVER_ERROR, "internal error"));
+		}
 	}
 	Ok(Caller {
 		user_id: me.user_id,

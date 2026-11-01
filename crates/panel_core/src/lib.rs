@@ -4,11 +4,13 @@
 //! - [`ids`]: what a source key may name (brands) and how its key id looks;
 //! - [`signature`]: how a source signs a batch, and how the conductor checks it;
 //! - [`notify`]: the Telegram rules, the conductor's own messages, the buttons' signed data, and
-//!   how a delivery is retried.
+//!   how a delivery is retried;
+//! - [`tokens`]: how a balance renews and a charge falls on its payers.
 
 pub mod ids;
 pub mod notify;
 pub mod signature;
+pub mod tokens;
 
 /// Why an input cannot be accepted. The message is what the caller is told, so it names the
 /// field and never echoes a secret or PII.

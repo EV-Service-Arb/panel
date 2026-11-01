@@ -4,7 +4,13 @@
 use std::path::Path;
 
 use ev_lib::ts_gen::Ts;
-use panel_server::{access::AccessRequestDto, signin::Caller};
+use panel::tokens::Kind;
+use panel_server::{
+	access::AccessRequestDto,
+	gmbs::{CandidatesDto, GmailsDto},
+	signin::Caller,
+	tokens::{BalanceChangeDto, BalanceDto, LedgerDto, TokenHoldersDto, TokensDto, UsageDto},
+};
 use sa_auth::{Catalog, SourceKind};
 
 fn main() {
@@ -26,6 +32,18 @@ fn main() {
 				name: "KEYED_SOURCE_KINDS",
 				ty: "KeyedSourceKind",
 				items: SourceKind::ALL.into_iter().filter(|k| k.keyed()).map(SourceKind::as_str).collect(),
+			},
+		],
+	);
+	Ts::write(&root.join("entities/gmb/model/generated.ts"), &[Ts::types::<(GmailsDto, CandidatesDto)>()]);
+	Ts::write(
+		&root.join("entities/tokens/model/generated.ts"),
+		&[
+			Ts::types::<(TokensDto, LedgerDto, UsageDto, TokenHoldersDto, BalanceChangeDto, BalanceDto)>(),
+			Ts::Union {
+				name: "LEDGER_KINDS",
+				ty: "LedgerKind",
+				items: Kind::ALL.map(Kind::as_str).into(),
 			},
 		],
 	);

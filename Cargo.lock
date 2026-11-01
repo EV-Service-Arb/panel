@@ -3157,7 +3157,9 @@ dependencies = [
  "jiff",
  "panel",
  "panel_core",
+ "reqwest",
  "sa_auth",
+ "sa_places",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3202,6 +3204,7 @@ name = "panel_gen"
 version = "0.1.0"
 dependencies = [
  "ev_lib 0.24.2",
+ "panel",
  "panel_server",
  "sa_auth",
 ]
@@ -3230,6 +3233,7 @@ dependencies = [
  "reqwest",
  "rustix",
  "sa_auth",
+ "sa_places",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3938,6 +3942,21 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sa_places"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "eyre",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
 ]
 
 [[package]]

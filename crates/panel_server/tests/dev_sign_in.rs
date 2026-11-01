@@ -51,6 +51,7 @@ fn production(db: &str) -> Vec<(&'static str, String)> {
 		("PANEL_REVIEW_ARCHIVE_URL", "http://review-archive:59110".to_owned()),
 		("PANEL_PLAYBOOK_URL", "http://playbook-web.personal:59082".to_owned()),
 		("PANEL_SITES_URL", "http://sites-panel:59121".to_owned()),
+		("TOKENS_START_CAP_MULTIPLE", "1".to_owned()),
 	]
 }
 

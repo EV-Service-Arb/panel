@@ -208,7 +208,7 @@ struct Setup {
 
 async fn setup() -> Setup {
 	let db = TestDb::create().await;
-	let panel = Panel::new(db.store().await, DataKey::from_hex(DATA_KEY).unwrap());
+	let panel = aliases::panel_with(db.store().await, DataKey::from_hex(DATA_KEY).unwrap());
 	let (mock, base) = mock_bot().await;
 	let sites = FakeSites::default();
 	let (sites_base, seen) = serve_sites(sites.clone()).await;

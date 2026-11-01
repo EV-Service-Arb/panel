@@ -11,7 +11,8 @@ use std::{collections::BTreeSet, net::SocketAddr};
 use clap::{Parser, Subcommand};
 use ev_lib::error_monitoring;
 use eyre::WrapErr;
-use panel::{Panel, seal::DataKey, store::Store, telegram::Notifier};
+use jiff::Timestamp;
+use panel::{Panel, seal::DataKey, store::Store, telegram::Notifier, tokens::Change};
 use panel_core::ids::BrandId;
 use panel_server::{
 	DEFAULT_BIND,
@@ -21,6 +22,7 @@ use panel_server::{
 	http, live,
 	signin::{SignIn, SignInConfig},
 	telegram::{self, BotApi, BotName},
+	tokens,
 	web::{self, Files},
 };
 use sa_auth::{Catalog, SourceKind};
@@ -51,6 +53,18 @@ enum Cmd {
 	/// The sources that may write events, and their keys.
 	#[command(subcommand)]
 	Source(SourceCmd),
+	/// A person's gmails.
+	#[command(subcommand)]
+	Gmail(GmailCmd),
+	/// The GMBs a gmail manages.
+	#[command(subcommand)]
+	Gmb(GmbCmd),
+	/// A person's tokens, as an admin changes them.
+	#[command(subcommand)]
+	Tokens(TokensCmd),
+	/// What another service held before the conductor did.
+	#[command(subcommand)]
+	Import(ImportCmd),
 	/// Print a fresh PANEL_DATA_KEY.
 	GenDataKey,
 }
@@ -74,6 +88,58 @@ enum SourceCmd {
 	Revoke {
 		key_id: String,
 	},
+}
+
+#[derive(Subcommand)]
+enum GmailCmd {
+	/// Add a gmail to a person (by the email they sign in with).
+	Add { email: String, gmail: String },
+}
+
+#[derive(Subcommand)]
+enum GmbCmd {
+	/// Add a GMB under a gmail: a place id, or a Maps URL (a name in it needs GOOGLE_MAPS_KEY).
+	Add { gmail_id: i64, place: String },
+}
+
+#[derive(Subcommand)]
+enum TokensCmd {
+	/// Set a person's balance to n (0 or more).
+	Set {
+		email: String,
+		n: i64,
+		/// The admin's email, recorded.
+		#[arg(long)]
+		by: String,
+		#[arg(long)]
+		note: Option<String>,
+	},
+	/// Add n (1 or more): a sale, its reference in the note.
+	Add {
+		email: String,
+		n: i64,
+		#[arg(long)]
+		by: String,
+		#[arg(long)]
+		note: Option<String>,
+	},
+	/// Owe a person n (1 or more) until they claim it.
+	Grant {
+		email: String,
+		n: i64,
+		#[arg(long)]
+		by: String,
+		/// What it is for.
+		#[arg(long)]
+		note: String,
+	},
+}
+
+#[derive(Subcommand)]
+enum ImportCmd {
+	/// review_archive's people, gmails, GMBs and tokens, as its scripts/export_members.sql
+	/// prints them; opens tokens and GMBs. A fresh install imports an empty document.
+	ReviewArchive { file: std::path::PathBuf },
 }
 
 // Sentry must be initialised before the async runtime starts, hence no #[tokio::main].
@@ -133,7 +199,7 @@ fn init_tracing() -> eyre::Result<()> {
 }
 
 async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSignIn>) -> eyre::Result<()> {
-	let connect = || async { eyre::Ok(Panel::new(Store::open(settings.db_path()?).await?, settings.data_key()?)) };
+	let connect = || async { eyre::Ok(Panel::new(Store::open(settings.db_path()?).await?, settings.data_key()?, settings.renewal()?, settings.places()?)) };
 	match cli.cmd {
 		Cmd::Migrate => {
 			Store::open(settings.db_path()?).await?.pool().close().await;
@@ -161,6 +227,35 @@ async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSign
 			serve(connect().await?, identity, forward, telegram, grafana, settings.web()?, bind).await
 		}
 		Cmd::Source(cmd) => source(&connect().await?, cmd).await,
+		Cmd::Gmail(GmailCmd::Add { email, gmail }) => {
+			let panel = connect().await?;
+			let owner = panel.user_by_email(&email).await?;
+			let added = panel.add_gmail(owner, &gmail, Timestamp::now()).await??;
+			println!("gmail {}: {}", added.id, added.gmail);
+			Ok(())
+		}
+		Cmd::Gmb(GmbCmd::Add { gmail_id, place }) => {
+			let added = connect().await?.add_gmb(None, gmail_id, &place, Timestamp::now()).await??;
+			println!("GMB {}: {} {}", added.id, added.place_id, added.name.as_deref().unwrap_or("(unnamed: no GOOGLE_MAPS_KEY)"));
+			Ok(())
+		}
+		Cmd::Tokens(cmd) => {
+			let (email, by, change) = match cmd {
+				TokensCmd::Set { email, n, by, note } => (email, by, Change::Set { n, note }),
+				TokensCmd::Add { email, n, by, note } => (email, by, Change::Add { n, note }),
+				TokensCmd::Grant { email, n, by, note } => (email, by, Change::Grant { n, note }),
+			};
+			let panel = connect().await?;
+			let user = panel.user_by_email(&email).await?;
+			let balance = panel.change_balance(user, change, &by, Timestamp::now()).await??;
+			println!("{email}: {balance}");
+			Ok(())
+		}
+		Cmd::Import(ImportCmd::ReviewArchive { file }) => {
+			let raw = std::fs::read(&file).wrap_err_with(|| format!("reading {}", file.display()))?;
+			let export = serde_json::from_slice(&raw).wrap_err_with(|| format!("{} is not review_archive's export", file.display()))?;
+			connect().await?.import_review_archive(export).await
+		}
 		Cmd::GenDataKey => {
 			println!("{}", DataKey::generate_hex()?);
 			Ok(())
@@ -268,6 +363,7 @@ async fn serve(
 		}
 	};
 	let bot_name = bot.as_ref().map_or_else(BotName::off, |(_, name)| name.clone());
+	let engine = panel.clone();
 	let grafana_root = format!("{}/grafana/", config.panel_origin.trim_end_matches('/'));
 	let sign_in = SignIn::new(panel, concierge, config);
 	let forward = match &services {
@@ -315,8 +411,13 @@ async fn serve(
 			}
 		};
 		let feed = async {
-			if let Some(services) = services {
-				live::follow(services, bus.clone(), stopped.clone()).await;
+			if let Some(services) = &services {
+				live::follow(services.clone(), bus.clone(), stopped.clone()).await;
+			}
+		};
+		let tokens = async {
+			if let Some(services) = &services {
+				tokens::run(engine, services.clone(), stopped.clone()).await;
 			}
 		};
 		let grafana = async {
@@ -324,7 +425,7 @@ async fn serve(
 				grafana.run(&server, &grafana_root, stopped.clone()).await;
 			}
 		};
-		tokio::join!(bot, feed, grafana);
+		tokio::join!(bot, feed, tokens, grafana);
 	};
 	let (served, ()) = tokio::join!(server, hubs);
 	served

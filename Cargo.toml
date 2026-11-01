@@ -7,6 +7,7 @@ members = [
     "crates/panel_gen",
     "crates/panel_server",
     "crates/sa_auth",
+    "crates/sa_places",
     "crates/sa_ui",
 ]
 
@@ -24,6 +25,7 @@ panel_contracts = { path = "crates/panel_contracts", version = "0.1.0" }
 panel_core = { path = "crates/panel_core", version = "0.1.0" }
 panel_server = { path = "crates/panel_server", version = "0.1.0" }
 sa_auth = { path = "crates/sa_auth", version = "0.1.0" }
+sa_places = { path = "crates/sa_places", version = "0.1.0" }
 
 axum = "0.8"
 base64 = "0.22"
@@ -61,7 +63,7 @@ tower = "0.5"
 tower-http = "0.6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-ts-rs = { version = "12", features = ["uuid-impl"] }
+ts-rs = { version = "12", features = ["no-serde-warnings", "uuid-impl"] }
 url = "2"
 uuid = "1"
 zeroize = "1"

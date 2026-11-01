@@ -9,7 +9,7 @@ use axum::{
 	http::{HeaderValue, Method, StatusCode, header},
 	response::{IntoResponse, Response},
 };
-use panel::Panel;
+use panel::{Panel, Refused};
 use panel_core::{Invalid, ids::BrandId};
 use sa_auth::SourceKind;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -40,6 +40,8 @@ pub enum ApiError {
 	Forbidden,
 	NotFound,
 	Conflict(String),
+	/// Not now: the message says until when.
+	Unavailable(String),
 	Internal(eyre::Report),
 }
 
@@ -50,6 +52,7 @@ impl IntoResponse for ApiError {
 			Self::Forbidden => (StatusCode::FORBIDDEN, "your permissions do not allow this".to_owned()),
 			Self::NotFound => (StatusCode::NOT_FOUND, "not found".to_owned()),
 			Self::Conflict(m) => (StatusCode::CONFLICT, m),
+			Self::Unavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m),
 			Self::Internal(e) => {
 				crate::report(&e, "the conductor's API");
 				(StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_owned())
@@ -62,6 +65,17 @@ impl IntoResponse for ApiError {
 impl From<eyre::Report> for ApiError {
 	fn from(e: eyre::Report) -> Self {
 		Self::Internal(e)
+	}
+}
+
+impl From<Refused> for ApiError {
+	fn from(r: Refused) -> Self {
+		match r {
+			Refused::Invalid(m) => Self::BadRequest(m),
+			Refused::NotFound => Self::NotFound,
+			Refused::Conflict(m) => Self::Conflict(m),
+			Refused::Closed => Self::Unavailable(r.to_string()),
+		}
 	}
 }
 

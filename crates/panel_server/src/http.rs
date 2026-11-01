@@ -1,5 +1,6 @@
 //! The HTTP surface: `/health`, the sign-in (`/auth/*`, [`crate::signin`]), the conductor's own
-//! `/api/v1` ([`crate::api`], [`crate::access`], [`crate::telegram`]) and its live socket
+//! `/api/v1` ([`crate::api`], [`crate::access`], [`crate::gmbs`], [`crate::tokens`],
+//! [`crate::telegram`]) and its live socket
 //! (`/api/v1/live`, [`crate::live`]); with the forward configured, ingest (`ingest.rs`) and
 //! the services behind the origin ([`crate::forward`]).
 
@@ -15,7 +16,7 @@ use axum::{
 	routing::{MethodFilter, MethodRouter, get, on, post},
 };
 use panel::Panel;
-use sa_auth::{PermissionSet, Sources};
+use sa_auth::{PermissionSet, Sources, Tokens};
 use serde_json::json;
 use tower::{BoxError, ServiceBuilder, limit::GlobalConcurrencyLimitLayer};
 use tower_http::timeout::TimeoutLayer;
@@ -23,11 +24,13 @@ use tower_http::timeout::TimeoutLayer;
 use crate::{
 	access, api,
 	forward::Forward,
+	gmbs,
 	grafana::Grafana,
 	ingest,
 	live::{self, Live, LiveLimits},
 	signin::{self, Freshness, Gate, SignIn},
 	telegram::{self, BotName, TelegramState},
+	tokens,
 };
 
 /// A part of the conductor's API, and the permission that opens it.
@@ -35,12 +38,15 @@ use crate::{
 pub enum Section {
 	/// Sources and their keys.
 	Admin,
+	/// Everyone's tokens.
+	Tokens,
 }
 
 impl Section {
 	pub fn may(self, permissions: &PermissionSet) -> bool {
 		match self {
 			Self::Admin => permissions.may(Sources::Manage),
+			Self::Tokens => permissions.may(Tokens::Grant),
 		}
 	}
 }
@@ -72,7 +78,7 @@ impl ApiRoute {
 /// Every `/api/v1` route on the engine's state; the profile's Telegram routes, open to every
 /// signed-in user, are [`crate::telegram`]'s.
 pub fn api_routes() -> Vec<ApiRoute> {
-	[api::routes(), access::routes()].into_iter().flatten().collect()
+	[api::routes(), access::routes(), gmbs::routes(), tokens::routes()].into_iter().flatten().collect()
 }
 
 /// What a request may cost.

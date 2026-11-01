@@ -50,7 +50,9 @@ export function PanelTopBar() {
   const me = useMe();
   const signOut = useSignOut();
   const router = useRouter();
-  const archive = usePathname().startsWith("/review_archive");
+  const pathname = usePathname();
+  const archive = pathname.startsWith("/review_archive");
+  const gmbs = pathname.startsWith(ROUTES.gmbs);
   const sites = seesSites(me);
   const [open, setOpen] = useState<Open>(null);
 
@@ -92,6 +94,9 @@ export function PanelTopBar() {
                   <SitesElement tag="mfe-sites-nav" />
                 </section>
               )}
+              <Link href={ROUTES.gmbs} onClick={() => setOpen(null)} aria-current={gmbs ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "w-full justify-start px-2", gmbs && "bg-hover/50")}>
+                {t("nav.gmbs")}
+              </Link>
               <Link href={ROUTES.reviewArchive} onClick={() => setOpen(null)} aria-current={archive ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "w-full justify-start px-2", archive && "bg-hover/50")}>
                 {t("nav.reviewArchive")}
               </Link>
@@ -103,6 +108,13 @@ export function PanelTopBar() {
           <NavigationMenu viewport={false} className="ml-4 hidden md:flex" aria-label={t("nav.primary")}>
             <NavigationMenuList>
               {sites && <SitesMenu open={open === "sites"} onOpenChange={(o) => setOpen(o ? "sites" : null)} />}
+              <NavigationMenuItem>
+                <NavigationMenuLink asChild className={cn(navigationMenuTriggerStyle(), gmbs && "bg-hover/50")}>
+                  <Link href={ROUTES.gmbs} aria-current={gmbs ? "page" : undefined}>
+                    {t("nav.gmbs")}
+                  </Link>
+                </NavigationMenuLink>
+              </NavigationMenuItem>
               <NavigationMenuItem>
                 <NavigationMenuLink asChild className={cn(navigationMenuTriggerStyle(), archive && "bg-hover/50")}>
                   <Link href={ROUTES.reviewArchive} aria-current={archive ? "page" : undefined}>
@@ -176,25 +188,25 @@ function AppSwitcher() {
   );
 }
 
-/** The caller's own screens; Usage carries the review-archive tokens, never called a balance: evinvest.ltd's wallet is another ledger. */
+/** The caller's own screens; Tokens is labelled with the count, never called a balance: evinvest.ltd's wallet is another ledger. */
 function OwnScreens({ className, onNavigate }: { className?: string; onNavigate?: () => void }) {
   const t = useT();
   const me = useMe();
   const tokens = useTokens();
   const pathname = usePathname();
-  const label = { sources: t("nav.sources"), usage: t("usage.title"), wallet: t("nav.wallet") };
+  const label = {
+    sources: t("nav.sources"),
+    usage: t("usage.title"),
+    tokens: tokens.status === "ok" ? t("tokens.count", { n: tokens.data.balance }) : t("nav.tokens"),
+    wallet: t("nav.wallet"),
+  };
   return (
     <div className={cn("flex items-center gap-1", className)}>
       {ownScreens(me, WALLET_PAGE_ENABLED).map((id) => {
         const here = pathname.startsWith(ROUTES[id]);
         return (
           <Link key={id} href={ROUTES[id]} onClick={() => onNavigate?.()} aria-current={here ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "justify-start", here && "bg-hover/50")}>
-            {label[id]}
-            {id === "usage" && tokens !== null && (
-              <span className={cn("ml-1.5 tabular-nums", tokens.balance > 0 ? "text-ink" : "text-ink-soft")} title={t("account.tokens.renewal", { daily: tokens.daily, cap: tokens.cap })}>
-                {t("tokens.count", { n: tokens.balance })}
-              </span>
-            )}
+            <span className={cn(id === "tokens" && "tabular-nums")}>{label[id]}</span>
           </Link>
         );
       })}

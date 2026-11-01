@@ -1,6 +1,6 @@
 /**
  * A stand-in for the conductor's backend, for `next dev` without Rust or concierge: `/api/v1`
- * (who you are, sources, access requests), `/auth/*`, review_archive's `/me` for the tokens, and
+ * (who you are, sources, access requests, gmails, tokens), `/auth/*`, review_archive's and sites' GMB tags, and
  * the live socket. Same shapes, same gate (401 without a session, CSRF on writes). The sites'
  * API and bundle are sites_panel's: run it for `/sites`.
  *
@@ -52,6 +52,21 @@ function signedIn(req: IncomingMessage): boolean {
   return /(?:^|;\s*)sa_session=/.test(req.headers.cookie ?? "");
 }
 
+const gmails: { id: number; gmail: string; created_at: string; gmbs: Json[] }[] = [
+  {
+    id: 1,
+    gmail: "owner@gmail.com",
+    created_at: minsAgo(60 * 24 * 30),
+    gmbs: [
+      { id: 1, place_id: "ChIJstubstubstub00001", name: "Plombier Paris 11 (stub)", address: "12 rue Oberkampf, Paris", gbp_account: null, gbp_location: null, created_at: minsAgo(60 * 24 * 30) },
+      { id: 2, place_id: "ChIJstubstubstub00002", name: "Serrurier Lyon 3 (stub)", address: "4 cours Gambetta, Lyon", gbp_account: null, gbp_location: null, created_at: minsAgo(60 * 24 * 20) },
+    ],
+  },
+];
+const tokens = { balance: 75, daily: 15, cap: 500, kickbacks: [{ id: 1, at: minsAgo(90), amount: 12, service: "review_archive", key: "run:42", label: "Plombier Paris 11 (stub)", by: null, note: null }] };
+const ledger = Array.from({ length: 8 }, (_, i) => ({ id: 8 - i, at: minsAgo(60 * 24 * i), delta: i % 2 ? -12 : 15, kind: i % 2 ? "charge" : "accrual", service: i % 2 ? "review_archive" : null, key: i % 2 ? `run:${40 - i}` : null, label: i % 2 ? "Plombier Paris 11 (stub)" : null, by: null, note: null }));
+const usageDays = Array.from({ length: 30 }, (_, i) => ({ day: iso(new Date(now().getTime() - (29 - i) * 86_400_000)).slice(0, 10), charges: i % 3, tokens: (i % 3) * 12 }));
+
 /** Never granted: the stub's role is fixed, so a request waits for good. */
 const accessRequests: { need: string; requested_at: string }[] = [];
 
@@ -74,6 +89,18 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL): Promise
     accessRequests.push(made);
     return send(res, 201, made);
   }
+  if (path === "/gmails" && req.method === "GET") return send(res, 200, { gmails });
+  if (path === "/gmails" && req.method === "POST") {
+    const { gmail } = (await readJson(req)) as { gmail: string };
+    const made = { id: gmails.length + 1, gmail, created_at: iso(now()), gmbs: [] };
+    gmails.push(made);
+    return send(res, 201, made);
+  }
+  if (path === "/gmbs/resolve") return send(res, 200, { candidates: [{ place_id: "ChIJstubstubstub00009", name: "Électricien Lille (stub)", address: "8 rue Faidherbe, Lille" }] });
+  if (path === "/tokens") return send(res, 200, tokens);
+  if (path === "/tokens/ledger") return send(res, 200, { entries: ledger, next: null });
+  if (path === "/tokens/usage") return send(res, 200, { days: usageDays });
+  if (path === "/admin/tokens") return send(res, 200, { users: [{ user_id: USER_ID, email: "stub@example.test", name: `Stub ${ROLE}`, balance: tokens.balance }] });
   if (path === "/sources" && ROLE !== "admin") return send(res, 403, { error: "your permissions do not allow this" });
   if (path === "/sources" && req.method === "GET") return send(res, 200, { sources });
   if (path === "/sources" && req.method === "POST") {
@@ -109,9 +136,17 @@ const server = createServer((req, res) => {
   if (url.pathname === "/auth/logout" && req.method === "POST") {
     return send(res, 204, undefined, { "set-cookie": ["sa_session=; Path=/; Max-Age=0", "sa_csrf=; Path=/; Max-Age=0"] });
   }
-  if (url.pathname === "/api/review_archive/me") {
+  if (url.pathname === "/api/review_archive/me/gmbs") {
     if (!signedIn(req)) return send(res, 401, { error: "sign in" });
-    return send(res, 200, { tokens: { balance: 75, daily: 5, cap: 100 } });
+    return send(res, 200, { gmbs: { "1": { tracked: true, rating: 4.6, reviews: 132 }, "2": { tracked: false, rating: null, reviews: null } }, places_tracked: 1 });
+  }
+  if (url.pathname === "/api/sites/gmbs") {
+    if (!signedIn(req)) return send(res, 401, { error: "sign in" });
+    return send(res, 200, { "1": { brand: "aquafix", location: "paris-11" } });
+  }
+  if (url.pathname === "/api/sites/places") {
+    if (!signedIn(req)) return send(res, 401, { error: "sign in" });
+    return send(res, 200, { places: [{ brand: "aquafix", location: "paris-11", withdrawn: false }, { brand: "aquafix", location: "lyon-3", withdrawn: false }] });
   }
   if (url.pathname.startsWith("/api/v1/")) {
     api(req, res, url).catch((e: unknown) => send(res, 500, { error: String(e) }));

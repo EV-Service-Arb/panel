@@ -1,6 +1,7 @@
 //! The conductor: the HTTP surface over the engine's [`panel::Panel`] — the sign-in through
-//! concierge, its own API, ingest and the forward to the services behind it — and the hubs
-//! (live updates, the Telegram bot). The binary (`panel`) adds the CLI and the process bootstrap.
+//! concierge, its own API (people's GMBs and tokens among it), ingest and the forward to the
+//! services behind it — and the hubs (live updates, the Telegram bot, review_archive's charges
+//! and snapshot). The binary (`panel`) adds the CLI and the process bootstrap.
 //!
 //! A library target too, so tests can serve the real router in-process.
 
@@ -9,6 +10,7 @@ pub mod api;
 pub mod concierge;
 pub mod cookies;
 pub mod forward;
+pub mod gmbs;
 pub mod grafana;
 pub mod http;
 mod ingest;
@@ -17,6 +19,7 @@ pub mod signin;
 pub mod telegram;
 #[cfg(feature = "testing")]
 pub mod testing;
+pub mod tokens;
 pub mod web;
 
 /// Where `serve` listens unless told otherwise; the image binds the same port on 0.0.0.0.

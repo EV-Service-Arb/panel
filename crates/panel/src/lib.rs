@@ -3,10 +3,14 @@
 //!
 //! [`Panel`] is the facade the server talks to; [`store`] is SQLite; [`seal`] encrypts what must
 //! not sit in the clear. [`session`] is signing in through concierge and the sessions that
-//! follow; [`access`] the access requests; [`telegram`] the bot's links, rules, outbox and
-//! buttons; [`live`] the bus that tells the server's sockets what changed.
+//! follow; [`access`] the access requests; [`gmbs`] people's gmails and the GMBs they manage;
+//! [`tokens`] their balances and review_archive's charges, and [`import`] both from there;
+//! [`telegram`] the bot's links, rules, outbox and buttons; [`live`] the bus that tells the
+//! server's sockets what changed.
 
 pub mod access;
+pub mod gmbs;
+pub mod import;
 pub mod live;
 pub mod seal;
 pub mod session;
@@ -14,6 +18,7 @@ pub mod store;
 pub mod telegram;
 #[cfg(feature = "testing")]
 pub mod testing;
+pub mod tokens;
 
 use std::{collections::BTreeSet, sync::Arc};
 
@@ -22,12 +27,14 @@ use jiff::Timestamp;
 use panel_core::{
 	ids::BrandId,
 	signature::{self, SignatureError},
+	tokens::Renewal,
 };
 use sa_auth::{SourceKind, Sources};
 use zeroize::Zeroizing;
 
 pub use crate::store::sources::Grant;
 use crate::{
+	gmbs::Places,
 	seal::{DataKey, source_secret_aad},
 	store::Store,
 };
@@ -55,6 +62,21 @@ pub struct SignedBatch<'a> {
 	pub timestamp: &'a str,
 	pub signature: &'a str,
 	pub body: &'a [u8],
+}
+
+/// Why a person's request about their gmails, GMBs or tokens is refused.
+#[derive(Debug, thiserror::Error)]
+pub enum Refused {
+	/// The caller's mistake: the message is what they are told.
+	#[error("{0}")]
+	Invalid(String),
+	#[error("not found")]
+	NotFound,
+	#[error("{0}")]
+	Conflict(String),
+	/// Before the import from review_archive (see [`import`]).
+	#[error("tokens and GMBs open after the import from review_archive")]
+	Closed,
 }
 
 /// A new source's credentials; the secret is shown once and never again.
@@ -87,15 +109,22 @@ pub struct Panel {
 	key: Arc<DataKey>,
 	rotations: Arc<session::Rotations>,
 	live: live::Bus,
+	renewal: Renewal,
+	places: Arc<Places>,
+	/// Told of every change review_archive's snapshot carries.
+	snapshot_due: Arc<tokio::sync::Notify>,
 }
 
 impl Panel {
-	pub fn new(store: Store, key: DataKey) -> Self {
+	pub fn new(store: Store, key: DataKey, renewal: Renewal, places: Places) -> Self {
 		Self {
 			store,
 			key: Arc::new(key),
 			rotations: Arc::default(),
 			live: live::Bus::default(),
+			renewal,
+			places: Arc::new(places),
+			snapshot_due: Arc::default(),
 		}
 	}
 

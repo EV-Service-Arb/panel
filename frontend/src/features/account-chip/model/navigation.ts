@@ -4,7 +4,7 @@ import { ROUTES } from "@/shared/config/routes";
 // Deliberately absent: the review archive's own views (tokens, act-as — the chip's `external`
 // items) and the sites' (their element routes them), and everything outside the app (`/auth`,
 // `/api`, `/cabinet`): those stay full navigations.
-const SOFT_ROUTES: readonly string[] = ["/", ROUTES.sources, ROUTES.usage, ROUTES.account, ROUTES.wallet, ROUTES.reviewArchive];
+const SOFT_ROUTES: readonly string[] = ["/", ROUTES.sources, ROUTES.gmbs, ROUTES.tokens, ROUTES.adminTokens, ROUTES.usage, ROUTES.account, ROUTES.wallet, ROUTES.reviewArchive];
 
 // The export is built with `trailingSlash`, so `/usage` and `/usage/` are one screen.
 const bare = (path: string) => (path.length > 1 ? path.replace(/\/+$/, "") : path);

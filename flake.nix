@@ -49,7 +49,7 @@
               generated = {
                 enable = true;
                 name = "regenerate derived files";
-                entry = "bash -c '${gen}/bin/gen && git add -A frontend/src/entities/session/model/generated.ts frontend/src/entities/source/model/generated.ts'";
+                entry = "bash -c '${gen}/bin/gen && git add -A frontend/src/entities/session/model/generated.ts frontend/src/entities/source/model/generated.ts frontend/src/entities/gmb/model/generated.ts frontend/src/entities/tokens/model/generated.ts'";
                 pass_filenames = false;
                 require_serial = true;
               };
@@ -206,7 +206,7 @@
         deploy = {
           # Settings::required_var_names("production"): the pod exits 78 without any of them.
           # PANEL_DB_PATH is the container's own env (below); the rest the deploy supplies.
-          requiredEnv = [ "PANEL_DB_PATH" "PANEL_DATA_KEY" "PANEL_PUBLIC_ORIGIN" "CONCIERGE_PUBLIC_ORIGIN" "CONCIERGE_GRPC_ADDR" "RP_CLIENT_SECRET_SA" "PANEL_ASSERTION_KEY" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" "PANEL_SITES_URL" ];
+          requiredEnv = [ "PANEL_DB_PATH" "PANEL_DATA_KEY" "PANEL_PUBLIC_ORIGIN" "CONCIERGE_PUBLIC_ORIGIN" "CONCIERGE_GRPC_ADDR" "RP_CLIENT_SECRET_SA" "PANEL_ASSERTION_KEY" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" "PANEL_SITES_URL" "TOKENS_START_CAP_MULTIPLE" ];
           # from the sops-backed Secret, never literal env
           secretEnv = [
             "PANEL_DATA_KEY"
@@ -214,6 +214,7 @@
             "RP_CLIENT_SECRET_SA"
             "PANEL_ASSERTION_KEY"
             "TELEGRAM_BOT_TOKEN"
+            "GOOGLE_MAPS_KEY"
           ];
           # PANEL_CSP_PLATFORM_MFE: `0` (default) or `1`. With `1` the pages' CSP also allows the
           # platform's MFE directories (https://evinvest.ltd/api/auth/mfe/ and /wallet/mfe/) in
@@ -225,6 +226,11 @@
             "TELEGRAM_BOT_TOKEN"
             "TELEGRAM_BOT_USERNAME"
             "TELEGRAM_LOCALE"
+            # 15 and 500 by default
+            "TOKENS_DAILY"
+            "TOKENS_CAP"
+            # without it a GMB is added by its place id alone, unnamed
+            "GOOGLE_MAPS_KEY"
           ];
           ingress = {
             # in-cluster only, by service DNS: the landings' and bots' ingest
@@ -238,8 +244,8 @@
             # in-cluster peers, at the addresses these name: concierge's gRPC and the services the
             # forward reaches (docs/ARCHITECTURE.md, Forward)
             grpcEnv = [ "CONCIERGE_GRPC_ADDR" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" "PANEL_SITES_URL" ];
-            # the Bot API
-            hosts = [ "api.telegram.org:443" ];
+            # the Bot API; the Places API (GOOGLE_MAPS_KEY)
+            hosts = [ "api.telegram.org:443" "places.googleapis.com:443" ];
           };
         };
 

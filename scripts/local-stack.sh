@@ -170,6 +170,7 @@ panel() {
 		PANEL_GRAFANA_SERVER="$PANEL_GRAFANA_SERVER" \
 		PANEL_GRAFANA_DIR="$state/grafana" \
 		PANEL_PLAYBOOK_URL="http://127.0.0.1:9" \
+		TOKENS_START_CAP_MULTIPLE=1 \
 		"$PANEL_BIN" "$@"
 }
 sites_panel() {
@@ -194,8 +195,6 @@ mfe_dir = "$REVIEW_ARCHIVE_MFE_DIR"
 bind = "127.0.0.1:$REVIEW_ARCHIVE_PORT"
 [browser]
 lean = []
-[tokens]
-start_cap_multiple = 2.0
 EOF
 	env -u SENTRY_DSN -u TELEGRAM_BOT_TOKEN -u GOOGLE_MAPS_KEY \
 		APP_ENV=development \
@@ -208,6 +207,12 @@ EOF
 say "seeding $state/panel.db and $state/sites_panel.db"
 panel migrate
 sites_panel migrate
+# Tokens and GMBs open with the import from review_archive: here, of nothing, once.
+if [ ! -e "$state/tokens-opened" ]; then
+	echo '{"people": [], "gmails": [], "gmbs": [], "ledger": [], "kickbacks": []}' >"$state/review-archive-export.json"
+	panel import review-archive "$state/review-archive-export.json"
+	touch "$state/tokens-opened"
+fi
 # A source's secret is shown once: kept in .local/secrets/<key id> for the next run.
 source_secret() {
 	local key_id="$1" brand="$2" file="$state/secrets/$1"

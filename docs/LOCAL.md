@@ -3,8 +3,8 @@
 The conductor with its Grafana, sites_panel, review_archive and both landings (aquafix, vifnet)
 on one machine, wired as in the cluster: a lead posted on a landing reaches sites_panel through
 the conductor's ingest, a place's phone or hours edited on the sites page shows on the landing
-through sites' `/api/internal`, and review_archive's overview and boards draw in the conductor's
-Grafana. No concierge, no PostHog, no Telegram, no playbook (its forward answers 502), no Google
+through sites' `/api/internal`, review_archive's overview and boards draw in the conductor's
+Grafana, and the conductor's GMBs and tokens reach review_archive. No concierge, no PostHog, no Telegram, no playbook (its forward answers 502), no Google
 (review_archive scans nothing): the conductor signs you in by itself (dev sign-in, below).
 
 ## Prerequisites
@@ -42,14 +42,17 @@ What it does (`scripts/local-stack.sh`, which the flake app runs as is):
 
 1. Keeps its state in `.local/` (ignored by its own `.gitignore`): `panel.db` and
    `sites_panel.db`, the `data-key` both share, the sources' secrets in `secrets/`, each
-   landing's `<site>-leads.db`, and the logs in `logs/`. It persists between runs; `--reset`
-   wipes it.
+   landing's `<site>-leads.db`, review_archive's data dir in `review_archive/`, and the logs in
+   `logs/`. It persists between runs; `--reset` wipes it. A fresh `panel.db` imports an empty
+   document from review_archive, which opens tokens and GMBs.
 2. Seeds, idempotently: the sources `aquafix-site` (brand `aquafix`) and `vifnet-site`
    (brand `vifnet`) in the conductor, each secret kept in `.local/secrets/` and reused; the
    places `aquafix/{royat, clermont-ferrand, desgenettes, lyon-est, la-mouche, lyon-nord}` and
    `vifnet/vifnet` in sites_panel, registered with nothing set (`sites_panel place register`).
 3. Starts `sites_panel serve` on `127.0.0.1:59121` (its bundle from `PANEL_MFE_DIR`, the
-   conductor's public key in `PANEL_ASSERTION_KEYS`), then `panel serve` on `127.0.0.1:59120`
+   conductor's public key in `PANEL_ASSERTION_KEYS`), `review_archive serve` on `127.0.0.1:59122`
+   likewise (a headless Chromium on a signed-out profile: its Maps walks fail and say so), then
+   `panel serve` on `127.0.0.1:59120`
    in development, with dev sign-in, a signing key for this machine alone, `PANEL_SITES_URL`
    at sites_panel, and the front end's static export served on the same origin.
 4. Starts each landing with its own `nix run .#dev` (kitstart's `next dev`), with:

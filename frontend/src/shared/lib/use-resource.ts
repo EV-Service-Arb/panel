@@ -19,6 +19,8 @@ function failureOf(e: unknown) {
 export interface ResourceOptions {
   /** The live topic this read follows; a resync and a reconnect re-read it too. */
   live?: LiveTopic;
+  /** Re-read when the window regains focus: for what has no live topic. */
+  focus?: boolean;
 }
 
 interface Answered<T> {
@@ -50,7 +52,7 @@ function shownOf<T>(answered: Answered<T>, key: string, group: string, tick: num
  * the two apart: anything that must act on the answer asked for — not the one
  * before it — waits for it.
  *
- * A live re-read (a change on a followed topic, a resync) is quiet: if it
+ * A live or focus re-read (a change on a followed topic, a resync) is quiet: if it
  * fails, the last answer stays on screen — the person did not ask for it, and
  * a blip in the background must not replace figures with an error.
  */
@@ -74,6 +76,11 @@ export function useResource<T>(
     setTick((n) => n + 1);
   }, []);
   useLiveSignal(options.live, refresh);
+  useEffect(() => {
+    if (!options.focus) return;
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [options.focus, refresh]);
 
   useEffect(() => {
     let live = true;
