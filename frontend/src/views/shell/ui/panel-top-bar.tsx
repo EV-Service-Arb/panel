@@ -43,8 +43,8 @@ import { LOCALES, type Locale, chooseLocale, useLocale, useT } from "@/shared/i1
 type Open = "sites" | "sheet" | null;
 
 /**
- * `[Service-Arb⌄] [Sites⌄] [Review Archive] … [Sources] [Usage tokens] [wallet] [bell] [language] [chip]`; on a phone all but the chip go into
- * a Sheet. The Sites items are `mfe-sites-nav`'s: the conductor knows none of the sites' routes.
+ * `[Service-Arb⌄] [Sites⌄] [Review Archive] … [Sources] [Usage tokens] [wallet] [bell] [language] [chip]`; on a phone the screens go into a
+ * Sheet. The Sites items are `mfe-sites-nav`'s: the conductor knows none of the sites' routes.
  * The end slot is right-anchored and the chip is last, so the tokens appearing or changing width
  * grow leftwards and never move the chip.
  */
@@ -130,12 +130,12 @@ export function PanelTopBar() {
         </>
       }
       end={
-        <>
+        <div className="flex items-center gap-1">
           <OwnScreens className="hidden md:flex" />
           <NotificationsMenu />
           <LanguageMenu />
-          <AccountChip me={me} onSignOut={signOut} />
-        </>
+          <AccountChip me={me} onSignOut={signOut} className="ml-1" />
+        </div>
       }
     />
   );
@@ -233,7 +233,7 @@ function OwnScreens({ className, onNavigate }: { className?: string; onNavigate?
       {ownScreens(me, WALLET_PAGE_ENABLED).map((id) => {
         const here = pathname.startsWith(ROUTES[id]);
         return (
-          <Link key={id} href={ROUTES[id]} onClick={() => onNavigate?.()} aria-current={here ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "justify-start gap-2", here && "bg-hover/50")}>
+          <Link key={id} href={ROUTES[id]} onClick={() => onNavigate?.()} aria-current={here ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "justify-start gap-2", id === "wallet" && "md:size-8 md:justify-center md:px-0", here && "bg-hover/50")}>
             {id === "wallet" && <Wallet aria-hidden className="size-4" />}
             {/* the wallet is an icon in the bar, a labelled row in the sheet */}
             <span className={cn(id === "tokens" && "tabular-nums", id === "wallet" && "md:sr-only")}>{label[id]}</span>

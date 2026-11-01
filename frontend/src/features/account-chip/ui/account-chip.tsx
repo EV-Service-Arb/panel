@@ -22,14 +22,13 @@ const BUNDLE = { minApiVersion: CHIP_API_VERSION, integrity: null, timeoutMs: 80
  * it who is signed in, owns Sign out (`signout` → `onSignOut`) and routes its links to panel
  * screens (`ev:navigate` → `router.push`).
  *
- * The element and the fallback share one grid cell, right-aligned, inside the chip's reserve
- * (178×42 from `sm`; a phone has no room to reserve): the fallback paints at once and stays on top until the element has painted itself,
- * then leaves. The element is invisible until then, so neither a double chip nor a gap shows;
- * the cell keeps its width when one replaces the other, give or take the name's length.
+ * The element and the fallback share one grid cell, right-aligned: the fallback paints at once
+ * and stays on top until the element has painted itself, then leaves. The element is invisible
+ * until then, so no double chip shows.
  */
 export function AccountChip({ me, onSignOut, className }: { me: Caller; onSignOut: () => void; className?: string }) {
   const scriptUrl = useChipScriptUrl();
-  const cell = cn("grid min-h-10.5 items-center justify-items-end sm:min-w-44.5", className);
+  const cell = cn("grid min-h-10.5 items-center justify-items-end", className);
   // Registry not answered yet, or it gave no chip: the fallback alone, the way a bundle that
   // failed to load looks.
   if (scriptUrl === null) {
