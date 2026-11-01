@@ -7,7 +7,6 @@ import { Fragment } from "react";
 
 import type { Caller } from "@/entities/session";
 import { ROUTES } from "@/shared/config/routes";
-import { WALLET_PAGE_ENABLED } from "@/shared/config/wallet-page";
 import { useT } from "@/shared/i18n";
 
 import { fallbackIdentity, panelGroups } from "../model/attributes";
@@ -39,7 +38,7 @@ export function ChipFallback({ me, onSignOut, className }: { me: Caller; onSignO
         <DropdownMenuItem asChild>
           <Link href={ROUTES.account}>{t("nav.account")}</Link>
         </DropdownMenuItem>
-        {panelGroups(me, t, WALLET_PAGE_ENABLED).map((group) => (
+        {panelGroups(me, t).map((group) => (
           <Fragment key={group.id}>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>

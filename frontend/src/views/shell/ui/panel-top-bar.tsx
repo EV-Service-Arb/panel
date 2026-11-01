@@ -27,19 +27,20 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-import { DevSignInBadge, seesSites, useMe } from "@/entities/session";
+import { DevSignInBadge, ownScreens, seesSites, useMe } from "@/entities/session";
 import { useTokens } from "@/entities/tokens";
 import { AccountChip } from "@/features/account-chip";
 import { useSignOut } from "@/features/sign-out";
 import { SitesElement } from "@/features/sites-element";
 import { safeLocalPath } from "@/shared/api";
 import { ROUTES } from "@/shared/config/routes";
+import { WALLET_PAGE_ENABLED } from "@/shared/config/wallet-page";
 import { useT } from "@/shared/i18n";
 
 type Open = "sites" | "sheet" | null;
 
 /**
- * `[Service-Arb⌄] [Sites⌄] [Review Archive] … [tokens] [chip]`; on a phone the two sections go into
+ * `[Service-Arb⌄] [Sites⌄] [Review Archive] … [Sources] [Usage tokens] [Wallet] [chip]`; on a phone all but the chip go into
  * a Sheet. The Sites items are `mfe-sites-nav`'s: the conductor knows none of the sites' routes.
  * The end slot is right-anchored and the chip is last, so the tokens appearing or changing width
  * grow leftwards and never move the chip.
@@ -94,7 +95,7 @@ export function PanelTopBar() {
               <Link href={ROUTES.reviewArchive} onClick={() => setOpen(null)} aria-current={archive ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "w-full justify-start px-2", archive && "bg-hover/50")}>
                 {t("nav.reviewArchive")}
               </Link>
-              <TokensStat className="px-2 pt-2" />
+              <OwnScreens className="flex-col items-stretch border-t border-border pt-2" onNavigate={() => setOpen(null)} />
             </SheetContent>
           </Sheet>
           <AppSwitcher />
@@ -115,7 +116,7 @@ export function PanelTopBar() {
       }
       end={
         <>
-          <TokensStat className="hidden sm:block" />
+          <OwnScreens className="hidden md:flex" />
           <AccountChip me={me} onSignOut={signOut} />
         </>
       }
@@ -175,18 +176,28 @@ function AppSwitcher() {
   );
 }
 
-/** Review-archive tokens, never called a balance: evinvest.ltd's wallet is another ledger. Absent when unknown. */
-function TokensStat({ className }: { className?: string }) {
+/** The caller's own screens; Usage carries the review-archive tokens, never called a balance: evinvest.ltd's wallet is another ledger. */
+function OwnScreens({ className, onNavigate }: { className?: string; onNavigate?: () => void }) {
   const t = useT();
+  const me = useMe();
   const tokens = useTokens();
-  if (tokens === null) return null;
+  const pathname = usePathname();
+  const label = { sources: t("nav.sources"), usage: t("usage.title"), wallet: t("nav.wallet") };
   return (
-    <a
-      href={ROUTES.reviewArchiveTokens}
-      className={cn("text-sm tabular-nums hover:underline", tokens.balance > 0 ? "text-ink" : "text-ink-soft", className)}
-      title={t("account.tokens.renewal", { daily: tokens.daily, cap: tokens.cap })}
-    >
-      {t("tokens.count", { n: tokens.balance })}
-    </a>
+    <div className={cn("flex items-center gap-1", className)}>
+      {ownScreens(me, WALLET_PAGE_ENABLED).map((id) => {
+        const here = pathname.startsWith(ROUTES[id]);
+        return (
+          <Link key={id} href={ROUTES[id]} onClick={() => onNavigate?.()} aria-current={here ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "justify-start", here && "bg-hover/50")}>
+            {label[id]}
+            {id === "usage" && tokens !== null && (
+              <span className={cn("ml-1.5 tabular-nums", tokens.balance > 0 ? "text-ink" : "text-ink-soft")} title={t("account.tokens.renewal", { daily: tokens.daily, cap: tokens.cap })}>
+                {t("tokens.count", { n: tokens.balance })}
+              </span>
+            )}
+          </Link>
+        );
+      })}
+    </div>
   );
 }

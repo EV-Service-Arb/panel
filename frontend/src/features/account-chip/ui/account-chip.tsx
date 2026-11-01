@@ -7,7 +7,6 @@ import { useEffect, useState } from "react";
 
 import type { Caller } from "@/entities/session";
 import { platformMfe } from "@/shared/api";
-import { WALLET_PAGE_ENABLED } from "@/shared/config/wallet-page";
 import { useLocale, useT } from "@/shared/i18n";
 import { useElementBundle } from "@/shared/mfe";
 
@@ -71,7 +70,7 @@ function LoadedChip({ scriptUrl, me, onSignOut, className }: LoadedChipProps) {
   const pathname = usePathname();
   const router = useRouter();
   const bundle = useElementBundle(ACCOUNT_CHIP_TAG, scriptUrl, BUNDLE);
-  const { hostRef, painted } = useChipElement(ACCOUNT_CHIP_TAG, bundle === "ready", chipAttributes(me, pathname, t, WALLET_PAGE_ENABLED), { onSignOut, onNavigate: router.push }, locale);
+  const { hostRef, painted } = useChipElement(ACCOUNT_CHIP_TAG, bundle === "ready", chipAttributes(me, pathname, t), { onSignOut, onNavigate: router.push }, locale);
   return (
     <div className={className}>
       <div ref={hostRef} className="col-start-1 row-start-1 flex items-center" />
