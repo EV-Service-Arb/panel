@@ -213,19 +213,21 @@ if [ ! -e "$state/tokens-opened" ]; then
 	panel import review-archive "$state/review-archive-export.json"
 	touch "$state/tokens-opened"
 fi
-# A source's secret is shown once: kept in .local/secrets/<key id> for the next run.
+# A source's secret is shown once: kept in .local/secrets/<key id> for the next run. Its origin
+# is the landing's, set again for a key an older run made without one (the same origin is no change).
 source_secret() {
-	local key_id="$1" brand="$2" file="$state/secrets/$1"
+	local key_id="$1" brand="$2" origin="$3" file="$state/secrets/$1"
 	if panel source list | awk -v k="$key_id" '$1 == k && $NF == "active" { found = 1 } END { exit !found }'; then
 		[ -s "$file" ] || die "source $key_id exists but its secret is not in $file — start over with --reset"
+		panel source set-origin "$key_id" "$origin"
 	else
-		panel source add "$key_id" --kind site --brand "$brand" | awk '$1 == "secret:" { print $2 }' >"$file"
+		panel source add "$key_id" --kind site --brand "$brand" --origin "$origin" | awk '$1 == "secret:" { print $2 }' >"$file"
 		[ -s "$file" ] || die "panel source add $key_id printed no secret"
 	fi
 	cat "$file"
 }
-AQUAFIX_SECRET="$(source_secret aquafix-site aquafix)"
-VIFNET_SECRET="$(source_secret vifnet-site vifnet)"
+AQUAFIX_SECRET="$(source_secret aquafix-site aquafix "http://localhost:$AQUAFIX_PORT")"
+VIFNET_SECRET="$(source_secret vifnet-site vifnet "http://localhost:$VIFNET_PORT")"
 register() {
 	sites_panel place register "$1" "$2" >/dev/null 2>>"$state/logs/seed.log" || die "registering $1/$2 failed: see $state/logs/seed.log"
 }
@@ -304,7 +306,7 @@ started=()
 # A landing's own dev command (`nix run .#dev`, kitstart's next dev) in its checkout: its leads
 # to the conductor's ingest, its places from sites_panel; its leads in a file of ours, analytics off.
 start_site() {
-	local name="$1" dir="$2" port="$3" brand="$4" key_id="$5" secret="$6"
+	local name="$1" dir="$2" port="$3" key_id="$4" secret="$5"
 	if [ ! -f "$dir/package.json" ] || [ ! -f "$dir/flake.nix" ]; then
 		echo "skipping $name: $dir is not a kitstart checkout (missing, or older than the Next site — git pull)" >&2
 		return 0
@@ -316,7 +318,7 @@ start_site() {
 			LEAD_WEBHOOK_URL="$origin/api/ingest/v1/events" \
 			LEAD_WEBHOOK_KEY_ID="$key_id" \
 			LEAD_WEBHOOK_SECRET="$secret" \
-			LOCATIONS_API_URL="$sites_origin/api/internal/brands/$brand" \
+			SITES_PANEL_INTERNAL_URL="$sites_origin/api/internal" \
 			LEADS_DB_PATH="$state/$name-leads.db" \
 			nix run .#dev
 	) &
@@ -324,8 +326,8 @@ start_site() {
 	started+=("$name:$port:$!")
 }
 if [ "$sites" = 1 ]; then
-	start_site aquafix "$AQUAFIX_DIR" "$AQUAFIX_PORT" aquafix aquafix-site "$AQUAFIX_SECRET"
-	start_site vifnet "$VIFNET_DIR" "$VIFNET_PORT" vifnet vifnet-site "$VIFNET_SECRET"
+	start_site aquafix "$AQUAFIX_DIR" "$AQUAFIX_PORT" aquafix-site "$AQUAFIX_SECRET"
+	start_site vifnet "$VIFNET_DIR" "$VIFNET_PORT" vifnet-site "$VIFNET_SECRET"
 	for s in ${started[@]+"${started[@]}"}; do
 		IFS=: read -r name port pid <<<"$s"
 		# The first `nix run .#dev` may install node_modules: minutes, not seconds.
@@ -337,7 +339,7 @@ fi
 	echo
 	echo "────────────────────────────────────────────────────────────────────────"
 	echo " panel    $origin   (opens signed in: dev sign-in, $role)"
-	echo "          leads $origin/sites/leads   places $origin/sites/places"
+	echo "          leads $origin/sites/leads   places $origin/sites/places   connected sites $origin/sources"
 	[ "$review_archive" = 1 ] && echo "          review_archive $origin/review_archive?grafana=true   Grafana $origin/grafana/"
 	echo " sites    $sites_origin   (behind the conductor: its /api/internal for the landings)"
 	for s in ${started[@]+"${started[@]}"}; do

@@ -13,7 +13,7 @@ use ev_lib::error_monitoring;
 use eyre::WrapErr;
 use jiff::Timestamp;
 use panel::{Panel, seal::DataKey, store::Store, telegram::Notifier, tokens::Change};
-use panel_core::ids::BrandId;
+use panel_core::ids::{BrandId, SiteOrigin};
 use panel_server::{
 	DEFAULT_BIND,
 	concierge::{Concierge, DevIdentity},
@@ -82,8 +82,16 @@ enum SourceCmd {
 		/// A brand it may write for; repeat for several.
 		#[arg(long = "brand", required = true)]
 		brands: Vec<String>,
+		/// A site's origin, where its landing answers: https://<domain>, no path. Sites only.
+		#[arg(long)]
+		origin: Option<String>,
 	},
 	List,
+	/// Give a site key issued before origins its origin; set once, never changed.
+	SetOrigin {
+		key_id: String,
+		origin: String,
+	},
 	/// Refuse its key from now on; what it wrote stays.
 	Revoke {
 		key_id: String,
@@ -146,6 +154,13 @@ enum ImportCmd {
 fn main() -> eyre::Result<()> {
 	color_eyre::install()?;
 
+	// What the contract's `provides` must equal (the flake's `checks.provided-paths`).
+	if std::env::args().nth(1).as_deref() == Some("--print-provided-paths") {
+		for path in panel_server::PROVIDED_PATHS {
+			println!("{path}");
+		}
+		return Ok(());
+	}
 	// The deploy contract, straight out of the image: the gitops preflight diffs it with the
 	// cluster Secret's keys, so a missing variable is caught before the rollout.
 	if let Some(profile) = settings::print_required_vars_for() {
@@ -265,10 +280,11 @@ async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSign
 
 async fn source(panel: &Panel, cmd: SourceCmd) -> eyre::Result<()> {
 	match cmd {
-		SourceCmd::Add { key_id, kind, brands } => {
+		SourceCmd::Add { key_id, kind, brands, origin } => {
 			let kind: SourceKind = kind.parse()?;
 			let brands = brands.iter().map(|b| BrandId::parse(b)).collect::<Result<BTreeSet<_>, _>>()?;
-			let Some(added) = panel.add_source(&key_id, kind, brands).await? else {
+			let origin = origin.as_deref().map(SiteOrigin::parse).transpose()?;
+			let Some(added) = panel.add_source(&key_id, kind, brands, origin).await? else {
 				eyre::bail!("a source {key_id} exists already");
 			};
 			println!("key id: {}\nsecret: {}\n(shown once; the source signs with it)", added.key_id, *added.secret);
@@ -278,10 +294,12 @@ async fn source(panel: &Panel, cmd: SourceCmd) -> eyre::Result<()> {
 			for s in panel.store().sources().await? {
 				let brands: Vec<&str> = s.grant.brands.iter().map(BrandId::as_str).collect();
 				let state = s.revoked_at.map_or_else(|| "active".to_owned(), |at| format!("revoked {at}"));
-				println!("{:<24} {:<14} {:<32} {state}", s.grant.key_id, s.grant.kind, brands.join(","));
+				let origin = s.origin.as_ref().map_or("-", SiteOrigin::as_str);
+				println!("{:<24} {:<14} {:<32} {origin:<32} {state}", s.grant.key_id, s.grant.kind, brands.join(","));
 			}
 			Ok(())
 		}
+		SourceCmd::SetOrigin { key_id, origin } => panel.set_site_origin(&key_id, &SiteOrigin::parse(&origin)?).await,
 		SourceCmd::Revoke { key_id } => {
 			eyre::ensure!(panel.revoke_source(&key_id).await?, "no active source {key_id}");
 			Ok(())

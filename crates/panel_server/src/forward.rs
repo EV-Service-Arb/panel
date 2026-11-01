@@ -21,7 +21,7 @@ use std::{sync::Arc, time::Duration};
 
 use axum::{
 	Json, Router,
-	body::Body,
+	body::{Body, to_bytes},
 	extract::{Request, State},
 	http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, header},
 	response::{IntoResponse, Redirect, Response},
@@ -242,7 +242,24 @@ impl Services {
 		strip(&mut parts.headers, &DROPPED_DOWN);
 		Ok(Response::from_parts(parts, Body::new(body)))
 	}
+
+	/// `GET path?query` of sites as the conductor, its JSON answer.
+	pub(crate) async fn conductor_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> eyre::Result<T> {
+		let call = self.send(Service::Sites, Method::GET, path, HeaderMap::new(), Some(Principal::Conductor), Body::empty());
+		let res = tokio::time::timeout(SITES_TIMEOUT, call)
+			.await
+			.map_err(|_| eyre::eyre!("sites did not answer {path} in time"))??;
+		eyre::ensure!(res.status() == StatusCode::OK, "sites answered {path} with {}", res.status());
+		let body = to_bytes(res.into_body(), SITES_ANSWER).await.map_err(|e| eyre::eyre!("reading sites' answer to {path}: {e}"))?;
+		serde_json::from_slice(&body).map_err(|e| eyre::eyre!("sites' answer to {path}: {e}"))
+	}
 }
+
+/// How long a call of the conductor's own to sites may take.
+pub(crate) const SITES_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The most of sites' answer the conductor reads: a page of notes, with room.
+const SITES_ANSWER: usize = 16 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct Forward {

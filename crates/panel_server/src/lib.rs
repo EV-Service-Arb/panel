@@ -8,6 +8,7 @@
 pub mod access;
 pub mod api;
 pub mod concierge;
+mod connected;
 pub mod cookies;
 pub mod forward;
 pub mod gmbs;
@@ -21,6 +22,9 @@ pub mod telegram;
 pub mod testing;
 pub mod tokens;
 pub mod web;
+
+/// What the contract's `provides` names, as the router mounts it (`--print-provided-paths`).
+pub const PROVIDED_PATHS: [&str; 1] = [ingest::EVENTS];
 
 /// Where `serve` listens unless told otherwise; the image binds the same port on 0.0.0.0.
 pub const DEFAULT_BIND: &str = "127.0.0.1:59120";

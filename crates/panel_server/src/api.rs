@@ -1,4 +1,5 @@
-//! The conductor's own `/api/v1`: `/me` and the source keys. JSON in and out; every request has
+//! The conductor's own `/api/v1`: `/me`, the source keys and the connected sites
+//! ([`crate::connected`]). JSON in and out; every request has
 //! passed the sign-in gate (`signin::gate`), so a [`Caller`] is in its extensions.
 
 use std::collections::BTreeSet;
@@ -10,12 +11,16 @@ use axum::{
 	response::{IntoResponse, Response},
 };
 use panel::{Panel, Refused};
-use panel_core::{Invalid, ids::BrandId};
+use panel_core::{
+	Invalid,
+	ids::{BrandId, SiteOrigin},
+};
 use sa_auth::SourceKind;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 use crate::{
+	connected,
 	http::{ApiRoute, Section},
 	signin::{Caller, Freshness},
 };
@@ -27,6 +32,7 @@ pub(crate) fn routes() -> Vec<ApiRoute> {
 	vec![
 		ApiRoute::new(M::GET, "/me", None, Cached, me),
 		ApiRoute::new(M::GET, "/sources", admin, Cached, sources),
+		ApiRoute::new(M::GET, "/sources/sites", admin, Cached, connected::sites),
 		// A key must not be minted or revoked on a permission revoked a moment ago.
 		ApiRoute::new(M::POST, "/sources", admin, Fresh, add_source),
 		ApiRoute::new(M::DELETE, "/sources/{key_id}", admin, Fresh, revoke_source),
@@ -105,6 +111,7 @@ struct SourceDto {
 	brands: Vec<String>,
 	created_at: String,
 	revoked_at: Option<String>,
+	origin: Option<String>,
 }
 
 async fn sources(State(panel): State<Panel>) -> ApiResult<Json<Value>> {
@@ -119,6 +126,7 @@ async fn sources(State(panel): State<Panel>) -> ApiResult<Json<Value>> {
 			brands: s.grant.brands.iter().map(|b| b.as_str().to_owned()).collect(),
 			created_at: s.created_at.to_string(),
 			revoked_at: s.revoked_at.map(|t| t.to_string()),
+			origin: s.origin.map(|o| o.to_string()),
 		})
 		.collect();
 	Ok(Json(json!({ "sources": sources })))
@@ -130,6 +138,7 @@ struct AddSource {
 	key_id: String,
 	kind: String,
 	brands: Vec<String>,
+	origin: Option<String>,
 }
 
 async fn add_source(State(panel): State<Panel>, Extension(caller): Extension<Caller>, b: Result<Json<AddSource>, JsonRejection>) -> ApiResult<Response> {
@@ -146,7 +155,11 @@ async fn add_source(State(panel): State<Panel>, Extension(caller): Extension<Cal
 	if brands.is_empty() {
 		return Err(ApiError::BadRequest("a source writes for at least one brand".into()));
 	}
-	let Some(added) = panel.add_source(&b.key_id, kind, brands).await? else {
+	let origin = b.origin.as_deref().map(SiteOrigin::parse).transpose()?;
+	if origin.is_some() != (kind == SourceKind::Site) {
+		return Err(ApiError::BadRequest("a site key has an origin, and no other kind has one".into()));
+	}
+	let Some(added) = panel.add_source(&b.key_id, kind, brands, origin).await? else {
 		return Err(ApiError::Conflict(format!("a source {} exists already", b.key_id)));
 	};
 	tracing::info!(user_id = %caller.user_id, key_id = added.key_id, kind = %kind, "source added from the panel");

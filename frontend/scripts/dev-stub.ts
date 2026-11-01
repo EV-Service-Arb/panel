@@ -34,7 +34,29 @@ const now = () => new Date();
 const iso = (d: Date) => d.toISOString();
 const minsAgo = (m: number) => iso(new Date(now().getTime() - m * 60_000));
 
-const sources: Json[] = [{ key_id: "aquafix-site", kind: "site", brands: ["aquafix"], created_at: minsAgo(60 * 24 * 10), revoked_at: null }];
+const sources: Json[] = [
+  { key_id: "aquafix-site", kind: "site", brands: ["aquafix"], created_at: minsAgo(60 * 24 * 10), revoked_at: null, origin: "https://aquafix.top" },
+];
+
+/** What `GET /sources/sites` answers: the stub's site keys, each reporting live. */
+function connectedSites(): Json {
+  const live = { state: "live" };
+  const sites = sources
+    .filter((s) => s.kind === "site" && s.revoked_at === null)
+    .map((s) => ({
+      key_id: s.key_id,
+      brands: s.brands,
+      origin: s.origin,
+      report: s.origin
+        ? { state: "reported", report: { brand: (s.brands as string[])[0], kitstart: "stub", checked_at: iso(now()), sources: { places: { stub: live }, pricing: live, experiments: { state: "empty" } } } }
+        : { state: "no_origin" },
+    }));
+  return {
+    sites,
+    received: { state: "read", value: Object.fromEntries(sites.map((s) => [s.key_id, minsAgo(5)])) },
+    internal_reads: { state: "read", value: { since: minsAgo(60), reads: { aquafix: { locations: minsAgo(2), pricing: minsAgo(3), experiments: null } } } },
+  };
+}
 
 function send(res: ServerResponse, status: number, body?: unknown, headers: Record<string, string | string[]> = {}): void {
   res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...headers });
@@ -101,12 +123,13 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL): Promise
   if (path === "/tokens/ledger") return send(res, 200, { entries: ledger, next: null });
   if (path === "/tokens/usage") return send(res, 200, { days: usageDays });
   if (path === "/admin/tokens") return send(res, 200, { users: [{ user_id: USER_ID, email: "stub@example.test", name: `Stub ${ROLE}`, balance: tokens.balance }] });
-  if (path === "/sources" && ROLE !== "admin") return send(res, 403, { error: "your permissions do not allow this" });
+  if (path.startsWith("/sources") && ROLE !== "admin") return send(res, 403, { error: "your permissions do not allow this" });
   if (path === "/sources" && req.method === "GET") return send(res, 200, { sources });
+  if (path === "/sources/sites" && req.method === "GET") return send(res, 200, connectedSites());
   if (path === "/sources" && req.method === "POST") {
     const b = await readJson(req);
     if (sources.some((s) => s.key_id === b.key_id)) return send(res, 409, { error: `a source ${String(b.key_id)} exists already` });
-    sources.push({ key_id: b.key_id, kind: b.kind, brands: b.brands, created_at: iso(now()), revoked_at: null });
+    sources.push({ key_id: b.key_id, kind: b.kind, brands: b.brands, created_at: iso(now()), revoked_at: null, origin: b.origin });
     changed("sources");
     return send(res, 201, { key_id: b.key_id, secret: `stub-secret-${randomUUID()}` });
   }

@@ -294,7 +294,12 @@ async fn the_conductors_own_changes_go_to_who_may_read_them() {
 	let mut op = open(op_addr, &signed_in(&op_app).await).await;
 
 	panel
-		.add_source("vifnet-site", SourceKind::Site, [BrandId::parse("vifnet").unwrap()].into())
+		.add_source(
+			"vifnet-site",
+			SourceKind::Site,
+			[BrandId::parse("vifnet").unwrap()].into(),
+			Some(panel_core::ids::SiteOrigin::parse("https://vifnet.site").unwrap()),
+		)
 		.await
 		.unwrap()
 		.unwrap();
