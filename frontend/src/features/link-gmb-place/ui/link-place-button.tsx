@@ -1,7 +1,7 @@
 "use client";
 
-import { Badge, Button, CommandDialog, CommandEmpty, CommandInput, CommandItem, CommandList } from "@evinvest/uikit";
-import { Pencil } from "lucide-react";
+import { Button, CommandDialog, CommandEmpty, CommandInput, CommandItem, CommandList } from "@evinvest/uikit";
+import { Link2 } from "lucide-react";
 import { useState } from "react";
 
 import { type SiteTag, fetchSitesPlaces, linkPlace } from "@/entities/gmb";
@@ -27,19 +27,12 @@ export function LinkPlaceButton({ gmbId, linked, onDone }: { gmbId: number; link
     }
   };
 
+  const label = own ? t("gmbs.tag.site", { place: `${own.brand}/${own.location}` }) : t("gmbs.tag.site.link");
   return (
     <>
-      {own ? (
-        <Button variant="ghost" size={button("sm")} icon aria-label={t("gmbs.link.title")} onClick={() => setOpen(true)}>
-          <Pencil aria-hidden />
-        </Button>
-      ) : (
-        <Badge asChild variant="outline" className="cursor-pointer border-dashed text-ink-soft">
-          <button type="button" onClick={() => setOpen(true)}>
-            {t("gmbs.tag.site.link")}
-          </button>
-        </Badge>
-      )}
+      <Button variant="ghost" size={button("sm")} icon aria-label={label} title={label} className={own ? "text-ink" : "text-ink-soft"} onClick={() => setOpen(true)}>
+        <Link2 aria-hidden />
+      </Button>
       {open && (
         <Picker
           gmbId={gmbId}

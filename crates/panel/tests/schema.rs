@@ -246,6 +246,7 @@ async fn the_sites_tables_go_and_sent_buttons_name_their_calls() {
 			"consumed_states",
 			"gmails",
 			"gmbs",
+			"gmbs_off",
 			"sessions",
 			"sources",
 			"telegram_fanout",

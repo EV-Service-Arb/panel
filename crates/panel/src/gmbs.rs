@@ -1,7 +1,10 @@
 //! The gmails a person manages GMBs with, and those GMBs. The ids are the conductor's, and every
 //! service stores them, so nothing is deleted: a gmail or a GMB is removed, and a removed gmail's
-//! GMBs count as removed. review_archive hears of every change through the snapshot
+//! GMBs count as removed. A GMB is on or off by its owner's switch. review_archive hears of every
+//! change through the snapshot
 //! ([`crate::tokens`]).
+
+use std::collections::BTreeSet;
 
 use eyre::WrapErr;
 use jiff::Timestamp;
@@ -143,6 +146,24 @@ impl Panel {
 		tx.commit().await.wrap_err("committing a GMB")?;
 		self.snapshot_due.notify_one();
 		Ok(Ok(added))
+	}
+
+	/// Every one of `ids` on or off, or none: each must be the owner's, not removed.
+	pub async fn switch_gmbs(&self, owner: Uuid, ids: &[i64], on: bool) -> eyre::Result<Result<(), Refused>> {
+		let ids: BTreeSet<i64> = ids.iter().copied().collect();
+		if ids.is_empty() {
+			return Ok(Err(Refused::Invalid("no GMB to switch".to_owned())));
+		}
+		let mut tx = self.store.begin_write().await?;
+		if !is_open(&mut tx).await? {
+			return Ok(Err(Refused::Closed));
+		}
+		if !db::switch(&mut tx, owner, &ids, on).await? {
+			return Ok(Err(Refused::NotFound));
+		}
+		tx.commit().await.wrap_err("committing a switch")?;
+		self.snapshot_due.notify_one();
+		Ok(Ok(()))
 	}
 
 	pub async fn remove_gmb(&self, owner: Uuid, id: i64, now: Timestamp) -> eyre::Result<Result<(), Refused>> {

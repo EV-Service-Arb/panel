@@ -166,8 +166,12 @@ reserved paths (`web.rs`) are derived from it.
   under `/api/review_archive/grafana` takes the cached `GetMe` and no CSRF.
 - **A path stays under its upstream prefix:** a `.` or `..` segment, `%2e`, `%2f`, `%5c` and `\`
   decoded, is a 400.
+- **The outline.** Every signed-in page sits beside it: the open service's own views (the sites:
+  `<mfe-sites-nav>`, mounted on every page and shown on theirs; the review archive: its places,
+  Telegram and settings), then the caller's gmails, each opening to its GMBs, with their switches.
+  `/` is the GMBs' own page.
 - **The pages.** `/sites` mounts `<mfe-sites-panel api="/api/sites" base="/sites" csrf-cookie>`
-  from `/sites/mfe/`, and the top bar keeps `<mfe-sites-nav>` mounted; `/review_archive` mounts
+  from `/sites/mfe/`; `/review_archive` mounts
   `<mfe-review-archive-dashboard grafana="/grafana/">` from `/review_archive/mfe/`. Any `/sites/<view>` or
   `/review_archive/<view>` without a dot in its last segment is that page, for the element to
   route, and a file below a view (`/sites/<view>/index.txt`, `…/__next.*.txt`) is the page's
@@ -264,13 +268,15 @@ DELETE /telegram/link                       204, 404
 PUT    /telegram/rules                      {rules: {new_lead: false, …}} → 200 as GET; 400 for a
                                             rule they do not open
 GET    /gmails                              {gmails: [{id, gmail, created_at, gmbs: [{id, place_id,
-                                            name, address, gbp_account, gbp_location, created_at}]}]}
-                                            the caller's, removed ones left out
+                                            name, address, gbp_account, gbp_location, created_at,
+                                            enabled}]}]} the caller's, removed ones left out
 POST   /gmails                              {gmail} → 201 the gmail; 409 held already
 DELETE /gmails/{id}                         204; its GMBs count as removed
 GET    /gmbs/resolve?place=                 {candidates: [{place_id, name, address}]} (sa_places)
 POST   /gmails/{id}/gmbs                    {place_id} → 201 the GMB; 409 under that gmail already
 DELETE /gmbs/{id}                           204
+PUT    /gmbs/enabled                        {gmbs: [id], enabled} → 204: every one switched, or none
+                                            (404 one not the caller's)
 GET    /tokens                              {balance, daily, cap, kickbacks}: renewed, the
                                             kick-backs not claimed
 GET    /tokens/ledger?before=&limit=        {entries, next}: newest first, limit 1–200
@@ -344,7 +350,8 @@ closes              4401 the session ended   1001 the server is stopping
 ## Tokens and GMBs
 
 A person's gmails and the GMBs (Google places) each manages are the conductor's; the services
-store their ids. Tokens are a ledger: a balance is its rows' sum, renewed a day's worth when
+store their ids. A GMB is on or off by its owner's switch (`gmbs_off`), which the services inherit
+for their own work: off, review_archive walks none of its tracks. Tokens are a ledger: a balance is its rows' sum, renewed a day's worth when
 read (`TOKENS_DAILY` up to `TOKENS_CAP`; a first balance `TOKENS_START_CAP_MULTIPLE` caps). What
 spends them — today review_archive's walks — charges after the fact.
 
@@ -356,7 +363,7 @@ follow (10 s)   GET review_archive /api/conductor/charges?after=<cursor>&limit=5
                 as kick-backs, the cursor moved; an unknown sub fails the page, the cursor stays
 push (a change, a page, 60 s)
                 PUT review_archive /api/conductor/gmbs (Conductor): every GMB ever (removed ones
-                marked), every user's balance renewed, and the cursor they were read at, from
+                marked, each on or off), every user's balance renewed, and the cursor they were read at, from
                 one transaction
 ```
 
@@ -372,8 +379,8 @@ push (a change, a page, 60 s)
   Until then tokens and GMBs are closed and `serve` neither follows nor pushes: a balance read
   writes a renewal, which would make the import refuse. A fresh install imports an empty
   document.
-- **A place's site** is sites': its `places.gmb_id`. The `/gmbs` page reads each service's tags
-  from that service, through the forward; a service down or refusing loses only its tags.
+- **A place's site** is sites': its `places.gmb_id`, linked from the outline through the forward;
+  sites down or refusing leaves the GMBs without the link.
 
 ## Telegram
 

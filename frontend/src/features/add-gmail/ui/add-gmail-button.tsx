@@ -37,7 +37,7 @@ export function AddGmailButton({ onAdded }: { onAdded: () => void }) {
 
   return (
     <>
-      <Button size={button()} onClick={() => setOpen(true)}>
+      <Button variant="ghost" size={button("sm")} className="justify-start text-ink-soft" onClick={() => setOpen(true)}>
         <Plus aria-hidden />
         {t("gmbs.gmail.add")}
       </Button>

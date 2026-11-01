@@ -27,7 +27,11 @@ place_id: string, name: string | null, address: string | null, gbp_account: stri
 /**
  * RFC 3339.
  */
-created_at: string, };
+created_at: string, 
+/**
+ * The caller's switch; review_archive inherits it.
+ */
+enabled: boolean, };
 /**
  * A place a pasted input may mean.
  */

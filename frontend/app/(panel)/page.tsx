@@ -1,5 +1,5 @@
-import { StartRedirect } from "@/views/shell";
+import { Home } from "@/views/shell";
 
-export default function StartPage() {
-  return <StartRedirect />;
+export default function HomePage() {
+  return <Home />;
 }
