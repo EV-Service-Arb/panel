@@ -6,7 +6,8 @@ use panel::{
 	IngestError, Outcome, Panel,
 	testing::{TestDb, event, messenger_lead, panel, sign, sign_verbatim},
 };
-use panel_core::{event::SourceKind, ids::BrandId};
+use panel_core::ids::BrandId;
+use sa_auth::SourceKind;
 use serde_json::{Value, json};
 
 fn now() -> Timestamp {

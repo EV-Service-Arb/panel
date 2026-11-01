@@ -15,13 +15,14 @@ use panel::{
 	live::{Bus, Change, Signal, Topic},
 	testing::{TestDb, event, panel, sign},
 };
-use panel_core::{event::SourceKind, ids::BrandId, notify::Rule};
+use panel_core::{ids::BrandId, notify::Rule};
 use panel_server::{
 	concierge::{Concierge, DEV_CODE, DevIdentity},
 	http::{self, Limits},
 	live::{CLOSE_SESSION_ENDED, LiveLimits},
 	signin::{SignIn, SignInConfig},
 };
+use sa_auth::SourceKind;
 use serde_json::{Value, json};
 use tokio::{
 	io::{AsyncReadExt, AsyncWriteExt},

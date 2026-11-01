@@ -1,8 +1,13 @@
 //! Service-Arb's permissions (the `sa` namespace concierge resolves), and the assertion the
-//! panel signs for each request it forwards to a service behind it: who is calling, what of
-//! that service they may do, and which one request it is for.
+//! panel signs for each request it forwards to a service behind it: who is calling (a user, or
+//! a source key the panel authenticated), what of that service they may do, and which one
+//! request it is for.
 
-use std::{collections::BTreeMap, str::FromStr};
+use std::{
+	collections::{BTreeMap, BTreeSet},
+	fmt,
+	str::FromStr,
+};
 
 use base64::{
 	Engine,
@@ -12,53 +17,54 @@ use concierge_iam::alias;
 pub use concierge_iam::{Catalog, Permission, PermissionSet};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Permission)]
-#[permission("sa:work")]
+#[permission("sa:sites:work")]
 pub enum Work {
 	Read,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Permission)]
-#[permission("sa:work:leads")]
+#[permission("sa:sites:work:leads")]
 pub enum Leads {
 	Edit,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Permission)]
-#[permission("sa:work:pii")]
+#[permission("sa:sites:work:pii")]
 pub enum Pii {
 	See,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Permission)]
-#[permission("sa:work:places")]
+#[permission("sa:sites:work:places")]
 pub enum Places {
 	Edit,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Permission)]
-#[permission("sa:work:pricing")]
+#[permission("sa:sites:work:pricing")]
 pub enum Pricing {
 	Edit,
 }
 
-/// Issue an invoice through banking (`sa:work:invoices:create`). Reading the invoices needs
+/// Issue an invoice through banking (`sa:sites:work:invoices:create`). Reading the invoices needs
 /// only the work section: an operator chasing a payment sees whether it came.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Permission)]
-#[permission("sa:work:invoices")]
+#[permission("sa:sites:work:invoices")]
 pub enum Invoices {
 	Create,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Permission)]
-#[permission("sa:analysis")]
+#[permission("sa:sites:analysis")]
 pub enum Analysis {
 	Read,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Permission)]
-#[permission("sa:analysis:experiments")]
+#[permission("sa:sites:analysis:experiments")]
 pub enum Experiments {
 	Edit,
 }
@@ -128,6 +134,7 @@ pub const TTL: i64 = 60;
 pub enum Service {
 	ReviewArchive,
 	Playbook,
+	Sites,
 }
 
 impl Service {
@@ -136,6 +143,7 @@ impl Service {
 		match self {
 			Self::ReviewArchive => "sa:review_archive:",
 			Self::Playbook => "sa:playbook:",
+			Self::Sites => "sa:sites:",
 		}
 	}
 }
@@ -143,6 +151,24 @@ impl Service {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Assertion {
 	pub aud: Service,
+	pub principal: Principal,
+	pub method: String,
+	pub path: String,
+	pub exp: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Principal {
+	User(User),
+	Source(Source),
+	/// The panel itself, reading what it hosts for its own hubs (live, Telegram).
+	Conductor,
+}
+
+/// A signed-in person.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct User {
 	/// The concierge user id.
 	pub sub: String,
 	pub email: String,
@@ -150,9 +176,105 @@ pub struct Assertion {
 	pub name: String,
 	/// The caller's permissions under [`Service::prefix`] of `aud`, and no others.
 	pub permissions: PermissionSet,
-	pub method: String,
-	pub path: String,
-	pub exp: i64,
+}
+
+/// A signing key whose MAC the panel checked over the request's body: the service decides what
+/// that key may write, the panel only who signed.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Source {
+	pub key_id: String,
+	pub kind: SourceKind,
+	pub brands: BTreeSet<String>,
+	/// Hex SHA-256 of the body the MAC covered; the service checks the body it was handed.
+	body_sha256: String,
+}
+
+impl Source {
+	pub fn new(key_id: String, kind: SourceKind, brands: BTreeSet<String>, body: &[u8]) -> Self {
+		Self {
+			key_id,
+			kind,
+			brands,
+			body_sha256: hex::encode(Sha256::digest(body)),
+		}
+	}
+}
+
+/// Where an event comes from: what a signing key is registered as, and the panel's own kinds.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+	Site,
+	ReviewArchive,
+	Gbp,
+	Posthog,
+	/// Typed in by a person in the panel: events of this kind are manual.
+	Panel,
+	Sheet,
+	Telephony,
+	/// The panel's booking adapters: a provider's webhook, or the calendar it pulls. Written
+	/// by the panel itself; no signing key is ever issued for it.
+	Booking,
+	/// A messenger bot or auto-responder (a brand's Telegram bot, a WhatsApp responder):
+	/// it starts a lead from a conversation and says when a customer wrote.
+	Bot,
+}
+
+impl SourceKind {
+	pub const ALL: [Self; 9] = [
+		Self::Site,
+		Self::ReviewArchive,
+		Self::Gbp,
+		Self::Posthog,
+		Self::Panel,
+		Self::Sheet,
+		Self::Telephony,
+		Self::Booking,
+		Self::Bot,
+	];
+
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Site => "site",
+			Self::ReviewArchive => "review_archive",
+			Self::Gbp => "gbp",
+			Self::Posthog => "posthog",
+			Self::Panel => "panel",
+			Self::Sheet => "sheet",
+			Self::Telephony => "telephony",
+			Self::Booking => "booking",
+			Self::Bot => "bot",
+		}
+	}
+
+	/// Whether a signing key is issued for it: the panel writes its own kinds without one.
+	pub fn keyed(self) -> bool {
+		!matches!(self, Self::Panel | Self::Booking)
+	}
+
+	/// Whether a person entered it rather than a system observing it (spec §10a): the
+	/// reports show which share of the funnel is hand-made.
+	pub fn is_manual(self) -> bool {
+		matches!(self, Self::Panel)
+	}
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("source.kind {0:?} is not one of site, review_archive, gbp, posthog, panel, sheet, telephony, booking, bot")]
+pub struct UnknownKind(String);
+
+impl FromStr for SourceKind {
+	type Err = UnknownKind;
+
+	fn from_str(s: &str) -> Result<Self, UnknownKind> {
+		Self::ALL.into_iter().find(|k| k.as_str() == s).ok_or_else(|| UnknownKind(s.to_owned()))
+	}
+}
+
+impl fmt::Display for SourceKind {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_str(self.as_str())
+	}
 }
 
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
@@ -167,6 +289,8 @@ pub enum Refused {
 	Audience,
 	#[error("issued for another request")]
 	Request,
+	#[error("issued for another body")]
+	Body,
 	#[error("expired, or living longer than an assertion may")]
 	Expiry,
 	#[error("carries a permission outside its service")]
@@ -192,10 +316,12 @@ impl Signer {
 	}
 
 	pub fn sign(&self, assertion: &Assertion) -> String {
-		assert!(
-			assertion.permissions.iter().all(|p| p.starts_with(assertion.aud.prefix())),
-			"the panel slices the permissions before signing"
-		);
+		if let Principal::User(user) = &assertion.principal {
+			assert!(
+				user.permissions.iter().all(|p| p.starts_with(assertion.aud.prefix())),
+				"the panel slices the permissions before signing"
+			);
+		}
 		let header = serde_json::to_vec(&Header {
 			alg: "EdDSA".into(),
 			kid: self.kid.clone(),
@@ -255,8 +381,9 @@ fn split_key(s: &str) -> Result<(String, [u8; 32]), String> {
 }
 
 /// The assertion on one request, if the panel signed it for `aud` and for exactly this
-/// `method` and `path`, and it is alive at `now` (unix seconds).
-pub fn verify(keys: &Keys, token: &str, aud: Service, method: &str, path: &str, now: i64) -> Result<Assertion, Refused> {
+/// `method` and `path`, and it is alive at `now` (unix seconds). A source's assertion also
+/// needs the `body` it was signed over; a user's ignores it (bodies stream past the panel).
+pub fn verify(keys: &Keys, token: &str, aud: Service, method: &str, path: &str, body: Option<&[u8]>, now: i64) -> Result<Assertion, Refused> {
 	let mut parts = token.split('.');
 	let (Some(header), Some(claims), Some(signature), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
 		return Err(Refused::Malformed);
@@ -279,8 +406,18 @@ pub fn verify(keys: &Keys, token: &str, aud: Service, method: &str, path: &str, 
 	if assertion.exp <= now || assertion.exp > now + TTL + 5 {
 		return Err(Refused::Expiry);
 	}
-	if !assertion.permissions.iter().all(|p| p.starts_with(aud.prefix())) {
-		return Err(Refused::Slice);
+	match &assertion.principal {
+		Principal::User(user) =>
+			if !user.permissions.iter().all(|p| p.starts_with(aud.prefix())) {
+				return Err(Refused::Slice);
+			},
+		Principal::Source(source) => {
+			let digest = body.map(|b| hex::encode(Sha256::digest(b)));
+			if digest.as_deref() != Some(source.body_sha256.as_str()) {
+				return Err(Refused::Body);
+			}
+		}
+		Principal::Conductor => {}
 	}
 	Ok(assertion)
 }
@@ -298,11 +435,13 @@ mod tests {
 	fn assertion(now: i64) -> Assertion {
 		Assertion {
 			aud: Service::ReviewArchive,
-			sub: "0192".into(),
-			email: "a@b.c".into(),
-			email_verified: true,
-			name: "A".into(),
-			permissions: [Archive::Operate.as_str()].into_iter().collect(),
+			principal: Principal::User(User {
+				sub: "0192".into(),
+				email: "a@b.c".into(),
+				email_verified: true,
+				name: "A".into(),
+				permissions: [Archive::Operate.as_str()].into_iter().collect(),
+			}),
 			method: "POST".into(),
 			path: "/targets".into(),
 			exp: now + TTL,
@@ -315,7 +454,7 @@ mod tests {
 		let keys: Keys = format!("{}, {}", panel.public(), other.public()).parse().unwrap();
 		let now = 1_000;
 		let token = panel.sign(&assertion(now));
-		let check = |aud, method, path, now| verify(&keys, &token, aud, method, path, now);
+		let check = |aud, method, path, now| verify(&keys, &token, aud, method, path, None, now);
 		assert_eq!(check(Service::ReviewArchive, "POST", "/targets", now), Ok(assertion(now)));
 		assert_eq!(check(Service::Playbook, "POST", "/targets", now), Err(Refused::Audience));
 		assert_eq!(check(Service::ReviewArchive, "GET", "/targets", now), Err(Refused::Request));
@@ -323,12 +462,33 @@ mod tests {
 		assert_eq!(check(Service::ReviewArchive, "POST", "/targets", now + TTL), Err(Refused::Expiry));
 
 		let only_other: Keys = other.public().parse().unwrap();
-		assert_eq!(verify(&only_other, &token, Service::ReviewArchive, "POST", "/targets", now), Err(Refused::UnknownKey));
+		assert_eq!(verify(&only_other, &token, Service::ReviewArchive, "POST", "/targets", None, now), Err(Refused::UnknownKey));
 		let impostor = signer("k1").sign(&assertion(now));
-		assert_eq!(verify(&keys, &impostor, Service::ReviewArchive, "POST", "/targets", now), Err(Refused::Signature));
+		assert_eq!(verify(&keys, &impostor, Service::ReviewArchive, "POST", "/targets", None, now), Err(Refused::Signature));
 		let mut forever = assertion(now);
 		forever.exp = now + 3600;
-		assert_eq!(verify(&keys, &panel.sign(&forever), Service::ReviewArchive, "POST", "/targets", now), Err(Refused::Expiry));
+		assert_eq!(verify(&keys, &panel.sign(&forever), Service::ReviewArchive, "POST", "/targets", None, now), Err(Refused::Expiry));
+	}
+
+	#[test]
+	fn a_source_assertion_holds_for_its_one_body_only() {
+		let panel = signer("k1");
+		let keys: Keys = panel.public().parse().unwrap();
+		let now = 1_000;
+		let body = br#"{"events":[]}"#;
+		let source = Assertion {
+			aud: Service::Sites,
+			principal: Principal::Source(Source::new("aquafix-site".into(), SourceKind::Site, ["aquafix".to_owned()].into(), body)),
+			method: "POST".into(),
+			path: "/ingest".into(),
+			exp: now + TTL,
+		};
+		let token = panel.sign(&source);
+		let check = |aud, body: Option<&[u8]>| verify(&keys, &token, aud, "POST", "/ingest", body, now);
+		assert_eq!(check(Service::Sites, Some(body)), Ok(source.clone()));
+		assert_eq!(check(Service::ReviewArchive, Some(body)), Err(Refused::Audience));
+		assert_eq!(check(Service::Sites, Some(br#"{"events":[{}]}"#)), Err(Refused::Body));
+		assert_eq!(check(Service::Sites, None), Err(Refused::Body), "a route that does not hand over the body cannot take a source");
 	}
 
 	#[test]

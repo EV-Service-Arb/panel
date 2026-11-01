@@ -28,7 +28,7 @@ describe("the rail", () => {
 
   it("shows a section only to whoever its permission opens, and the review archive to everyone", () => {
     expect(Object.keys(ids([]))).toEqual(["archive"]);
-    expect(Object.keys(ids(["sa:analysis:read"]))).toEqual(["analysis", "archive"]);
+    expect(Object.keys(ids(["sa:sites:analysis:read"]))).toEqual(["analysis", "archive"]);
     expect(panelNav(t, caller([]), marks).tabs.map((i) => i.id)).toEqual(["review_archive", "more"]);
   });
 

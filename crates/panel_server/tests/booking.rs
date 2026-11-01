@@ -23,13 +23,14 @@ use panel::{
 	live::{Signal, Topic},
 	testing::{TestDb, event, panel, sign},
 };
-use panel_core::{event::SourceKind, ids::BrandId};
+use panel_core::ids::BrandId;
 use panel_server::{
 	concierge::{Concierge, DevIdentity},
 	google_calendar::{BrandCalendar, GoogleCalendar},
 	http,
 	signin::{SignIn, SignInConfig},
 };
+use sa_auth::SourceKind;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 use tower::ServiceExt;

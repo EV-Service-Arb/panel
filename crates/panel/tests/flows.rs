@@ -7,7 +7,8 @@ use panel::{
 	operator::{LeadQuery, Pii},
 	testing::{TestDb, event, panel, sign},
 };
-use panel_core::{Invalid, event::SourceKind, fact::LeadFlow, ids::BrandId};
+use panel_core::{Invalid, fact::LeadFlow, ids::BrandId};
+use sa_auth::SourceKind;
 use serde_json::{Value, json};
 
 fn now() -> Timestamp {

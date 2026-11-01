@@ -61,9 +61,9 @@ use crate::{
 /// A part of the panel, as its screens are grouped, and the permission that opens it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Section {
-	/// Leads, bookings, places, pricing, the overview: the daily work.
+	/// Leads, bookings, places, pricing, invoices: the daily work.
 	Work,
-	/// Experiments.
+	/// The overview's funnel, experiments.
 	Analysis,
 	/// Sources and their keys.
 	Admin,

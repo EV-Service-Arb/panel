@@ -9,11 +9,12 @@ use panel_contracts::{SCHEMA, v1};
 use panel_core::{
 	Invalid,
 	booking::{self, BookingMatch, Closed},
-	event::{Envelope, Source, SourceKind, Subject, TypeKey, may_write},
+	event::{Envelope, Source, Subject, TypeKey, may_write},
 	experiment::{Declaration, Patch, check_declared, label},
 	fact::{AnalyticsId, CallOutcome, ContactChannel, Fact, LeadChannel, LeadOffer, LeadSuspect, MessageRef, Messenger, bounded, day, instant},
 	ids::{BrandId, JobId, LeadId, LocationId, parse_event_id},
 };
+use sa_auth::SourceKind;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 

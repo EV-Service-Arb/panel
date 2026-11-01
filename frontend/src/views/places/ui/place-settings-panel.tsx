@@ -102,7 +102,7 @@ function PlacePanes({ base, latest, version, saved, onWritten, onReload, onTakeF
           <PlaceHistory view={base} version={version} onChanged={onWritten} onReload={() => onReload()} />
         </TabsContent>
       </Tabs>
-      {may(me, "sa:work:places:edit") && (
+      {may(me, "sa:sites:work:places:edit") && (
         // Last and apart: taking a point off the site is rare and not part of editing it.
         <div className="flex flex-col items-start gap-2 border-t border-border pt-4">
           <WithdrawButton place={latest} onChanged={onReload} />

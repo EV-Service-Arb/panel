@@ -103,11 +103,15 @@ async fn the_binary_takes_an_alias_or_a_list_of_permissions() {
 			("PANEL_PUBLIC_ORIGIN", ORIGIN),
 		])
 	};
-	for who in ["sa:operator", "sa:work:read, sa:work:leads:edit", "none"] {
+	for who in ["sa:operator", "sa:sites:work:read, sa:sites:work:leads:edit", "none"] {
 		let (code, stderr) = with(who);
 		assert_eq!(code, Some(0), "{who}: {stderr}");
 	}
-	for (who, named) in [("operator", "`operator`"), ("sa:work:read,sa:work:everything", "`sa:work:everything`"), ("sa:*", "`sa:*`")] {
+	for (who, named) in [
+		("operator", "`operator`"),
+		("sa:sites:work:read,sa:sites:work:everything", "`sa:sites:work:everything`"),
+		("sa:*", "`sa:*`"),
+	] {
 		let (code, stderr) = with(who);
 		assert_eq!(code, Some(78), "{who}: {stderr}");
 		assert!(stderr.contains(named), "{who}: {stderr}");
@@ -207,7 +211,7 @@ async fn dev_sign_in_holds_what_it_was_given() {
 	assert_eq!(b.send(&app, Method::GET, "/api/v1/sources").await.0, StatusCode::FORBIDDEN, "not an operator's screen");
 
 	let db = TestDb::create().await;
-	let app = dev_app(&db, ["sa:work:read"].into_iter().collect(), "dev-reader@localhost").await;
+	let app = dev_app(&db, ["sa:sites:work:read"].into_iter().collect(), "dev-reader@localhost").await;
 	let mut b = Browser::default();
 	b.sign_in(&app).await;
 	assert_eq!(b.send(&app, Method::GET, "/api/v1/leads").await.0, StatusCode::OK, "work");

@@ -22,7 +22,7 @@ use axum::{
 	routing::any,
 };
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
-use sa_auth::{Assertion, Service, Signer};
+use sa_auth::{Assertion, Principal, Service, Signer, User};
 use serde_json::json;
 
 use crate::{
@@ -189,11 +189,13 @@ async fn forward(State(f): State<Forward>, req: Request) -> Response {
 			match signin::check(&f.sign_in, req.headers(), freshness).await {
 				Ok(caller) => Some(Assertion {
 					aud: route.service,
-					sub: caller.user_id.to_string(),
-					email: caller.email.clone(),
-					email_verified: caller.email_verified,
-					name: caller.preferred_name.clone(),
-					permissions: caller.permissions.iter().filter(|p| p.starts_with(route.service.prefix())).collect(),
+					principal: Principal::User(User {
+						sub: caller.user_id.to_string(),
+						email: caller.email.clone(),
+						email_verified: caller.email_verified,
+						name: caller.preferred_name.clone(),
+						permissions: caller.permissions.iter().filter(|p| p.starts_with(route.service.prefix())).collect(),
+					}),
 					method: req.method().to_string(),
 					path: upstream_path.clone(),
 					exp: jiff::Timestamp::now().as_second() + sa_auth::TTL,
@@ -210,6 +212,7 @@ async fn forward(State(f): State<Forward>, req: Request) -> Response {
 	let base = match route.service {
 		Service::ReviewArchive => &f.upstreams.review_archive,
 		Service::Playbook => &f.upstreams.playbook,
+		Service::Sites => unreachable!("phase 3 of the split: no route forwards to sites yet"),
 	};
 	let query = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
 	let uri: Uri = match format!("{}{upstream_path}{query}", base.to_string().trim_end_matches('/')).parse() {

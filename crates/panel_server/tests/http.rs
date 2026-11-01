@@ -6,7 +6,8 @@ use axum::{
 };
 use jiff::Timestamp;
 use panel::testing::{Signed, TestDb, event, messenger_lead, panel, sign, sign_get};
-use panel_core::{event::SourceKind, ids::BrandId};
+use panel_core::ids::BrandId;
+use sa_auth::SourceKind;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 

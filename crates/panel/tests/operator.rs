@@ -7,10 +7,10 @@ use panel::{
 	testing::{TestDb, event, panel, sign},
 };
 use panel_core::{
-	event::SourceKind,
 	ids::{BrandId, JobId, LeadId, LocationId},
 	lead::Stage,
 };
+use sa_auth::SourceKind;
 use serde_json::json;
 use uuid::Uuid;
 

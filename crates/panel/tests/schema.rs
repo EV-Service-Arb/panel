@@ -14,11 +14,10 @@ use panel::{
 	testing::{TestDb, event, sign},
 };
 use panel_core::{
-	event::SourceKind,
 	ids::{BrandId, LocationId},
 	notify::{Failure, Locale, Rendered, Rule},
 };
-use sa_auth::{PermissionSet, SA_OPERATOR};
+use sa_auth::{PermissionSet, SA_OPERATOR, SourceKind};
 use serde_json::json;
 use zeroize::Zeroizing;
 
@@ -240,21 +239,22 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 #[tokio::test]
 async fn telegram_roles_become_permissions_both_ways() {
 	const PERMISSIONS: i64 = 20261006090000;
-	// `sa:admin` as the migration wrote it: the alias of that day, frozen. A permission added to
-	// the alias since (`sa:work:invoices:create`) reaches a link when concierge is next asked.
+	// `sa:admin` as the migration wrote it: the alias of that day, frozen (re-spelled under
+	// `sa:sites:` since). A permission added to the alias since (`sa:sites:work:invoices:create`)
+	// reaches a link when concierge is next asked.
 	const ADMIN_WHEN_WRITTEN: &[&str] = &[
 		"sa:admin:sources:manage",
-		"sa:analysis:experiments:edit",
-		"sa:analysis:read",
+		"sa:sites:analysis:experiments:edit",
+		"sa:sites:analysis:read",
 		"sa:playbook:mcp:use",
 		"sa:review_archive:archive:operate",
 		"sa:review_archive:members:act_as",
 		"sa:review_archive:tokens:grant",
-		"sa:work:leads:edit",
-		"sa:work:pii:see",
-		"sa:work:places:edit",
-		"sa:work:pricing:edit",
-		"sa:work:read",
+		"sa:sites:work:leads:edit",
+		"sa:sites:work:pii:see",
+		"sa:sites:work:places:edit",
+		"sa:sites:work:pricing:edit",
+		"sa:sites:work:read",
 	];
 	let db = TestDb::create().await;
 	let pool = db.pool().await;

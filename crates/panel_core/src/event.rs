@@ -1,9 +1,10 @@
 //! The envelope every `sa.funnel.v1` event carries, checked, and what a signing key may
 //! write.
 
-use std::{collections::BTreeSet, fmt, str::FromStr};
+use std::{collections::BTreeSet, fmt};
 
 use jiff::{SignedDuration, Timestamp};
+use sa_auth::SourceKind;
 
 use crate::{
 	Invalid,
@@ -12,82 +13,6 @@ use crate::{
 
 /// How far in the future `occurred_at` may be: the sources' clocks are not ours.
 pub const MAX_CLOCK_SKEW: SignedDuration = SignedDuration::from_mins(5);
-
-/// Where an event comes from.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum SourceKind {
-	Site,
-	ReviewArchive,
-	Gbp,
-	Posthog,
-	/// Typed in by a person in the panel: events of this kind are manual.
-	Panel,
-	Sheet,
-	Telephony,
-	/// The panel's booking adapters: a provider's webhook, or the calendar it pulls. Written
-	/// by the panel itself; no signing key is ever issued for it.
-	Booking,
-	/// A messenger bot or auto-responder (a brand's Telegram bot, a WhatsApp responder):
-	/// it starts a lead from a conversation and says when a customer wrote.
-	Bot,
-}
-
-impl SourceKind {
-	pub const ALL: [Self; 9] = [
-		Self::Site,
-		Self::ReviewArchive,
-		Self::Gbp,
-		Self::Posthog,
-		Self::Panel,
-		Self::Sheet,
-		Self::Telephony,
-		Self::Booking,
-		Self::Bot,
-	];
-
-	pub fn as_str(self) -> &'static str {
-		match self {
-			Self::Site => "site",
-			Self::ReviewArchive => "review_archive",
-			Self::Gbp => "gbp",
-			Self::Posthog => "posthog",
-			Self::Panel => "panel",
-			Self::Sheet => "sheet",
-			Self::Telephony => "telephony",
-			Self::Booking => "booking",
-			Self::Bot => "bot",
-		}
-	}
-
-	/// Whether a signing key is issued for it: the panel writes its own kinds without one.
-	pub fn keyed(self) -> bool {
-		!matches!(self, Self::Panel | Self::Booking)
-	}
-
-	/// Whether a person entered it rather than a system observing it (spec §10a): the
-	/// reports show which share of the funnel is hand-made.
-	pub fn is_manual(self) -> bool {
-		matches!(self, Self::Panel)
-	}
-}
-
-impl FromStr for SourceKind {
-	type Err = Invalid;
-
-	fn from_str(s: &str) -> Result<Self, Invalid> {
-		Self::ALL.into_iter().find(|k| k.as_str() == s).ok_or_else(|| {
-			Invalid::new(format!(
-				"source.kind {s:?} is not one of site, review_archive, gbp, posthog, panel, sheet, telephony, booking, bot"
-			))
-		})
-	}
-}
-
-impl fmt::Display for SourceKind {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		f.write_str(self.as_str())
-	}
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Source {

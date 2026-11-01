@@ -45,7 +45,7 @@ export function ExperimentsView() {
           <>
             <p className="px-1 text-sm text-ink-soft">{t("experiments.how")}</p>
             {byBrand(list).map(([b, experiments]) => (
-              <BrandExperiments key={b} brand={b} experiments={experiments} editable={may(me, "sa:analysis:experiments:edit")} onSaved={data.reload} />
+              <BrandExperiments key={b} brand={b} experiments={experiments} editable={may(me, "sa:sites:analysis:experiments:edit")} onSaved={data.reload} />
             ))}
           </>
         )}

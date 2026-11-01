@@ -57,7 +57,7 @@ export function PlacesView() {
     <ScreenFrame
       title={t("places.title")}
       actions={
-        may(me, "sa:work:places:edit") && data.status === "ok" ? (
+        may(me, "sa:sites:work:places:edit") && data.status === "ok" ? (
           <AddPlaceButton
             brands={data.data.brands}
             onAdded={(key) => {

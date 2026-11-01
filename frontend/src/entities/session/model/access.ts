@@ -13,5 +13,5 @@ export function may(caller: Caller, permission: Permission): boolean {
  */
 export function startRouteFor(caller: Caller): string {
   if (may(caller, "sa:admin:sources:manage")) return ROUTES.overview;
-  return may(caller, "sa:work:read") ? `${ROUTES.leads}?stage=created` : ROUTES.reviewArchive;
+  return may(caller, "sa:sites:work:read") ? `${ROUTES.leads}?stage=created` : ROUTES.reviewArchive;
 }

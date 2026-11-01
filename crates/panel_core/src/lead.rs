@@ -5,9 +5,10 @@
 //! the projection be recomputed from the journal at any time and agree with itself.
 
 use jiff::Timestamp;
+use sa_auth::SourceKind;
 
 use crate::{
-	event::{SourceKind, Subject},
+	event::Subject,
 	fact::{AnalyticsId, Fact, LeadChannel, LeadOffer, LeadSuspect, MessageRef, Messenger},
 	ids::{BrandId, EventId, JobId, LeadId, LocationId},
 };

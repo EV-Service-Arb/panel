@@ -159,12 +159,13 @@ pub fn distinct_id(brand: &str, lead: &str, analytics_id: Option<&AnalyticsId>) 
 
 #[cfg(test)]
 mod tests {
+	use sa_auth::SourceKind;
 	use uuid::Uuid;
 
 	use super::*;
 	use crate::{
 		booking::{Closed, DayPart, Provider},
-		event::{SourceKind, Subject},
+		event::Subject,
 		fact::{CallOutcome, LeadChannel, LeadOffer, MessageRef, Messenger},
 		ids::{BrandId, EventId, LeadId, LocationId},
 	};

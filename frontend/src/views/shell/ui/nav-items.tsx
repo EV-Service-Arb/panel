@@ -30,8 +30,8 @@ const BUILD_PAGES: FlaggedPages = { wallet: WALLET_PAGE_ENABLED };
 
 /** `pages`: the build flags by default; a parameter so that a test can turn them on and off. */
 export function panelNav(t: T, caller: Caller, marks: Marks, pages: FlaggedPages = BUILD_PAGES): PanelNav {
-  const work = may(caller, "sa:work:read");
-  const analysis = may(caller, "sa:analysis:read");
+  const work = may(caller, "sa:sites:work:read");
+  const analysis = may(caller, "sa:sites:analysis:read");
   const admin = may(caller, "sa:admin:sources:manage");
   const dot = (corner: boolean) => <NavDot corner={corner} label={t("nav.changed")} />;
   const overview: NavItem = { id: "overview", href: ROUTES.overview, label: t("nav.overview"), icon: BarChart3 };

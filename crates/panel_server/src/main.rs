@@ -20,7 +20,6 @@ use panel::{
 	telegram::Notifier,
 };
 use panel_core::{
-	event::SourceKind,
 	ids::{BrandId, LocationId},
 	place::{self, Editor},
 };
@@ -34,7 +33,7 @@ use panel_server::{
 	telegram::{self, BotApi, BotName},
 	web::{self, Files},
 };
-use sa_auth::Catalog;
+use sa_auth::{Catalog, SourceKind};
 
 use crate::settings::Settings;
 

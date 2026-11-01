@@ -14,9 +14,10 @@ use panel::{
 };
 use panel_core::{
 	booking::BookingStatus,
-	event::{SourceKind, Subject, TypeKey},
+	event::{Subject, TypeKey},
 	ids::{BrandId, LeadId},
 };
+use sa_auth::SourceKind;
 use serde_json::{Value, json};
 use sqlx::{migrate::Migrator, sqlite::SqlitePoolOptions};
 

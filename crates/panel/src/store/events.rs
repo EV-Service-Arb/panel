@@ -4,9 +4,10 @@
 use eyre::WrapErr;
 use jiff::Timestamp;
 use panel_core::{
-	event::{SourceKind, Subject, TypeKey},
+	event::{Subject, TypeKey},
 	ids::{BrandId, EventId, JobId, LeadId, LocationId},
 };
+use sa_auth::SourceKind;
 use serde_json::Value;
 use sqlx::{SqliteConnection, types::Json};
 use uuid::Uuid;

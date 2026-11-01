@@ -11,7 +11,8 @@ use panel::{
 	pricing::{ChangeKind, PricingError},
 	testing::{TestDb, event, panel, sign},
 };
-use panel_core::{event::SourceKind, ids::BrandId, place::Editor, pricing::PricingInputs};
+use panel_core::{ids::BrandId, place::Editor, pricing::PricingInputs};
+use sa_auth::SourceKind;
 use serde_json::{Value, json};
 use uuid::Uuid;
 

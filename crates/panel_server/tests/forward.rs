@@ -20,7 +20,7 @@ use panel_server::{
 	http,
 	signin::{SignIn, SignInConfig},
 };
-use sa_auth::{Keys, Service, Signer};
+use sa_auth::{Keys, Principal, Service, Signer};
 use tower::ServiceExt;
 
 const ORIGIN: &str = "http://127.0.0.1:59120";
@@ -153,7 +153,8 @@ async fn a_signed_in_call_reaches_the_service_with_an_assertion_and_without_the_
 	let keys: Keys = SEED.parse::<Signer>().unwrap().public().parse().unwrap();
 	let token = got.headers["x-sa-assertion"].to_str().unwrap();
 	let now = jiff::Timestamp::now().as_second();
-	let a = sa_auth::verify(&keys, token, Service::ReviewArchive, "GET", "/me/overview", now).expect("the panel's assertion, not the forged one");
+	let a = sa_auth::verify(&keys, token, Service::ReviewArchive, "GET", "/me/overview", None, now).expect("the panel's assertion, not the forged one");
+	let Principal::User(a) = a.principal else { panic!("a session's call is a user's") };
 	assert_eq!(a.email, "dev-admin@localhost");
 	assert!(
 		a.permissions.iter().all(|p| p.starts_with("sa:review_archive:")) && a.permissions.iter().count() == 3,
@@ -239,7 +240,7 @@ async fn grafana_is_reached_under_its_own_path_and_its_query_posts_need_no_csrf(
 		assert_eq!(got.headers["accept-encoding"], "gzip");
 		let path = theirs.split('?').next().unwrap();
 		let token = got.headers["x-sa-assertion"].to_str().unwrap();
-		sa_auth::verify(&keys, token, Service::ReviewArchive, method.as_str(), path, jiff::Timestamp::now().as_second()).expect("signed for the path the service sees");
+		sa_auth::verify(&keys, token, Service::ReviewArchive, method.as_str(), path, None, jiff::Timestamp::now().as_second()).expect("signed for the path the service sees");
 	}
 
 	assert_eq!(

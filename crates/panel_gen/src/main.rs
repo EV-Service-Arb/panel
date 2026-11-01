@@ -6,7 +6,6 @@ use std::path::Path;
 use ev_lib::ts_gen::Ts;
 use panel_core::{
 	booking::{BookingMatch, BookingStatus, DayPart, Provider},
-	event::SourceKind,
 	fact::{LeadChannel, LeadFlow, LeadSuspect, Messenger},
 	funnel::CONTACT_SLA,
 	lead::Stage,
@@ -17,7 +16,7 @@ use panel_server::{
 	api::{CURRENCIES, IDEMPOTENCY_KEY},
 	signin::Caller,
 };
-use sa_auth::Catalog;
+use sa_auth::{Catalog, SourceKind};
 
 fn main() {
 	let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../frontend/src");

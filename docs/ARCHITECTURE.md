@@ -164,13 +164,13 @@ POST /auth/logout    CSRF; every session of the user is closed
 - **Permissions, no admission.** Any active concierge account signs in. `GetMe` answers the
   concrete `sa` permissions the user holds (`UserProfile.permissions`: no alias, no
   wildcard; anything outside `sa` is a failed answer); the gate admits every signed-in user,
-  and each `/api/v1` route sits under one section — Work (`sa:work:read`), Analysis
-  (`sa:analysis:read`), Admin (`sa:admin:sources:manage`) — or none (`/me`, the profile's
+  and each `/api/v1` route sits under one section — Work (`sa:sites:work:read`), Analysis
+  (`sa:sites:analysis:read`), Admin (`sa:admin:sources:manage`) — or none (`/me`, the profile's
   `/telegram*`, `/access/requests*`). `/me` names no platform URL: the front end takes the
   platform's origin from `@evinvest/concierge` (`CONCIERGE_ORIGIN`), where the chip, the sign-in
   and the sign-out already take it. `http::api_routes` is the table the router is built from and the tests
-  walk. Actions ask their own permission on top (`sa:work:leads:edit`, `sa:work:pii:see`,
-  `sa:work:places:edit`, `sa:work:pricing:edit`, `sa:analysis:experiments:edit`).
+  walk. Actions ask their own permission on top (`sa:sites:work:leads:edit`, `sa:sites:work:pii:see`,
+  `sa:sites:work:places:edit`, `sa:sites:work:pricing:edit`, `sa:sites:analysis:experiments:edit`).
 - **The catalog.** `serve` publishes `Catalog::collect("sa", PANEL_BUILD_EPOCH)` with
   `PublishCatalog` before it serves (the image sets `PANEL_BUILD_EPOCH` to the commit's
   unix seconds, so an older replica never supersedes a newer one); concierge refusing it
@@ -375,7 +375,7 @@ the visit, filtered by `brand_id`, or broken down by it without `brand`. Null wi
 prices](#flows-and-prices) —, …)
 plus `sla` while it waits for its first contact — `{waiting_since, waiting_seconds,
 overdue}`, overdue after 30 minutes — and `pii` (the customer's name, phone, need) for a caller
-holding `sa:work:pii:see`. A share is `{n, of, percent, small_sample}`; `percent` is null while `of`
+holding `sa:sites:work:pii:see`. A share is `{n, of, percent, small_sample}`; `percent` is null while `of`
 is under `min_sample` (§10.1), so the front end can only draw "n of of".
 
 ## Suspect leads
@@ -481,27 +481,27 @@ always comes from the API, under its checks.
 ```text
 GET /api/v1/live    Origin = PANEL_PUBLIC_ORIGIN exactly (scheme, host, port)   else 403
                     the session, as the /api/v1 gate (cached GetMe)             else 401 / 503
-                    sa:work:read (the Work section)                             else 403
+                    sa:sites:work:read (the Work section)                             else 403
                     ≤ 5 sockets per user, ≤ 200 in all                          else 429
                     → 101; no CSRF token (a GET), the Origin stands in for it
 server → client     {"type":"hello","at","user_id"}                            at once
 (JSON text frames)  {"type":"changed","topic","brand_id"?,"id"?,"at"}          after each commit
                     {"type":"resync"}                                          read everything again
                     WS Ping every 25 s; no Pong within 60 s → the socket is dropped
-closes              4401 the session ended   4403 sa:work:read is gone   1001 the server is stopping
+closes              4401 the session ended   4403 sa:sites:work:read is gone   1001 the server is stopping
 ```
 
 | `topic` | when | `brand_id` | `id` | who is told |
 | --- | --- | --- | --- | --- |
-| `leads` | a lead came in (`lead.created`: ingest, or typed in) | its brand | the lead | `sa:work:read` |
-| `lead` | a stage, a call, a payment of one lead (the API or a Telegram button) | its brand | the lead | `sa:work:read` |
-| `places` | a place's settings set, reverted, withdrawn, restored, or the place registered | its brand | the slug | `sa:work:read` |
-| `pricing` | a brand's pricing saved or removed, or its locales set | its brand | — | `sa:work:read` |
+| `leads` | a lead came in (`lead.created`: ingest, or typed in) | its brand | the lead | `sa:sites:work:read` |
+| `lead` | a stage, a call, a payment of one lead (the API or a Telegram button) | its brand | the lead | `sa:sites:work:read` |
+| `places` | a place's settings set, reverted, withdrawn, restored, or the place registered | its brand | the slug | `sa:sites:work:read` |
+| `pricing` | a brand's pricing saved or removed, or its locales set | its brand | — | `sa:sites:work:read` |
 | `sources` | a source key minted or revoked | — | — | `sa:admin:sources:manage` |
-| `experiments` | a landing's declaration, or an admin's change | its brand | the key (a change) | `sa:analysis:read` |
+| `experiments` | a landing's declaration, or an admin's change | its brand | the key (a change) | `sa:sites:analysis:read` |
 | `telegram` | the user's link made, undone or found blocked; their rules | — | — | that user |
-| `bookings` | a provider's booking without a lead came, changed, or was attached | its brand | — | `sa:work:read` |
-| `invoices` | an invoice stored, read from banking (changed), dropped on a refusal, or paid / cancelled / expired by the confirmation | — | the invoice (one row); — (a confirmation page) | `sa:work:read` |
+| `bookings` | a provider's booking without a lead came, changed, or was attached | its brand | — | `sa:sites:work:read` |
+| `invoices` | an invoice stored, read from banking (changed), dropped on a refusal, or paid / cancelled / expired by the confirmation | — | the invoice (one row); — (a confirmation page) | `sa:sites:work:read` |
 
 A booking event tells `lead` for every lead it changed — a provider's booking attached
 elsewhere tells the lead it left and the one it joined.
@@ -559,7 +559,7 @@ GET  /api/internal/brands/{brand}/locations/{slug}?locale   no session; ≤ 32 a
        404 {"error": "not_found"}: only a place an admin withdrew
 ```
 
-Under `/api/v1` (Work), CSRF on writes like the rest; writes need `sa:work:places:edit` and
+Under `/api/v1` (Work), CSRF on writes like the rest; writes need `sa:sites:work:places:edit` and
 ask concierge afresh (`Freshness::Fresh`); without it, a read (`can_edit` false, `403` on a write):
 
 ```text
@@ -636,7 +636,7 @@ GET    /api/internal/brands/{brand}/pricing?locale   no session; with the locati
 ```
 
 Under `/api/v1` (Work), CSRF on everything but GET; saving and removing need
-`sa:work:pricing:edit` and ask concierge afresh (`Freshness::Fresh`); reading and the preview
+`sa:sites:work:pricing:edit` and ask concierge afresh (`Freshness::Fresh`); reading and the preview
 are the section's:
 
 ```text
@@ -671,9 +671,9 @@ Item: {brand_id, locales, model | null, updated_at | null, updated_by | null}
 ## Telegram (§8)
 
 A bot (`TELEGRAM_BOT_TOKEN`; without it, or without the sign-in, none of this runs) writes to
-each user in a private chat. Rules: `new_lead` and `contact_overdue` (`sa:work:leads:edit`, on
+each user in a private chat. Rules: `new_lead` and `contact_overdue` (`sa:sites:work:leads:edit`, on
 by default), `payment_received` and `source_silent` (`sa:admin:sources:manage`, off by
-default), `booked` (`sa:work:leads:edit`, on by default: a slot booked, moved or canceled — "Бронь: <slot> (Paris)", "Бронь
+default), `booked` (`sa:sites:work:leads:edit`, on by default: a slot booked, moved or canceled — "Бронь: <slot> (Paris)", "Бронь
 перенесена", "Бронь отменена", "… без заявки" for one without a lead; not to the operator who
 set or closed it themselves; no buttons), `access_requested` (every permission of `sa:admin`,
 on by default: "🔑 Playbook access request" / "🔑 Access request", the email and name, and a URL
@@ -720,7 +720,7 @@ delivery (0.5 s)            lead messages queued > 1 h ago dead ("stale"); > 20 
 - **Quiet.** The bot answers commands only: other messages get nothing, and its unsolicited
   replies (help, "not linked", "invalid link") go at most once per chat per 10 min.
 - **PII.** A new lead's message carries the brand, location, need and phone — for whoever
-  holds `sa:work:pii:see`. Queued texts are sealed under
+  holds `sa:sites:work:pii:see`. Queued texts are sealed under
   `PANEL_DATA_KEY` like the journal's PII and dropped once sent or dead. What a customer typed
   is put on one line (control characters, line separators and bidi marks become spaces),
   bounded (name 80, need 500, phone 40 of digits and `+()-`, the message 3 500), and the name
@@ -744,7 +744,7 @@ delivery (0.5 s)            lead messages queued > 1 h ago dead ("stale"); > 20 
   trusted. The message must be that chat's, the chat linked to the message's user, and the
   user's access is asked of concierge at the press — with no live panel session to ask with,
   the answer is "open the panel to confirm your access", never a cached answer; a press
-  needs `sa:work:leads:edit`. The event ids
+  needs `sa:sites:work:leads:edit`. The event ids
   derive from (user, outbox id, button), so a press repeated, or its update redelivered,
   records nothing twice. The message is then edited: "Взял: <preferred_name or email>" added
   and the buttons removed ("Не дозвонился" leaves "Взял").
@@ -784,7 +784,7 @@ GET /api/v1/experiments?brand            Analysis; one brand's, or every brand's
        override: null | {weights, enabled, holdout (each null: follows the declaration),
                          changed_by (the admin's email, else their id: by), changed_at},
        effective: {weights, enabled, holdout}, weights_changed_at, retired, posthog_url}]}
-PUT /api/v1/experiments/{brand}/{key}    sa:analysis:experiments:edit, fresh (as POST /sources); CSRF
+PUT /api/v1/experiments/{brand}/{key}    sa:sites:analysis:experiments:edit, fresh (as POST /sources); CSRF
      {enabled?: bool | null, weights?: [n] | null, holdout?: n | null}: absent left, null put
      back → 200 the item; 400 {error} invalid (weights against the declared variants); 404 an
      unknown or retired experiment, or a brand or key that cannot be one; a change that changes
@@ -846,7 +846,7 @@ and opens its pay page on evinvest.ltd for the customer. Banking is the authorit
 `invoices` table mirrors what it last said (`panel::invoices`, `panel_server::scope_ledger`).
 
 ```text
-POST /api/v1/invoices      sa:work:invoices:create, Idempotency-Key required
+POST /api/v1/invoices      sa:sites:work:invoices:create, Idempotency-Key required
                            → the row is stored `creating` with the terms, then banking is asked
                            (OpenAccount `sa:invoices` once, CreateInvoice under a key derived from
                            the row, subject_ref sa_invoice:<row id>) → 201; a retry → 200, the
@@ -983,7 +983,7 @@ PKCE, state), waits on `127.0.0.1:<port>` for the redirect, prints
 `GOOGLE_CALENDAR_REFRESH_TOKEN_<BRAND>=…` once, for add-secrets. `panel booking google-sync
 <brand> [--full]`: one pull now.
 
-**API** (`/api/v1`, Work, CSRF on writes; writes need `sa:work:leads:edit`):
+**API** (`/api/v1`, Work, CSRF on writes; writes need `sa:sites:work:leads:edit`):
 
 ```text
 POST /leads/{brand}/{lead}/booking         {action: "set", start_at, end_at?} | {action: "clear"}

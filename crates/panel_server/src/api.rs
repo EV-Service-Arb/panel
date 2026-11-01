@@ -21,13 +21,12 @@ use panel::{
 };
 use panel_core::{
 	Invalid,
-	event::SourceKind,
 	fact::{LeadChannel, LeadFlow, MessageRef, Messenger},
 	funnel::{MIN_SAMPLE, Share},
 	ids::{BrandId, JobId, LeadId, LocationId},
 	lead::Stage,
 };
-use sa_auth::{Leads, Pii as SeesPii};
+use sa_auth::{Leads, Pii as SeesPii, SourceKind};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -95,7 +94,7 @@ pub(crate) fn routes() -> Vec<ApiRoute> {
 		ApiRoute::new(M::POST, "/leads/{brand}/{lead}/calls/attempt", work, Cached, attempt_call),
 		ApiRoute::new(M::POST, "/leads/{brand}/{lead}/calls/{attempt}/outcome", work, Cached, call_outcome),
 		ApiRoute::new(M::POST, "/leads/{brand}/{lead}/payments", work, Cached, payment),
-		ApiRoute::new(M::GET, "/funnel", work, Cached, funnel),
+		ApiRoute::new(M::GET, "/funnel", Some(Section::Analysis), Cached, funnel),
 		ApiRoute::new(M::GET, "/places", work, Cached, places),
 		ApiRoute::new(M::GET, "/sources", admin, Cached, sources),
 		// A key must not be minted or revoked on a permission revoked a moment ago.
@@ -830,7 +829,7 @@ struct AddSource {
 
 async fn add_source(State(panel): State<Panel>, Extension(caller): Extension<Caller>, b: Result<Json<AddSource>, JsonRejection>) -> ApiResult<Response> {
 	let b = body(b)?;
-	let kind: SourceKind = b.kind.parse()?;
+	let kind: SourceKind = b.kind.parse().map_err(Invalid::from)?;
 	// The panel's own events carry no key (`key_id` NULL): a key of kind panel would only let
 	// something outside pass its writes off as typed in by hand.
 	if !kind.keyed() {

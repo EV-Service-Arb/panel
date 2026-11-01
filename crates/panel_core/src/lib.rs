@@ -41,3 +41,9 @@ impl Invalid {
 		Self(msg.into())
 	}
 }
+
+impl From<sa_auth::UnknownKind> for Invalid {
+	fn from(e: sa_auth::UnknownKind) -> Self {
+		Self(e.to_string())
+	}
+}

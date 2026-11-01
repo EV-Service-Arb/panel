@@ -23,7 +23,7 @@ export function InvoicesView() {
   const button = useButtonSize();
   const invoices = useResource("invoices", fetchInvoices, "invoices", { live: ["invoices"] });
 
-  if (!may(me, "sa:work:read")) {
+  if (!may(me, "sa:sites:work:read")) {
     return (
       <ScreenFrame title={t("invoices.title")}>
         <ErrorState failure={{ kind: "forbidden", message: "" }} />
@@ -52,7 +52,7 @@ export function InvoicesView() {
 
   return (
     <ScreenFrame title={t("invoices.title")} description={t("invoices.description")} actions={refresh}>
-      {may(me, "sa:work:invoices:create") && <CreateInvoiceForm onCreated={invoices.reload} />}
+      {may(me, "sa:sites:work:invoices:create") && <CreateInvoiceForm onCreated={invoices.reload} />}
       <Settled loading={invoices.status === "loading"} skeleton={<Skeleton className="h-40 w-full" />}>
         {invoices.status === "error" && <ErrorState failure={invoices.failure} onRetry={invoices.reload} />}
         {invoices.status === "ok" && invoices.data.length === 0 && <EmptyState title={t("invoices.empty")} description={t("invoices.empty.body")} />}

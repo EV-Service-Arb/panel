@@ -25,13 +25,12 @@ use panel::{
 	testing::{self as aliases, TestDb, event, panel, sign},
 };
 use panel_core::{
-	event::SourceKind,
 	ids::{BrandId, LeadId, LocationId},
 	lead::Stage,
 	notify::{Entity, Locale, Rendered},
 };
 use panel_server::telegram::BotApi;
-use sa_auth::PermissionSet;
+use sa_auth::{PermissionSet, SourceKind};
 use serde_json::{Value, json};
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -458,7 +457,7 @@ async fn a_silent_source_is_told_to_admins_once_a_day() {
 	let s = setup().await;
 	let admin = Uuid::now_v7();
 	s.panel
-		.add_source("aquafix-site", panel_core::event::SourceKind::Site, [brand()].into_iter().collect())
+		.add_source("aquafix-site", sa_auth::SourceKind::Site, [brand()].into_iter().collect())
 		.await
 		.unwrap()
 		.unwrap();
@@ -849,7 +848,7 @@ async fn what_a_customer_typed_cannot_forge_a_line_or_a_link() {
 	s.mock.clear();
 	let secret = s
 		.panel
-		.add_source("aquafix-site", panel_core::event::SourceKind::Site, [brand()].into_iter().collect())
+		.add_source("aquafix-site", sa_auth::SourceKind::Site, [brand()].into_iter().collect())
 		.await
 		.unwrap()
 		.unwrap()
@@ -1196,7 +1195,7 @@ async fn an_access_request_reaches_the_admins_with_the_grant_link() {
 	s.link(Uuid::now_v7(), aliases::admin(), 1, now).await;
 	s.link(Uuid::now_v7(), aliases::operator(), 2, now).await;
 	s.mock.clear();
-	let (app, mut b) = requester(&s.panel, "ann@example.com", &["sa:work:read"]).await;
+	let (app, mut b) = requester(&s.panel, "ann@example.com", &["sa:sites:work:read"]).await;
 
 	let (status, asked) = b.ask(&app, "sa:playbook:mcp:use").await;
 	assert_eq!(status, StatusCode::CREATED, "{asked}");
@@ -1223,7 +1222,7 @@ async fn an_access_request_reaches_the_admins_with_the_grant_link() {
 	assert_eq!(s.panel.telegram_fan_out(now, Locale::En, &cabinet()).await.unwrap(), 0, "and no second message");
 
 	for (need, want) in [
-		("sa:work:read", StatusCode::CONFLICT),
+		("sa:sites:work:read", StatusCode::CONFLICT),
 		("sa:nope:x", StatusCode::BAD_REQUEST),
 		("sa:admin:sources", StatusCode::BAD_REQUEST),
 		("", StatusCode::BAD_REQUEST),

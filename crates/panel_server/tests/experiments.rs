@@ -15,12 +15,13 @@ use panel::{
 	posthog::PosthogProject,
 	testing::{TestDb, event, panel, sign},
 };
-use panel_core::{event::SourceKind, ids::BrandId};
+use panel_core::ids::BrandId;
 use panel_server::{
 	concierge::{Concierge, DevIdentity},
 	http,
 	signin::{SignIn, SignInConfig},
 };
+use sa_auth::SourceKind;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 

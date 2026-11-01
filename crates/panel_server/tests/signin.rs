@@ -21,14 +21,14 @@ use panel_contracts::concierge::v1::{
 	auth_service_server::{AuthService, AuthServiceServer},
 	user_directory_server::{UserDirectory, UserDirectoryServer},
 };
-use panel_core::{event::SourceKind, ids::BrandId};
+use panel_core::ids::BrandId;
 use panel_server::{
 	concierge::{CLIENT_ID, Concierge},
 	http,
 	signin::{SignIn, SignInConfig},
 	telegram,
 };
-use sa_auth::{PermissionSet, SA_ADMIN, SA_OPERATOR};
+use sa_auth::{PermissionSet, SA_ADMIN, SA_OPERATOR, SourceKind};
 use serde_json::{Value, json};
 use tonic::{Code, Request as GrpcRequest, Response as GrpcResponse, Status, transport::server::TcpIncoming};
 use tower::ServiceExt;

@@ -14,9 +14,9 @@ use panel::{
 };
 use panel_core::{
 	booking::{BookingEvent, Change, Contact, Provider},
-	event::SourceKind,
 	ids::{BrandId, LeadId},
 };
+use sa_auth::SourceKind;
 use serde_json::{Value, json};
 
 /// Answers each send with the next of `answers` (then Ok), and remembers every batch.

@@ -41,12 +41,13 @@ use eyre::WrapErr;
 use jiff::Timestamp;
 use panel_core::{
 	Invalid,
-	event::{Envelope, KeyGrant, SourceKind},
+	event::{Envelope, KeyGrant},
 	fact::{Fact, MessageRef},
 	ids::{BrandId, LeadId, LocationId},
 	lead::Recorded,
 	signature::{self, SignatureError},
 };
+use sa_auth::SourceKind;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;

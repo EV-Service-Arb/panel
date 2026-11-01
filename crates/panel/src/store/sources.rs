@@ -5,10 +5,8 @@ use std::collections::BTreeSet;
 
 use eyre::WrapErr;
 use jiff::Timestamp;
-use panel_core::{
-	event::{KeyGrant, SourceKind},
-	ids::BrandId,
-};
+use panel_core::{event::KeyGrant, ids::BrandId};
+use sa_auth::SourceKind;
 use sqlx::types::Json;
 
 use super::{Store, from_db};

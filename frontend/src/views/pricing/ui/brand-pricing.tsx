@@ -43,7 +43,7 @@ export function BrandPricing({ brand, today }: { brand: string; today: string })
     <Settled loading={data.status === "loading"} skeleton={<Skeleton className="h-96 w-full" />}>
       {data.status === "error" && <ErrorState failure={data.failure} onRetry={data.reload} />}
       {latest !== null &&
-        (may(me, "sa:work:pricing:edit") ? (
+        (may(me, "sa:sites:work:pricing:edit") ? (
           <EditWorkspace
             key={pinned?.updated_at ?? "never"}
             base={pinned ?? latest}

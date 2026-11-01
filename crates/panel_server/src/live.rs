@@ -4,7 +4,7 @@
 //! ```text
 //! GET /api/v1/live    Origin = PANEL_PUBLIC_ORIGIN, exactly                 else 403
 //!                     the session, as the /api/v1 gate                      else 401 / 503
-//!                     the Work section's permission (sa:work:read)          else 403
+//!                     the Work section's permission (sa:sites:work:read)          else 403
 //!                     ≤ 5 sockets per user, ≤ 200 in all                    else 429
 //!                     → 101; the bus subscribed before the answer, so nothing committed after
 //!                       it is missed

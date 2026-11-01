@@ -828,16 +828,16 @@ mod tests {
 		.unwrap();
 		assert_eq!(op.email, "ann@example.com");
 		assert_eq!(op.permissions, sa_auth::SA_OPERATOR.members.iter().copied().collect());
-		let listed = dev(&[("PANEL_DEV_SIGN_IN", "sa:work:read, sa:work:leads:edit"), ("PANEL_PUBLIC_ORIGIN", "http://localhost")])
+		let listed = dev(&[("PANEL_DEV_SIGN_IN", "sa:sites:work:read, sa:sites:work:leads:edit"), ("PANEL_PUBLIC_ORIGIN", "http://localhost")])
 			.unwrap()
 			.unwrap();
-		assert_eq!(listed.permissions, ["sa:work:leads:edit", "sa:work:read"].into_iter().collect());
+		assert_eq!(listed.permissions, ["sa:sites:work:leads:edit", "sa:sites:work:read"].into_iter().collect());
 		assert!(dev(&[("PANEL_DEV_SIGN_IN", "sa:admin"), ("PANEL_PUBLIC_ORIGIN", "http://localhost")]).is_ok(), "port optional");
 		let e = format!(
 			"{}",
-			dev(&[("PANEL_DEV_SIGN_IN", "sa:work:read,sa:work:nope"), ("PANEL_PUBLIC_ORIGIN", "http://localhost")]).unwrap_err()
+			dev(&[("PANEL_DEV_SIGN_IN", "sa:sites:work:read,sa:sites:work:nope"), ("PANEL_PUBLIC_ORIGIN", "http://localhost")]).unwrap_err()
 		);
-		assert!(e.contains("`sa:work:nope`"), "the unknown one named: {e}");
+		assert!(e.contains("`sa:sites:work:nope`"), "the unknown one named: {e}");
 		assert!(dev(&[("PANEL_DEV_SIGN_IN", "admin"), ("PANEL_PUBLIC_ORIGIN", "http://localhost")]).is_err(), "the roles are gone");
 		let none = dev(&[("PANEL_DEV_SIGN_IN", "none"), ("PANEL_PUBLIC_ORIGIN", "http://localhost")]).unwrap().unwrap();
 		assert_eq!((none.permissions.iter().count(), none.email.as_str()), (0, "dev-none@localhost"));

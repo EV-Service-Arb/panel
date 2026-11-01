@@ -12,7 +12,7 @@ import type { Marks } from "@/views/shell/model/use-marks";
 const t: T = (key) => key;
 const marks: Marks = { leads: 0, away: 0, places: 0, experiments: false, sources: false, bookings: false };
 const caller = (permissions: readonly Permission[]): Caller => ({ user_id: "u", email: "e", preferred_name: "", permissions: [...permissions], dev_sign_in: false });
-const WORK: readonly Permission[] = ["sa:work:read"];
+const WORK: readonly Permission[] = ["sa:sites:work:read"];
 const workItems = (permissions: readonly Permission[], wallet: boolean) => panelNav(t, caller(permissions), marks, { wallet }).groups.find((g) => g.id === "work")?.items.map((i) => i.id);
 const also = (permissions: readonly Permission[], wallet: boolean) => panelNav(t, caller(permissions), marks, { wallet }).tabs.find((i) => i.id === "more")?.also ?? [];
 
@@ -22,9 +22,9 @@ describe("the invoices rail entry", () => {
     expect(also(WORK, false)).toContain("/invoices");
   });
 
-  it("is absent without sa:work:read", () => {
-    expect(workItems(["sa:analysis:read"], true)).toBeUndefined();
-    expect(also(["sa:analysis:read"], true)).not.toContain("/invoices");
+  it("is absent without sa:sites:work:read", () => {
+    expect(workItems(["sa:sites:analysis:read"], true)).toBeUndefined();
+    expect(also(["sa:sites:analysis:read"], true)).not.toContain("/invoices");
   });
 
   it("ends the work group whether or not the wallet entry is on: the wallet is the rail's footer", () => {
