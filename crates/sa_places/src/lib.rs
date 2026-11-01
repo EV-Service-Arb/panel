@@ -160,7 +160,7 @@ pub async fn search(http: &reqwest::Client, endpoint: &str, key: &str, query: &s
 		})
 		.collect();
 	if named.is_empty() {
-		return Err(Error::Invalid(format!("Places found no place named {query:?}; paste a URL with its id")).into());
+		return Err(Error::Invalid(format!("Places found no place named {query:?}; paste a URL with its id")));
 	}
 	Ok(named)
 }
@@ -188,7 +188,7 @@ pub async fn details(http: &reqwest::Client, endpoint: &str, key: &str, place_id
 		.await?;
 	let status = resp.status();
 	if matches!(status, reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::BAD_REQUEST) {
-		return Err(Error::Invalid(format!("Places knows no place {place_id:?}")).into());
+		return Err(Error::Invalid(format!("Places knows no place {place_id:?}")));
 	}
 	if !status.is_success() {
 		let body = resp.text().await?;
