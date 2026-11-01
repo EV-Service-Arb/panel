@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 
 import type { Caller } from "@/entities/session";
 import { platformMfe } from "@/shared/api";
+import { WALLET_PAGE_ENABLED } from "@/shared/config/wallet-page";
 import { useLocale, useT } from "@/shared/i18n";
 import { useElementBundle } from "@/shared/mfe";
 
@@ -23,13 +24,13 @@ const BUNDLE = { minApiVersion: CHIP_API_VERSION, integrity: null, timeoutMs: 80
  * screens (`ev:navigate` → `router.push`).
  *
  * The element and the fallback share one grid cell, right-aligned, inside the chip's reserve
- * (178×42): the fallback paints at once and stays on top until the element has painted itself,
+ * (178×42 from `sm`; a phone has no room to reserve): the fallback paints at once and stays on top until the element has painted itself,
  * then leaves. The element is invisible until then, so neither a double chip nor a gap shows;
  * the cell keeps its width when one replaces the other, give or take the name's length.
  */
 export function AccountChip({ me, onSignOut, className }: { me: Caller; onSignOut: () => void; className?: string }) {
   const scriptUrl = useChipScriptUrl();
-  const cell = cn("grid min-h-10.5 min-w-44.5 items-center justify-items-end", className);
+  const cell = cn("grid min-h-10.5 items-center justify-items-end sm:min-w-44.5", className);
   // Registry not answered yet, or it gave no chip: the fallback alone, the way a bundle that
   // failed to load looks.
   if (scriptUrl === null) {
@@ -70,7 +71,7 @@ function LoadedChip({ scriptUrl, me, onSignOut, className }: LoadedChipProps) {
   const pathname = usePathname();
   const router = useRouter();
   const bundle = useElementBundle(ACCOUNT_CHIP_TAG, scriptUrl, BUNDLE);
-  const { hostRef, painted } = useChipElement(ACCOUNT_CHIP_TAG, bundle === "ready", chipAttributes(me, pathname, t), { onSignOut, onNavigate: router.push }, locale);
+  const { hostRef, painted } = useChipElement(ACCOUNT_CHIP_TAG, bundle === "ready", chipAttributes(me, pathname, t, WALLET_PAGE_ENABLED), { onSignOut, onNavigate: router.push }, locale);
   return (
     <div className={className}>
       <div ref={hostRef} className="col-start-1 row-start-1 flex items-center" />

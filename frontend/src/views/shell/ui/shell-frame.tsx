@@ -1,33 +1,34 @@
 "use client";
 
-import { AppShell } from "@evinvest/uikit";
-import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { useEffect } from "react";
 
-import { useMe } from "@/entities/session";
-import { ROUTES } from "@/shared/config/routes";
+import { goToSignIn } from "@/shared/api";
 import { useT } from "@/shared/i18n";
-import { NavMarksProvider } from "@/shared/lib/nav-marks";
-import { useTitleCount } from "@/shared/lib/use-title-count";
+import { useLiveSocket } from "@/shared/lib/live";
 
-import { useMarks } from "../model/use-marks";
-import { panelNav } from "./nav-items";
-import { PanelRail } from "./panel-rail";
-import { PanelTabs } from "./panel-tabs";
+import { followTitleCount } from "../model/title-count";
 import { PanelTopBar } from "./panel-top-bar";
 
-/** The kit's shell around every signed-in screen, with the nav's marks and the tab title's count. */
-export function ShellFrame({ children }: { children: ReactNode }) {
+/** CONTRACT §9: an element's API answered 401. */
+const UNAUTHENTICATED_EVENT = "sa:unauthenticated";
+
+/** Every signed-in screen under the top bar; the tab's live socket and the elements' window events. */
+export function ShellFrame({ onForbidden, children }: { onForbidden: () => void; children: ReactNode }) {
   const t = useT();
-  const me = useMe();
-  const marks = useMarks(me.user_id, usePathname());
-  useTitleCount(marks.away, t("nav.leads"));
-  const nav = panelNav(t, me, marks);
+  useLiveSocket({ onUnauthenticated: goToSignIn, onForbidden });
+  const leads = t("title.leads");
+  useEffect(() => followTitleCount(window, document, leads), [leads]);
+  useEffect(() => {
+    window.addEventListener(UNAUTHENTICATED_EVENT, goToSignIn);
+    return () => window.removeEventListener(UNAUTHENTICATED_EVENT, goToSignIn);
+  }, []);
   return (
-    <NavMarksProvider value={{ [ROUTES.experiments]: marks.experiments, [ROUTES.sources]: marks.sources }}>
-      <AppShell breakpoint="md" rail={<PanelRail groups={nav.groups} footer={nav.footer} />} topBar={<PanelTopBar />} tabBar={<PanelTabs items={nav.tabs} />}>
-        {children}
-      </AppShell>
-    </NavMarksProvider>
+    <div className="flex min-h-svh flex-col">
+      <div className="sticky top-0 z-30">
+        <PanelTopBar />
+      </div>
+      <main className="flex min-w-0 flex-1 flex-col">{children}</main>
+    </div>
   );
 }

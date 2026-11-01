@@ -12,9 +12,9 @@ export interface RemoteElementProps {
   tag: string;
   scriptUrl: string;
   attributes: Record<string, string>;
-  className?: string;
+  className?: string | undefined;
   /** Until the element is defined, and if the bundle fails to load. */
-  fallback?: ReactNode;
+  fallback?: ReactNode | undefined;
 }
 
 export function RemoteElement({ tag, scriptUrl, attributes, className, fallback = null }: RemoteElementProps) {

@@ -12,10 +12,10 @@ export const CHIP_API_VERSION = 2;
 /** Every attribute the panel may set, so one it stops sending is removed rather than left stale. */
 export const CHIP_ATTRIBUTE_NAMES = ["data-mode", "data-name", "data-email", "data-profile-href", "data-switch-href", "data-groups"] as const;
 
-export type ChipAttributeName = (typeof CHIP_ATTRIBUTE_NAMES)[number];
+type ChipAttributeName = (typeof CHIP_ATTRIBUTE_NAMES)[number];
 export type ChipAttributes = Partial<Record<ChipAttributeName, string>>;
 
-export interface ChipItem {
+interface ChipItem {
   id: string;
   href: string;
   label: string;
@@ -37,23 +37,30 @@ function clip(value: string): string {
   return chars.length > MAX_TEXT ? chars.slice(0, MAX_TEXT).join("") : chars.join("");
 }
 
-/** The panel's own menu entries, the ones the kit's AccountMenu showed before. */
-export function panelGroups(me: Caller, t: T): ChipGroup[] {
-  const items: ChipItem[] = [];
+/** The panel's own menu entries: the caller's own screens, then the review archive's. `walletPage`: the build flag. */
+export function panelGroups(me: Caller, t: T, walletPage: boolean): ChipGroup[] {
+  const own: ChipItem[] = [];
+  if (walletPage && may(me, "sa:sites:work:read")) own.push({ id: "wallet", href: ROUTES.wallet, label: t("nav.wallet") });
+  own.push({ id: "usage", href: ROUTES.usage, label: t("usage.title") });
+  if (may(me, "sa:admin:sources:manage")) own.push({ id: "sources", href: ROUTES.sources, label: t("nav.sources") });
+  const archive: ChipItem[] = [];
   if (may(me, "sa:review_archive:members:act_as")) {
-    items.push({ id: "act-as", href: ROUTES.reviewArchiveActAs, label: t("account.actAs"), external: true });
+    archive.push({ id: "act-as", href: ROUTES.reviewArchiveActAs, label: t("account.actAs"), external: true });
   }
-  items.push({ id: "tokens", href: ROUTES.reviewArchiveTokens, label: t("account.tokens.history"), external: true });
-  return [{ id: "sa", items }];
+  archive.push({ id: "tokens", href: ROUTES.reviewArchiveTokens, label: t("account.tokens.history"), external: true });
+  return [
+    { id: "own", items: own },
+    { id: "sa", items: archive },
+  ];
 }
 
 /** The element's attributes for `me` on `pathname`; an absent value is an absent attribute. */
-export function chipAttributes(me: Caller, pathname: string, t: T): ChipAttributes {
+export function chipAttributes(me: Caller, pathname: string, t: T, walletPage: boolean): ChipAttributes {
   const attrs: ChipAttributes = {
     "data-mode": "host",
     "data-profile-href": ROUTES.account,
     "data-switch-href": switchAccountPath(pathname),
-    "data-groups": JSON.stringify(panelGroups(me, t)),
+    "data-groups": JSON.stringify(panelGroups(me, t, walletPage)),
   };
   const name = clip(me.preferred_name);
   if (name) attrs["data-name"] = name;

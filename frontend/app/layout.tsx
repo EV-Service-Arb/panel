@@ -14,8 +14,6 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  // The tab bar pads itself by env(safe-area-inset-bottom), which needs the page under the notch.
-  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

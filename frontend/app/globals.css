@@ -13,16 +13,7 @@
 :root {
   /* Grid tracks with no step on the spacing scale, used as grid-cols-(--name). */
   --grid-source-form: 1fr 12rem 1fr auto;
-  --grid-payment: 1fr 1fr 7rem;
-  /* A new invoice: amount, memo (the widest), days, submit. */
-  --grid-invoice-form: 12rem minmax(0, 1fr) 8rem auto;
-  --grid-funnel-row: 1fr auto auto;
-  --grid-place-step: 6rem 1fr auto;
   --grid-account-row: 8rem 1fr;
-  /* A place's live field read-only: its name, then its value. */
-  --grid-place-field: 7rem 1fr;
-  /* Pricing: the editor, and beside it the preview, JSON and history column. */
-  --grid-pricing: minmax(0, 1fr) 24rem;
 }
 
 html,
@@ -35,44 +26,4 @@ body {
    sideways on open and again on close. */
 html {
   scrollbar-gutter: stable;
-}
-
-/* A row a live update touched (views/leads, `data-flash`): "new" arrives and
-   glows, "odd"/"even" glow again on each later change — two names, because an
-   animation replays only when its name changes. The glow is colour alone, so
-   reduced motion keeps it and drops only the arrival's rise. */
-@keyframes panel-glow-odd {
-  from {
-    background-color: color-mix(in oklab, var(--color-primary-ink) 22%, transparent);
-  }
-}
-@keyframes panel-glow-even {
-  from {
-    background-color: color-mix(in oklab, var(--color-primary-ink) 22%, transparent);
-  }
-}
-@keyframes panel-arrive {
-  from {
-    opacity: 0;
-    translate: 0 var(--ev-rise, 8px);
-    background-color: color-mix(in oklab, var(--color-primary-ink) 22%, transparent);
-  }
-  30% {
-    opacity: 1;
-    translate: 0 0;
-  }
-}
-[data-flash="odd"] {
-  animation: panel-glow-odd 1.6s var(--ev-ease-out, ease-out);
-}
-[data-flash="even"] {
-  animation: panel-glow-even 1.6s var(--ev-ease-out, ease-out);
-}
-[data-flash="new"] {
-  animation: panel-arrive 2s var(--ev-ease-out, ease-out);
-}
-@media (prefers-reduced-motion: reduce) {
-  [data-flash="new"] {
-    animation-name: panel-glow-odd;
-  }
 }

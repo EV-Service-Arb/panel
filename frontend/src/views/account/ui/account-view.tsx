@@ -1,6 +1,6 @@
 "use client";
 
-import { Skeleton } from "@evinvest/uikit";
+import { PageFrame, Skeleton } from "@evinvest/uikit";
 import { ACCOUNT_SECTIONS } from "@evinvest/concierge";
 import { AccountPage } from "@evinvest/concierge/react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -12,7 +12,6 @@ import { platformMfe } from "@/shared/api";
 import { ROUTES } from "@/shared/config/routes";
 import { useLocale, useT } from "@/shared/i18n";
 import { EmptyState } from "@/shared/ui/empty-state";
-import { ScreenFrame } from "@/shared/ui/screen-frame";
 
 const TIMEOUT_MS = 8000;
 
@@ -46,7 +45,7 @@ export function AccountView() {
     return route !== null;
   };
   return (
-    <ScreenFrame title={t("nav.account")} back={ROUTES.more} width="content">
+    <PageFrame breakpoint="md" title={t("nav.account")} width="content">
       {scriptUrl === undefined ? (
         loading
       ) : scriptUrl === null ? (
@@ -65,6 +64,6 @@ export function AccountView() {
           fallback={loading}
         />
       )}
-    </ScreenFrame>
+    </PageFrame>
   );
 }

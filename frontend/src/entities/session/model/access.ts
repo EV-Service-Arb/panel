@@ -7,11 +7,12 @@ export function may(caller: Caller, permission: Permission): boolean {
   return caller.permissions.includes(permission);
 }
 
-/**
- * Where a person lands (spec §10): whoever manages the sources reads the funnel first;
- * the rest of the team the queue of new leads; anyone else the review archive, open to all.
- */
+/** The sites dropdown lists the Work and Analysis sections: anything else it would show empty. */
+export function seesSites(caller: Caller): boolean {
+  return may(caller, "sa:sites:work:read") || may(caller, "sa:sites:analysis:read");
+}
+
+/** Where a person lands (spec §10): whoever works the sites the queue of new leads, anyone else the review archive, open to all. */
 export function startRouteFor(caller: Caller): string {
-  if (may(caller, "sa:admin:sources:manage")) return ROUTES.overview;
-  return may(caller, "sa:sites:work:read") ? `${ROUTES.leads}?stage=created` : ROUTES.reviewArchive;
+  return may(caller, "sa:sites:work:read") ? ROUTES.sitesNewLeads : ROUTES.reviewArchive;
 }

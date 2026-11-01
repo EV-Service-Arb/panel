@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, type ApiFailure } from "@/shared/api";
 
-import { type LiveMatch, useLiveSignal } from "./live";
+import { type LiveTopic, useLiveSignal } from "./live";
 
 export type Resource<T> =
   | { status: "loading" }
@@ -17,11 +17,9 @@ function failureOf(e: unknown) {
 }
 
 export interface ResourceOptions {
-  /** The live topics this read follows. Whatever it is, a resync (reconnect, poll) re-reads it. */
-  live?: LiveMatch;
+  /** The live topic this read follows; a resync and a reconnect re-read it too. */
+  live?: LiveTopic;
 }
-
-const NO_TOPICS: LiveMatch = [];
 
 interface Answered<T> {
   key: string;
@@ -35,7 +33,7 @@ interface Answered<T> {
  * `fresh` is false while that answer is to an earlier key or tick of the same
  * group: shown so the screen does not blank, but not yet what was asked for.
  */
-export function shownOf<T>(answered: Answered<T>, key: string, group: string, tick: number): { value: Resource<T>; fresh: boolean } {
+function shownOf<T>(answered: Answered<T>, key: string, group: string, tick: number): { value: Resource<T>; fresh: boolean } {
   const fresh = answered.key === key && answered.tick === tick;
   if (fresh) return { value: answered.value, fresh };
   const stale = answered.group === group && answered.value.status === "ok";
@@ -75,7 +73,7 @@ export function useResource<T>(
     quiet.current = true;
     setTick((n) => n + 1);
   }, []);
-  useLiveSignal(options.live ?? NO_TOPICS, refresh);
+  useLiveSignal(options.live, refresh);
 
   useEffect(() => {
     let live = true;

@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 
 import { containRemoteStyles } from "./contain-remote-styles";
 
-// Loads a remote's ESM bundle once per tag; true once its element is defined, false while
-// loading or after a failure (the caller shows its fallback).
+// Loads a remote's ESM bundle once per URL (one bundle may define several tags); true once `tag`
+// is defined, false while loading or after a failure (the caller shows its fallback).
 export function useRemoteBundle(tag: string, scriptUrl: string): boolean {
   // Keyed by tag: an instance switching remotes is un-ready for the new one at once.
   const [readyTag, setReadyTag] = useState<string | null>(null);
@@ -17,7 +17,7 @@ export function useRemoteBundle(tag: string, scriptUrl: string): boolean {
         .then(() => !cancelled && setReadyTag(tag))
         .catch(() => {});
 
-    if (customElements.get(tag) || document.querySelector(`script[data-mfe="${tag}"]`)) {
+    if (customElements.get(tag) || document.querySelector(`script[data-mfe="${scriptUrl}"]`)) {
       void whenReady();
       return () => {
         cancelled = true;
@@ -28,7 +28,7 @@ export function useRemoteBundle(tag: string, scriptUrl: string): boolean {
     const script = document.createElement("script");
     script.type = "module";
     script.src = scriptUrl;
-    script.dataset.mfe = tag;
+    script.dataset.mfe = scriptUrl;
     // A failed script leaves the DOM, or the guard above would take it for loaded; kept on
     // unmount, so a failure after it still lets a later mount retry.
     const onError = () => script.remove();
