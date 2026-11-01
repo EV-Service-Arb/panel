@@ -54,10 +54,9 @@ export function PanelTopBar() {
   const [open, setOpen] = useState<Open>(null);
 
   useEffect(() => {
-    // CONTRACT §9: a sites element's link it does not route itself, on window or bubbling from the element.
+    // a sites element's link it does not route itself; the account chip's own bubbles from the chip
     const onNavigate = (e: Event) => {
-      // The account chip's own `ev:navigate` is its host's (features/account-chip).
-      if (e.target !== window && !(e.target instanceof Element && e.target.closest("mfe-sites-nav, mfe-sites-panel"))) return;
+      if (e.target !== window) return;
       const href: unknown = (e as CustomEvent<{ href?: unknown }>).detail?.href;
       const path = typeof href === "string" ? safeLocalPath(href) : null;
       if (path === null) throw new Error(`ev:navigate: not a path on this origin: ${String(href)}`);
