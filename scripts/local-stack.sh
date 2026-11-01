@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
-# The conductor, sites_panel and both landings on this machine, wired together: a lead posted on
-# a landing lands in sites_panel through the conductor's ingest, a place edited on the sites page
-# shows on the landing. See docs/LOCAL.md.
+# The conductor, sites_panel, review_archive and both landings on this machine, wired together: a
+# lead posted on a landing lands in sites_panel through the conductor's ingest, a place edited on
+# the sites page shows on the landing, the conductor's GMBs and tokens reach review_archive. See
+# docs/LOCAL.md.
 #
 #   nix run .#local-stack                  build, seed, start everything; Ctrl-C stops it all
 #   nix run .#local-stack -- --reset       wipe .local/ (databases, keys, the landings' leads) first
 #   nix run .#local-stack -- --no-sites    the conductor and sites_panel, no landings
+#   nix run .#local-stack -- --no-archive  without review_archive
 #   nix run .#local-stack -- --role operator
 #
 # The conductor and its front end come from `nix build .#bin` / `.#frontend` of this checkout,
 # unless PANEL_BIN / PANEL_WEB_DIR name others (PANEL_BIN=target/debug/panel for a cargo build);
-# sites_panel and its bundle from its checkout's, unless SITES_BIN / SITES_MFE_DIR do. SITES_DIR,
-# AQUAFIX_DIR and VIFNET_DIR name the checkouts, by default beside this one's.
+# sites_panel and its bundle from its checkout's, unless SITES_BIN / SITES_MFE_DIR do; review_archive
+# likewise (REVIEW_ARCHIVE_BIN / REVIEW_ARCHIVE_MFE_DIR). SITES_DIR, REVIEW_ARCHIVE_DIR, AQUAFIX_DIR
+# and VIFNET_DIR name the checkouts, by default beside this one's.
 set -euo pipefail
 
 PANEL_PORT=59120
 SITES_PORT=59121
+ARCHIVE_PORT=59122
 AQUAFIX_PORT=59081
 VIFNET_PORT=59082
 AQUAFIX_PLACES=(royat clermont-ferrand desgenettes lyon-est la-mouche lyon-nord)
@@ -23,21 +27,23 @@ VIFNET_PLACES=(vifnet)
 
 reset=0
 sites=1
+archive=1
 role="admin"
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--reset) reset=1 ;;
 	--no-sites) sites=0 ;;
+	--no-archive) archive=0 ;;
 	--role)
 		role="${2:-}"
 		shift
 		;;
 	-h | --help)
 		cat <<'EOF'
-local-stack [--reset] [--no-sites] [--role admin|operator]
+local-stack [--reset] [--no-sites] [--no-archive] [--role admin|operator]
 
-  The conductor on http://127.0.0.1:59120 (dev sign-in), sites_panel on :59121, aquafix on
-  :59081 and vifnet on :59082, wired together. State in .local/ (--reset wipes it). Ctrl-C stops everything. See docs/LOCAL.md.
+  The conductor on http://127.0.0.1:59120 (dev sign-in), sites_panel on :59121, review_archive
+  on :59122, aquafix on :59081 and vifnet on :59082, wired together. State in .local/ (--reset wipes it). Ctrl-C stops everything. See docs/LOCAL.md.
 EOF
 		exit 0
 		;;
@@ -69,6 +75,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run this from inside
 main_checkout="$(dirname "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)")"
 service_arb="$(dirname "$main_checkout")"
 SITES_DIR="${SITES_DIR:-$service_arb/sites/panel}"
+REVIEW_ARCHIVE_DIR="${REVIEW_ARCHIVE_DIR:-$service_arb/review_archive}"
 AQUAFIX_DIR="${AQUAFIX_DIR:-$service_arb/aquafix}"
 VIFNET_DIR="${VIFNET_DIR:-$service_arb/vifnet}"
 
@@ -85,6 +92,7 @@ printf '*\n' >"$state/.gitignore"
 
 busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 ports=("$PANEL_PORT" "$SITES_PORT")
+[ "$archive" = 1 ] && ports+=("$ARCHIVE_PORT")
 [ "$sites" = 1 ] && ports+=("$AQUAFIX_PORT" "$VIFNET_PORT")
 for port in "${ports[@]}"; do
 	busy "$port" && die "port $port is taken — another local stack, or \`lsof -nP -iTCP:$port -sTCP:LISTEN\` says who"
@@ -115,12 +123,31 @@ if [ -z "${SITES_MFE_DIR:-}" ]; then
 	SITES_MFE_DIR="$state/build/sites-mfe"
 fi
 [ -x "$SITES_BIN" ] || die "SITES_BIN $SITES_BIN is not an executable"
+if [ "$archive" = 1 ]; then
+	[ -f "$REVIEW_ARCHIVE_DIR/flake.nix" ] || [ -n "${REVIEW_ARCHIVE_BIN:-}" ] || die "no review_archive checkout at $REVIEW_ARCHIVE_DIR: REVIEW_ARCHIVE_DIR names it, or --no-archive"
+	if [ -z "${REVIEW_ARCHIVE_BIN:-}" ]; then
+		say "building review_archive ($REVIEW_ARCHIVE_DIR#bin)"
+		nix build "$REVIEW_ARCHIVE_DIR#bin" --out-link "$state/build/archive"
+		REVIEW_ARCHIVE_BIN="$state/build/archive/bin/review_archive"
+	fi
+	if [ -z "${REVIEW_ARCHIVE_MFE_DIR:-}" ]; then
+		say "building the archive's bundle ($REVIEW_ARCHIVE_DIR#mfe)"
+		nix build "$REVIEW_ARCHIVE_DIR#mfe" --out-link "$state/build/archive-mfe"
+		REVIEW_ARCHIVE_MFE_DIR="$state/build/archive-mfe"
+	fi
+	[ -x "$REVIEW_ARCHIVE_BIN" ] || die "REVIEW_ARCHIVE_BIN $REVIEW_ARCHIVE_BIN is not an executable"
+	# the Chromium the archive's devShell walks with: headless here, never a window
+	nix build --inputs-from "$REVIEW_ARCHIVE_DIR" nixpkgs#chromium --out-link "$state/build/chromium"
+fi
 
 # ── the environments ─────────────────────────────────────────────────────────────────────
 
 [ -s "$state/data-key" ] || "$PANEL_BIN" gen-data-key >"$state/data-key"
 origin="http://127.0.0.1:$PANEL_PORT"
 sites_origin="http://127.0.0.1:$SITES_PORT"
+archive_origin="http://127.0.0.1:$ARCHIVE_PORT"
+# without the archive its forward answers 502, as the playbook's does
+[ "$archive" = 1 ] || archive_origin="http://127.0.0.1:9"
 # A key for this machine alone: the 32 bytes 0..31, and its public half for sites_panel.
 assertion_key="local:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
 assertion_public="local:A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
@@ -137,7 +164,7 @@ panel() {
 		PANEL_WEB_DIR="$PANEL_WEB_DIR" \
 		PANEL_ASSERTION_KEY="$assertion_key" \
 		PANEL_SITES_URL="$sites_origin" \
-		PANEL_REVIEW_ARCHIVE_URL="http://127.0.0.1:9" \
+		PANEL_REVIEW_ARCHIVE_URL="$archive_origin" \
 		PANEL_PLAYBOOK_URL="http://127.0.0.1:9" \
 		TOKENS_START_CAP_MULTIPLE=1 \
 		"$PANEL_BIN" "$@"
@@ -151,6 +178,27 @@ sites_panel() {
 		PANEL_MFE_DIR="$SITES_MFE_DIR" \
 		"$SITES_BIN" "$@"
 }
+
+# serve's own config: a data dir in .local/, the bundle the conductor forwards /review_archive/mfe/ to,
+# and no Google sign-in check (a fresh profile is signed out; its walks fail, saying so)
+review_archive() {
+	env -u GOOGLE_MAPS_KEY -u GBP_CLIENT_ID -u GBP_CLIENT_SECRET -u GBP_REFRESH_TOKEN -u TELEGRAM_BOT_TOKEN -u SENTRY_DSN \
+		-u ALERT_WEBHOOK_URL -u MEMORY_LEASE_URL \
+		APP_ENV=development \
+		PANEL_ASSERTION_KEYS="$assertion_public" \
+		"$REVIEW_ARCHIVE_BIN" --config "$state/review_archive/config.toml" "$@"
+}
+if [ "$archive" = 1 ]; then
+	mkdir -p "$state/review_archive"
+	cat >"$state/review_archive/config.toml" <<EOF
+data_dir = "$state/review_archive/data"
+mfe_dir = "$REVIEW_ARCHIVE_MFE_DIR"
+bind = "127.0.0.1:$ARCHIVE_PORT"
+[browser]
+executable = "$state/build/chromium/bin/chromium"
+lean = []
+EOF
+fi
 
 # ── seed: idempotent, so every run may do it ─────────────────────────────────────────────
 
@@ -234,6 +282,15 @@ sites_pid=$!
 groups+=("$sites_pid")
 wait_for sites "$sites_origin/health" 30 "$sites_pid" || die "sites_panel did not start"
 
+archive_pid=""
+if [ "$archive" = 1 ]; then
+	say "starting review_archive on $archive_origin"
+	prefixed archive review_archive serve --no-login-check &
+	archive_pid=$!
+	groups+=("$archive_pid")
+	wait_for archive "$archive_origin/health" 60 "$archive_pid" || die "review_archive did not start"
+fi
+
 say "starting the conductor on $origin (dev sign-in: $role)"
 prefixed panel panel serve --bind "127.0.0.1:$PANEL_PORT" &
 panel_pid=$!
@@ -279,6 +336,7 @@ fi
 	echo " panel    $origin   (opens signed in: dev sign-in, $role)"
 	echo "          leads $origin/sites/leads   places $origin/sites/places"
 	echo " sites    $sites_origin   (behind the conductor: its /api/internal for the landings)"
+	[ "$archive" = 1 ] && echo " archive  $archive_origin   (behind the conductor: $origin/review_archive)"
 	for s in ${started[@]+"${started[@]}"}; do
 		case "${s%%:*}" in
 		aquafix)
@@ -293,7 +351,7 @@ fi
 	echo "────────────────────────────────────────────────────────────────────────"
 } >&2
 
-# Until Ctrl-C, or until the conductor or sites_panel stops (then everything does). Polled rather
-# than `wait -n`, which macOS's bash 3.2 lacks.
-while kill -0 "$panel_pid" 2>/dev/null && kill -0 "$sites_pid" 2>/dev/null; do sleep 1; done
-say "the conductor or sites_panel stopped — see $state/logs/"
+# Until Ctrl-C, or until the conductor, sites_panel or review_archive stops (then everything does).
+# Polled rather than `wait -n`, which macOS's bash 3.2 lacks.
+while kill -0 "$panel_pid" 2>/dev/null && kill -0 "$sites_pid" 2>/dev/null && { [ -z "$archive_pid" ] || kill -0 "$archive_pid" 2>/dev/null; }; do sleep 1; done
+say "the conductor, sites_panel or review_archive stopped — see $state/logs/"

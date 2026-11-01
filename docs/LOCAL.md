@@ -1,10 +1,11 @@
 # Running the stack locally
 
-The conductor, sites_panel and both landings (aquafix, vifnet) on one machine, wired as in the
-cluster: a lead posted on a landing reaches sites_panel through the conductor's ingest, and a
-place's phone or hours edited on the sites page shows on the landing through sites'
-`/api/internal`. No concierge, no PostHog, no Telegram, no review_archive or playbook (their
-forwards answer 502): the conductor signs you in by itself (dev sign-in, below).
+The conductor, sites_panel, review_archive and both landings (aquafix, vifnet) on one machine,
+wired as in the cluster: a lead posted on a landing reaches sites_panel through the conductor's
+ingest, a place's phone or hours edited on the sites page shows on the landing through sites'
+`/api/internal`, and the GMBs and tokens of the conductor reach review_archive. No concierge, no
+PostHog, no Telegram, no playbook (its forward answers 502): the conductor signs you in by
+itself (dev sign-in, below).
 
 ## Prerequisites
 
@@ -15,13 +16,14 @@ forwards answer 502): the conductor signs you in by itself (dev sign-in, below).
   _sa/
     site_conductor/  this repository (its worktrees work too: the others are found beside the main checkout)
     sites/panel/     sites_panel
+    review_archive/  review_archive (REVIEW_ARCHIVE_DIR elsewhere; --no-archive without it)
     aquafix/         Service-Arb/aquafix, up to date — the Next.js (kitstart) site
     vifnet/          Service-Arb/vifnet, likewise
   ```
 
   Elsewhere: `SITES_DIR=… AQUAFIX_DIR=… VIFNET_DIR=… nix run .#local-stack`. A landing checkout
   without `package.json` (the old Rust sites) is skipped with a message: `git pull` it.
-- Ports 59120 (conductor), 59121 (sites_panel), 59081 (aquafix) and 59082 (vifnet) free.
+- Ports 59120 (conductor), 59121 (sites_panel), 59122 (review_archive), 59081 (aquafix) and 59082 (vifnet) free.
 
 ## The command
 
@@ -40,14 +42,17 @@ What it does (`scripts/local-stack.sh`, which the flake app runs as is):
 
 1. Keeps its state in `.local/` (ignored by its own `.gitignore`): `panel.db` and
    `sites_panel.db`, the `data-key` both share, the sources' secrets in `secrets/`, each
-   landing's `<site>-leads.db`, and the logs in `logs/`. It persists between runs; `--reset`
-   wipes it.
+   landing's `<site>-leads.db`, review_archive's data dir in `review_archive/`, and the logs in
+   `logs/`. It persists between runs; `--reset` wipes it. A fresh `panel.db` imports an empty
+   document from review_archive, which opens tokens and GMBs.
 2. Seeds, idempotently: the sources `aquafix-site` (brand `aquafix`) and `vifnet-site`
    (brand `vifnet`) in the conductor, each secret kept in `.local/secrets/` and reused; the
    places `aquafix/{royat, clermont-ferrand, desgenettes, lyon-est, la-mouche, lyon-nord}` and
    `vifnet/vifnet` in sites_panel, registered with nothing set (`sites_panel place register`).
 3. Starts `sites_panel serve` on `127.0.0.1:59121` (its bundle from `PANEL_MFE_DIR`, the
-   conductor's public key in `PANEL_ASSERTION_KEYS`), then `panel serve` on `127.0.0.1:59120`
+   conductor's public key in `PANEL_ASSERTION_KEYS`), `review_archive serve` on `127.0.0.1:59122`
+   likewise (a headless Chromium on a signed-out profile: its Maps walks fail and say so), then
+   `panel serve` on `127.0.0.1:59120`
    in development, with dev sign-in, a signing key for this machine alone, `PANEL_SITES_URL`
    at sites_panel, and the front end's static export served on the same origin.
 4. Starts each landing with its own `nix run .#dev` (kitstart's `next dev`), with:
