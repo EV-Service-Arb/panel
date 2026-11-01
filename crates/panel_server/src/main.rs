@@ -82,7 +82,7 @@ enum SourceCmd {
 		/// A brand it may write for; repeat for several.
 		#[arg(long = "brand", required = true)]
 		brands: Vec<String>,
-		/// A site's origin, where its landing answers, e.g. https://aquafix.top: no path. Sites only.
+		/// A site's origin, where its landing answers, e.g. `https://aquafix.top`: no path. Sites only.
 		#[arg(long)]
 		origin: Option<String>,
 	},
