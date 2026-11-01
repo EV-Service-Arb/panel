@@ -5,6 +5,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
   NavigationMenu,
   NavigationMenuItem,
@@ -22,7 +24,7 @@ import {
   useDismissableLayer,
 } from "@evinvest/uikit";
 import { CONCIERGE_ORIGIN } from "@evinvest/concierge";
-import { Check, ChevronDown, Menu } from "lucide-react";
+import { Check, ChevronDown, Globe, Menu, Wallet } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -32,15 +34,16 @@ import { useTokens } from "@/entities/tokens";
 import { AccountChip } from "@/features/account-chip";
 import { useSignOut } from "@/features/sign-out";
 import { SitesElement } from "@/features/sites-element";
+import { NotificationsMenu } from "@/features/telegram-notifications";
 import { safeLocalPath } from "@/shared/api";
 import { ROUTES } from "@/shared/config/routes";
 import { WALLET_PAGE_ENABLED } from "@/shared/config/wallet-page";
-import { useT } from "@/shared/i18n";
+import { LOCALES, type Locale, chooseLocale, useLocale, useT } from "@/shared/i18n";
 
 type Open = "sites" | "sheet" | null;
 
 /**
- * `[Service-Arb⌄] [Sites⌄] [Review Archive] … [Sources] [Usage tokens] [Wallet] [chip]`; on a phone all but the chip go into
+ * `[Service-Arb⌄] [Sites⌄] [Review Archive] … [Sources] [Usage tokens] [wallet] [bell] [language] [chip]`; on a phone all but the chip go into
  * a Sheet. The Sites items are `mfe-sites-nav`'s: the conductor knows none of the sites' routes.
  * The end slot is right-anchored and the chip is last, so the tokens appearing or changing width
  * grow leftwards and never move the chip.
@@ -129,6 +132,8 @@ export function PanelTopBar() {
       end={
         <>
           <OwnScreens className="hidden md:flex" />
+          <NotificationsMenu />
+          <LanguageMenu />
           <AccountChip me={me} onSignOut={signOut} />
         </>
       }
@@ -188,6 +193,29 @@ function AppSwitcher() {
   );
 }
 
+function LanguageMenu() {
+  const t = useT();
+  const locale = useLocale();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="ghost" size="sm" icon aria-label={t("nav.language")}>
+          <Globe aria-hidden />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuRadioGroup value={locale} onValueChange={(l) => chooseLocale(l as Locale)}>
+          {Object.entries(LOCALES).map(([l, name]) => (
+            <DropdownMenuRadioItem key={l} value={l} lang={l}>
+              {name}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /** The caller's own screens; Tokens is labelled with the count, never called a balance: evinvest.ltd's wallet is another ledger. */
 function OwnScreens({ className, onNavigate }: { className?: string; onNavigate?: () => void }) {
   const t = useT();
@@ -206,7 +234,9 @@ function OwnScreens({ className, onNavigate }: { className?: string; onNavigate?
         const here = pathname.startsWith(ROUTES[id]);
         return (
           <Link key={id} href={ROUTES[id]} onClick={() => onNavigate?.()} aria-current={here ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "justify-start", here && "bg-hover/50")}>
-            <span className={cn(id === "tokens" && "tabular-nums")}>{label[id]}</span>
+            {id === "wallet" && <Wallet aria-hidden className="size-4" />}
+            {/* the wallet is an icon in the bar, a labelled row in the sheet */}
+            <span className={cn(id === "tokens" && "tabular-nums", id === "wallet" && "md:sr-only")}>{label[id]}</span>
           </Link>
         );
       })}

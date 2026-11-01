@@ -32,7 +32,13 @@ nix run .#local-stack                  # build, seed, start all four; Ctrl-C sto
 nix run .#local-stack -- --reset       # wipe .local/ first: databases, keys, the landings' leads
 nix run .#local-stack -- --no-sites    # the conductor and sites_panel, no landings
 nix run .#local-stack -- --role operator
+nix run .#local-stack -- --watch       the front end from `next dev`: open http://localhost:3120
 ```
+
+`--watch` builds no front end: `next dev` serves this checkout's `frontend/` on
+<http://localhost:3120>, reloading as it is edited, and proxies `/api`, `/auth`, the bundles and
+`/grafana` to the conductor, whose public origin it becomes (the sign-in returns there, the live
+socket comes from there).
 
 The first run builds the conductor, sites_panel and their front ends with Nix (minutes), and
 each landing's `nix run .#dev` installs its `node_modules` (minutes again). Later runs start in

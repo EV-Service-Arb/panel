@@ -160,5 +160,22 @@
   "tokens.grant.note.required": "What it is for",
   "tokens.grant.submit": "Apply",
   "tokens.grant.done": "Now {n} tokens",
-  "account.usage.charges": "{n} walks paid"
+  "account.usage.charges": "{n} walks paid",
+  "nav.language": "Language",
+  "nav.notifications": "Notifications",
+  "telegram.title": "Telegram notifications",
+  "telegram.off": "Telegram is not set up on this server.",
+  "telegram.connect": "Connect Telegram",
+  "telegram.connect.hint": "Opens the bot: press Start there.",
+  "telegram.linked": "Connected",
+  "telegram.blocked": "The bot cannot reach your chat: connect it again.",
+  "telegram.disconnect": "Disconnect",
+  "telegram.rules": "Notify me of",
+  "telegram.none": "Your access has nothing to notify you of.",
+  "telegram.rule.new_lead": "New leads",
+  "telegram.rule.contact_overdue": "Leads waiting too long",
+  "telegram.rule.booked": "Bookings",
+  "telegram.rule.payment_received": "Payments",
+  "telegram.rule.source_silent": "Silent sources",
+  "telegram.rule.access_requested": "Access requests"
 }

@@ -5,10 +5,12 @@ use std::path::Path;
 
 use ev_lib::ts_gen::Ts;
 use panel::tokens::Kind;
+use panel_core::notify::Rule;
 use panel_server::{
 	access::AccessRequestDto,
 	gmbs::{CandidatesDto, GmailsDto},
 	signin::Caller,
+	telegram::TelegramSettingsDto,
 	tokens::{BalanceChangeDto, BalanceDto, LedgerDto, TokenHoldersDto, TokensDto, UsageDto},
 };
 use sa_auth::{Catalog, SourceKind};
@@ -44,6 +46,17 @@ fn main() {
 				name: "LEDGER_KINDS",
 				ty: "LedgerKind",
 				items: Kind::ALL.map(Kind::as_str).into(),
+			},
+		],
+	);
+	Ts::write(
+		&root.join("entities/telegram/model/generated.ts"),
+		&[
+			Ts::types::<TelegramSettingsDto>(),
+			Ts::Union {
+				name: "RULES",
+				ty: "Rule",
+				items: Rule::ALL.map(Rule::as_str).into(),
 			},
 		],
 	);

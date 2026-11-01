@@ -7,7 +7,7 @@ import type { LiveMessage } from "./protocol";
 import { LIVE_EVENT, LIVE_STATUS_EVENT } from "./relay";
 
 /** The conductor's own topics (CONTRACT §3); the rest of the socket is the elements'. */
-export type LiveTopic = "sources";
+export type LiveTopic = "sources" | "telegram";
 
 /**
  * Calls `onSignal` on a change on `topic`, if any, on a `resync`, and when the socket comes back

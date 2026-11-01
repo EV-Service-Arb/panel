@@ -1,6 +1,8 @@
 import { CATALOGUES, type MessageKey } from "./catalogue";
 
-export type Locale = "en" | "ru";
+/** Each language by its own name. */
+export const LOCALES = { en: "English", ru: "Русский" } as const;
+export type Locale = keyof typeof LOCALES;
 type Vars = Record<string, string | number>;
 export type T = (key: MessageKey, vars?: Vars) => string;
 

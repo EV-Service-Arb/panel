@@ -8,6 +8,7 @@
 #   nix run .#local-stack -- --reset       wipe .local/ (databases, keys, the landings' leads) first
 #   nix run .#local-stack -- --no-sites    the conductor and sites_panel, no landings
 #   nix run .#local-stack -- --role operator
+#   nix run .#local-stack -- --watch       the front end from `next dev` on :3120, reloading as it is edited
 #
 # The conductor and its front end come from `nix build .#bin` / `.#frontend` of this checkout,
 # unless PANEL_BIN / PANEL_WEB_DIR name others (PANEL_BIN=target/debug/panel for a cargo build);
@@ -22,26 +23,31 @@ SITES_PORT=59121
 REVIEW_ARCHIVE_PORT=59110
 AQUAFIX_PORT=59081
 VIFNET_PORT=59082
+WEB_DEV_PORT=3120
 AQUAFIX_PLACES=(royat clermont-ferrand desgenettes lyon-est la-mouche lyon-nord)
 VIFNET_PLACES=(vifnet)
 
 reset=0
 sites=1
+watch=0
 role="admin"
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--reset) reset=1 ;;
 	--no-sites) sites=0 ;;
+	--watch) watch=1 ;;
 	--role)
 		role="${2:-}"
 		shift
 		;;
 	-h | --help)
 		cat <<'EOF'
-local-stack [--reset] [--no-sites] [--role admin|operator]
+local-stack [--reset] [--no-sites] [--watch] [--role admin|operator]
 
   The conductor on http://127.0.0.1:59120 (dev sign-in, its Grafana at /grafana/), sites_panel
   on :59121, review_archive on :59110, aquafix on :59081 and vifnet on :59082, wired together. State in .local/ (--reset wipes it). Ctrl-C stops everything. See docs/LOCAL.md.
+  --watch: the conductor's front end from `next dev` on http://localhost:3120 instead, which is then
+  the origin to open.
 EOF
 		exit 0
 		;;
@@ -91,6 +97,7 @@ printf '*\n' >"$state/.gitignore"
 busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 ports=("$PANEL_PORT" "$SITES_PORT" "$REVIEW_ARCHIVE_PORT")
 [ "$sites" = 1 ] && ports+=("$AQUAFIX_PORT" "$VIFNET_PORT")
+[ "$watch" = 1 ] && ports+=("$WEB_DEV_PORT")
 for port in "${ports[@]}"; do
 	busy "$port" && die "port $port is taken — another local stack, or \`lsof -nP -iTCP:$port -sTCP:LISTEN\` says who"
 done
@@ -102,7 +109,9 @@ if [ -z "${PANEL_BIN:-}" ]; then
 	nix build "$root#bin" --out-link "$state/build/bin"
 	PANEL_BIN="$state/build/bin/bin/panel"
 fi
-if [ -z "${PANEL_WEB_DIR:-}" ]; then
+if [ "$watch" = 1 ]; then
+	PANEL_WEB_DIR=""
+elif [ -z "${PANEL_WEB_DIR:-}" ]; then
 	say "building the front end (nix build .#frontend)"
 	nix build "$root#frontend" --out-link "$state/build/frontend"
 	PANEL_WEB_DIR="$state/build/frontend"
@@ -148,6 +157,9 @@ fi
 
 [ -s "$state/data-key" ] || "$PANEL_BIN" gen-data-key >"$state/data-key"
 origin="http://127.0.0.1:$PANEL_PORT"
+# The browser's origin: the sign-in sends it back there, and the live socket must come from it.
+public_origin="$origin"
+[ "$watch" = 1 ] && public_origin="http://localhost:$WEB_DEV_PORT"
 sites_origin="http://127.0.0.1:$SITES_PORT"
 review_archive_origin="http://127.0.0.1:$REVIEW_ARCHIVE_PORT"
 # A key for this machine alone: the 32 bytes 0..31, and its public half for sites_panel.
@@ -161,7 +173,7 @@ panel() {
 		APP_ENV=development \
 		PANEL_DB_PATH="$state/panel.db" \
 		PANEL_DATA_KEY="$(cat "$state/data-key")" \
-		PANEL_PUBLIC_ORIGIN="$origin" \
+		PANEL_PUBLIC_ORIGIN="$public_origin" \
 		PANEL_DEV_SIGN_IN="sa:$role" \
 		PANEL_WEB_DIR="$PANEL_WEB_DIR" \
 		PANEL_ASSERTION_KEY="$assertion_key" \
@@ -300,6 +312,18 @@ panel_pid=$!
 groups+=("$panel_pid")
 wait_for panel "$origin/health" 30 "$panel_pid" || die "the conductor did not start"
 
+if [ "$watch" = 1 ]; then
+	say "starting the front end's next dev on $public_origin"
+	(
+		cd "$root/frontend"
+		[ -d node_modules ] || prefixed web npm ci
+		PANEL_DEV_BACKEND="$origin" prefixed web npx next dev --port "$WEB_DEV_PORT"
+	) &
+	web_pid=$!
+	groups+=("$web_pid")
+	wait_for web "$public_origin/" 300 "$web_pid" || die "next dev did not start"
+fi
+
 started=()
 # A landing's own dev command (`nix run .#dev`, kitstart's next dev) in its checkout: its leads
 # to the conductor's ingest, its places from sites_panel; its leads in a file of ours, analytics off.
@@ -336,9 +360,9 @@ fi
 {
 	echo
 	echo "────────────────────────────────────────────────────────────────────────"
-	echo " panel    $origin   (opens signed in: dev sign-in, $role)"
-	echo "          leads $origin/sites/leads   places $origin/sites/places"
-	[ "$review_archive" = 1 ] && echo "          review_archive $origin/review_archive?grafana=true   Grafana $origin/grafana/"
+	echo " panel    $public_origin   (opens signed in: dev sign-in, $role)"
+	echo "          leads $public_origin/sites/leads   places $public_origin/sites/places"
+	[ "$review_archive" = 1 ] && echo "          review_archive $public_origin/review_archive?grafana=true   Grafana $public_origin/grafana/"
 	echo " sites    $sites_origin   (behind the conductor: its /api/internal for the landings)"
 	for s in ${started[@]+"${started[@]}"}; do
 		case "${s%%:*}" in

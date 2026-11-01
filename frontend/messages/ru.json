@@ -160,5 +160,22 @@
   "tokens.grant.note.required": "За что",
   "tokens.grant.submit": "Применить",
   "tokens.grant.done": "Теперь токенов: {n}",
-  "account.usage.charges": "Оплачено обходов: {n}"
+  "account.usage.charges": "Оплачено обходов: {n}",
+  "nav.language": "Язык",
+  "nav.notifications": "Уведомления",
+  "telegram.title": "Уведомления в Telegram",
+  "telegram.off": "Telegram на этом сервере не настроен.",
+  "telegram.connect": "Подключить Telegram",
+  "telegram.connect.hint": "Откроется бот: нажмите там «Старт».",
+  "telegram.linked": "Подключён",
+  "telegram.blocked": "Бот не может написать в ваш чат: подключите его заново.",
+  "telegram.disconnect": "Отключить",
+  "telegram.rules": "Сообщать о",
+  "telegram.none": "С вашим доступом уведомлять не о чем.",
+  "telegram.rule.new_lead": "Новых заявках",
+  "telegram.rule.contact_overdue": "Заявках, ждущих слишком долго",
+  "telegram.rule.booked": "Записях",
+  "telegram.rule.payment_received": "Платежах",
+  "telegram.rule.source_silent": "Молчащих источниках",
+  "telegram.rule.access_requested": "Запросах доступа"
 }

@@ -347,7 +347,7 @@
         # app does not depend on them, so naming a cargo build skips the Nix one.
         localStack = pkgs.writeShellApplication {
           name = "local-stack";
-          runtimeInputs = with pkgs; [ coreutils curl gawk git gnused util-linux ];
+          runtimeInputs = with pkgs; [ coreutils curl gawk git gnused nodejs util-linux ];
           text = builtins.readFile ./scripts/local-stack.sh;
         };
       in

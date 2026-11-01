@@ -3205,6 +3205,7 @@ version = "0.1.0"
 dependencies = [
  "ev_lib 0.24.2",
  "panel",
+ "panel_core",
  "panel_server",
  "sa_auth",
 ]

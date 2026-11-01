@@ -33,9 +33,10 @@ use panel::{
 };
 use panel_core::notify::{Failure, Rendered, Rule};
 use sa_auth::{Principal, Service, User};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{sync::watch, task::JoinSet};
+use ts_rs::TS;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -321,16 +322,30 @@ fn display(caller: &Caller) -> String {
 	}
 }
 
-async fn settings(State(s): State<TelegramState>, Extension(caller): Extension<Caller>) -> Result<Json<Value>, ApiError> {
+/// `GET /telegram`, `PUT /telegram/rules`.
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(rename = "TelegramSettings")]
+pub struct TelegramSettingsDto {
+	/// A bot is configured: linking can work.
+	pub enabled: bool,
+	pub linked: bool,
+	/// The chat blocked the bot or is gone: nothing reaches it until linked again.
+	pub blocked: bool,
+	pub account: Option<String>,
+	/// Only the rules the caller's permissions open.
+	#[ts(type = "Partial<Record<Rule, boolean>>")]
+	pub rules: std::collections::BTreeMap<&'static str, bool>,
+}
+
+async fn settings(State(s): State<TelegramState>, Extension(caller): Extension<Caller>) -> Result<Json<TelegramSettingsDto>, ApiError> {
 	let settings = s.panel.telegram_settings(caller.user_id, &caller.permissions).await?;
-	let rules: serde_json::Map<String, Value> = settings.rules.iter().map(|(r, on)| (r.as_str().to_owned(), json!(on))).collect();
-	Ok(Json(json!({
-		"enabled": s.bot.configured(),
-		"linked": settings.linked,
-		"blocked": settings.blocked,
-		"account": settings.account,
-		"rules": rules,
-	})))
+	Ok(Json(TelegramSettingsDto {
+		enabled: s.bot.configured(),
+		linked: settings.linked,
+		blocked: settings.blocked,
+		account: settings.account,
+		rules: settings.rules.iter().map(|(r, on)| (r.as_str(), *on)).collect(),
+	}))
 }
 
 async fn link(State(s): State<TelegramState>, Extension(caller): Extension<Caller>) -> Result<Response, ApiError> {
@@ -362,7 +377,7 @@ struct RulesBody {
 	rules: std::collections::BTreeMap<String, bool>,
 }
 
-async fn set_rules(State(s): State<TelegramState>, Extension(caller): Extension<Caller>, b: Result<Json<RulesBody>, JsonRejection>) -> Result<Json<Value>, ApiError> {
+async fn set_rules(State(s): State<TelegramState>, Extension(caller): Extension<Caller>, b: Result<Json<RulesBody>, JsonRejection>) -> Result<Json<TelegramSettingsDto>, ApiError> {
 	let Json(b) = b.map_err(|e| ApiError::BadRequest(e.body_text()))?;
 	let rules = b.rules.iter().map(|(r, on)| Ok((r.parse::<Rule>()?, *on))).collect::<Result<Vec<_>, panel_core::Invalid>>()?;
 	s.panel.telegram_set_rules(caller.user_id, &caller.permissions, &rules).await??;

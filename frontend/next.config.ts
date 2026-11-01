@@ -23,6 +23,8 @@ export default function config(phase: string): NextConfig {
           { source: "/api/:path*", destination: `${backend}/api/:path*` },
           { source: "/auth/:path*", destination: `${backend}/auth/:path*` },
           { source: "/sites/mfe/:path*", destination: `${backend}/sites/mfe/:path*` },
+          { source: "/review_archive/mfe/:path*", destination: `${backend}/review_archive/mfe/:path*` },
+          { source: "/grafana/:path*", destination: `${backend}/grafana/:path*` },
         ];
       },
     };
