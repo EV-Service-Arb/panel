@@ -1,6 +1,6 @@
 [package]
 name = "panel"
-description = "The Service-Arb panel's engine: ingest of sa.funnel.v1 events, the SQLite journal, and the funnel projections"
+description = "The conductor's engine: sessions through concierge, source keys, access requests, the Telegram and live hubs' state"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -20,8 +20,7 @@ futures.workspace = true
 getrandom.workspace = true
 hex.workspace = true
 hmac.workspace = true
-jiff.workspace = true
-panel_contracts.workspace = true
+jiff = { workspace = true, features = ["serde"] }
 panel_core.workspace = true
 sa_auth.workspace = true
 serde.workspace = true
@@ -33,7 +32,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
-uuid = { workspace = true, features = ["v7"] }
+uuid = { workspace = true, features = ["serde", "v7"] }
 zeroize.workspace = true
 
 [dev-dependencies]

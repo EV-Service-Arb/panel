@@ -1,30 +1,26 @@
-//! Telegram notifications (spec §8) without the I/O: which rules there are and who may get
-//! each, what a message says, what its buttons carry, and how a failed delivery is retried.
-//!
-//! The database and the Bot API are the engine's and the server's; this decides.
+//! Telegram notifications without the I/O: which rules there are and who may get each, what the
+//! conductor's own messages say, what a button's data carries, and how a failed delivery is
+//! retried. The lead rules' messages are rendered by sites.
 
 use std::{fmt, str::FromStr};
 
 use hmac::{Hmac, KeyInit, Mac};
 use jiff::{SignedDuration, Timestamp};
 use sa_auth::{Leads, PermissionSet, SA_ADMIN, Sources};
+use serde_json::{Value, json};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
-use crate::{Invalid, fact::LeadSuspect};
+use crate::Invalid;
 
 /// What a user may be notified of. Each is on or off per user; [`Rule::on_by_default`] is
-/// what a user who never chose gets.
-///
-/// Not yet, for want of a source: a review of 3★ or less (review_archive's events), a stage
-/// of the funnel dropping more than X % below its 4-week mean (the GBP and PostHog imports),
-/// a Grafana alert. Each will be a variant here, a fan-out in the engine, and a text below;
-/// the outbox, the pacing and the linking do not change.
+/// what a user who never chose gets. The lead rules come from sites' notes; `source_silent` and
+/// `access_requested` are the conductor's own.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Rule {
 	/// A lead came in: brand, location, what is needed and the phone, with buttons.
 	NewLead,
-	/// A lead has waited past [`crate::funnel::CONTACT_SLA`] for its first contact: once.
+	/// A lead has waited past its contact SLA: once.
 	ContactOverdue,
 	/// A payment was recorded.
 	PaymentReceived,
@@ -119,64 +115,23 @@ impl FromStr for Locale {
 	}
 }
 
-/// A button under a lead's message.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Button {
-	/// "Взял": the lead is contacted (`lead.contacted`).
-	Take,
-	/// "Не дозвонился": a call attempted and not answered (`call.attempted` + `call.logged`).
-	NoAnswer,
-}
-
-impl Button {
-	fn code(self) -> &'static str {
-		match self {
-			Self::Take => "t",
-			Self::NoAnswer => "n",
-		}
-	}
-
-	fn from_code(c: &str) -> Option<Self> {
-		match c {
-			"t" => Some(Self::Take),
-			"n" => Some(Self::NoAnswer),
-			_ => None,
-		}
-	}
-
-	pub fn as_str(self) -> &'static str {
-		match self {
-			Self::Take => "take",
-			Self::NoAnswer => "no_answer",
-		}
-	}
-
-	/// The button [`Self::as_str`] names.
-	pub fn from_name(name: &str) -> Option<Self> {
-		[Self::Take, Self::NoAnswer].into_iter().find(|b| b.as_str() == name)
-	}
-
-	pub fn label(self, locale: Locale) -> &'static str {
-		match (self, locale) {
-			(Self::Take, Locale::Ru) => "Взял",
-			(Self::Take, Locale::En) => "Taken",
-			(Self::NoAnswer, Locale::Ru) => "Не дозвонился",
-			(Self::NoAnswer, Locale::En) => "No answer",
-		}
-	}
-}
-
 /// Bytes of HMAC in a button's data: 80 bits, far past guessing within Telegram's rate of
 /// callbacks, and short enough for its 64-byte limit.
 const CALLBACK_MAC_LEN: usize = 10;
 
-fn callback_mac(key: &[u8; 32], chat_id: i64, message: i64, button: Button) -> [u8; CALLBACK_MAC_LEN] {
+/// What a button is called in its data: 2–16 of `[a-z0-9_]`, so the data stays within Telegram's
+/// 64 bytes and never reads as a one-letter code of [`parse_callback`].
+pub fn is_button_id(s: &str) -> bool {
+	(2..=16).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+fn callback_mac(key: &[u8; 32], chat_id: i64, message: i64, button: &str) -> [u8; CALLBACK_MAC_LEN] {
 	// HMAC takes a key of any length, so this cannot fail.
 	let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(key).expect("HMAC accepts any key length");
 	mac.update(b"sa-panel/tg-callback/v1/");
 	mac.update(&chat_id.to_be_bytes());
 	mac.update(&message.to_be_bytes());
-	mac.update(button.code().as_bytes());
+	mac.update(button.as_bytes());
 	let full = mac.finalize().into_bytes();
 	let mut out = [0u8; CALLBACK_MAC_LEN];
 	out.copy_from_slice(&full[..CALLBACK_MAC_LEN]);
@@ -187,52 +142,36 @@ fn callback_mac(key: &[u8; 32], chat_id: i64, message: i64, button: Button) -> [
 /// names; the MAC, under a key derived from `PANEL_DATA_KEY` and bound to the chat, is what
 /// makes it the panel's — Telegram hands the data back verbatim, and anyone who can talk to
 /// the bot can send any data they like.
-pub fn callback_data(key: &[u8; 32], chat_id: i64, message: i64, button: Button) -> String {
-	format!("{}.{message}.{}", button.code(), hex::encode(callback_mac(key, chat_id, message, button)))
+pub fn callback_data(key: &[u8; 32], chat_id: i64, message: i64, button: &str) -> String {
+	assert!(is_button_id(button), "button ids are checked when a note is taken");
+	format!("{button}.{message}.{}", hex::encode(callback_mac(key, chat_id, message, button)))
 }
 
-/// The message and button a callback names, if its data is the panel's for this chat.
-pub fn parse_callback(key: &[u8; 32], chat_id: i64, data: &str) -> Option<(i64, Button)> {
+/// The message and button id a callback names, if its data is the panel's for this chat.
+pub fn parse_callback(key: &[u8; 32], chat_id: i64, data: &str) -> Option<(i64, String)> {
 	let mut parts = data.splitn(3, '.');
 	let (button, message, mac) = (parts.next()?, parts.next()?, parts.next()?);
-	let button = Button::from_code(button)?;
+	// Messages sent before the buttons came from sites name theirs by one letter.
+	let legacy = match button {
+		"t" => Some("take"),
+		"n" => Some("no_answer"),
+		_ => None,
+	};
+	if legacy.is_none() && !is_button_id(button) {
+		return None;
+	}
 	let message: i64 = message.parse().ok()?;
 	let mac = hex::decode(mac).ok()?;
 	let want = callback_mac(key, chat_id, message, button);
-	(mac.len() == want.len() && bool::from(mac.as_slice().ct_eq(&want))).then_some((message, button))
+	if mac.len() != want.len() || !bool::from(mac.as_slice().ct_eq(&want)) {
+		return None;
+	}
+	Some((message, legacy.unwrap_or(button).to_owned()))
 }
 
-/// A lead as a message shows it. The PII fields are set only for a role that sees PII.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct LeadNote {
-	pub brand: String,
-	pub location: Option<String>,
-	pub name: Option<String>,
-	pub need: Option<String>,
-	pub phone: Option<String>,
-}
-
-/// What a message is about.
+/// A message the conductor writes itself.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Note {
-	NewLead(LeadNote),
-	/// A new lead the landing's antispam doubted: told under [`Rule::NewLead`] too, since it
-	/// may be a person, but headed so nobody takes it for an ordinary one.
-	SuspectLead {
-		lead: LeadNote,
-		suspect: LeadSuspect,
-	},
-	ContactOverdue {
-		lead: LeadNote,
-		waiting: SignedDuration,
-	},
-	PaymentReceived {
-		brand: String,
-		lead: String,
-		billed: i64,
-		commission: i64,
-		currency: String,
-	},
 	SourceSilent {
 		key_id: String,
 		kind: String,
@@ -241,15 +180,6 @@ pub enum Note {
 	/// Too many leads queued for one chat to send each: how many, and nothing about them.
 	Backlog {
 		count: i64,
-	},
-	/// A slot booked, moved or canceled. `lead` is `None` for a provider's booking no lead was
-	/// found for ("without a lead"); `slot` is already in the place's time.
-	Booking {
-		change: BookingChange,
-		brand: String,
-		lead: Option<LeadNote>,
-		slot: Option<String>,
-		provider: String,
 	},
 	/// A signed-in user asked for `need`, a permission or an alias of the `sa` catalog.
 	AccessRequested {
@@ -260,31 +190,12 @@ pub enum Note {
 	},
 }
 
-/// What became of a slot.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BookingChange {
-	Booked,
-	Moved,
-	Canceled,
-}
-
 impl Note {
 	pub fn rule(&self) -> Rule {
 		match self {
-			Self::NewLead(_) | Self::SuspectLead { .. } | Self::Backlog { .. } => Rule::NewLead,
-			Self::ContactOverdue { .. } => Rule::ContactOverdue,
-			Self::PaymentReceived { .. } => Rule::PaymentReceived,
+			Self::Backlog { .. } => Rule::NewLead,
 			Self::SourceSilent { .. } => Rule::SourceSilent,
-			Self::Booking { .. } => Rule::Booked,
 			Self::AccessRequested { .. } => Rule::AccessRequested,
-		}
-	}
-
-	/// The buttons under it: the lead's two actions for the lead rules, none otherwise.
-	pub fn buttons(&self) -> &'static [Button] {
-		match self {
-			Self::NewLead(_) | Self::SuspectLead { .. } | Self::ContactOverdue { .. } => &[Button::Take, Button::NoAnswer],
-			Self::PaymentReceived { .. } | Self::SourceSilent { .. } | Self::Backlog { .. } | Self::Booking { .. } | Self::AccessRequested { .. } => &[],
 		}
 	}
 
@@ -303,54 +214,17 @@ impl Note {
 		Some((label, url.into()))
 	}
 
-	/// Plain text (sent without a parse mode, so nothing a customer typed is markup).
+	/// Plain text (sent without a parse mode, so nothing a user typed is markup).
 	pub fn text(&self, locale: Locale) -> String {
 		self.render(locale).text
 	}
 
-	/// The text and its `code` entities: what a customer typed goes on one line of its own
-	/// field, cleaned ([`one_line`]) and bounded, inside a `code` entity, so it can neither
-	/// fake a line of ours ("Взял: …") nor turn into a link.
+	/// The text and its `code` entities: what a user typed goes inside a `code` entity, on one
+	/// line ([`one_line`]) and bounded, so it can neither fake a line of ours nor turn into a link.
 	pub fn render(&self, locale: Locale) -> Rendered {
 		let ru = locale == Locale::Ru;
 		let mut out = Rendered::default();
 		match self {
-			Self::NewLead(lead) => lead_text(&mut out, if ru { "Новая заявка" } else { "New lead" }, lead, locale),
-			Self::SuspectLead { lead, suspect } => {
-				let head = match (suspect, ru) {
-					(LeadSuspect::RateLimited, true) => "Подозрительная заявка (антиспам: слишком много отправок)",
-					(LeadSuspect::RateLimited, false) => "Suspect lead (antispam: too many submissions)",
-					(LeadSuspect::TooFast, true) => "Подозрительная заявка (антиспам: форма заполнена слишком быстро)",
-					(LeadSuspect::TooFast, false) => "Suspect lead (antispam: form filled too fast)",
-				};
-				lead_text(&mut out, head, lead, locale);
-			}
-			Self::ContactOverdue { lead, waiting } => {
-				let mins = waiting.as_mins().max(0);
-				let head = if ru {
-					format!("Заявка ждёт звонка {mins} мин")
-				} else {
-					format!("Lead waiting for a call for {mins} min")
-				};
-				lead_text(&mut out, &head, lead, locale);
-			}
-			Self::PaymentReceived {
-				brand,
-				lead,
-				billed,
-				commission,
-				currency,
-			} => {
-				let (billed, commission) = (money(*billed), money(*commission));
-				out.push(if ru { "Оплата получена\n" } else { "Payment received\n" });
-				out.push(&format!("{brand} · "));
-				out.code(lead);
-				if ru {
-					out.push(&format!("\nСумма: {billed} {currency}\nКомиссия: {commission} {currency}"));
-				} else {
-					out.push(&format!("\nBilled: {billed} {currency}\nCommission: {commission} {currency}"));
-				}
-			}
 			Self::SourceSilent { key_id, kind, last } => {
 				let since = match (last, ru) {
 					(Some(at), true) => format!("последнее событие {}", minute(*at)),
@@ -365,35 +239,6 @@ impl Note {
 				});
 				out.code(key_id);
 				out.push(&format!(" ({kind}): {since}"));
-			}
-			Self::Booking {
-				change,
-				brand,
-				lead,
-				slot,
-				provider,
-			} => {
-				let head = match (change, ru) {
-					(BookingChange::Booked, true) => "Бронь",
-					(BookingChange::Booked, false) => "Slot booked",
-					(BookingChange::Moved, true) => "Бронь перенесена",
-					(BookingChange::Moved, false) => "Booking moved",
-					(BookingChange::Canceled, true) => "Бронь отменена",
-					(BookingChange::Canceled, false) => "Booking canceled",
-				};
-				let head = match (slot, lead.is_none(), ru) {
-					(Some(slot), false, _) => format!("{head}: {slot}"),
-					(Some(slot), true, true) => format!("{head} без заявки: {slot}"),
-					(Some(slot), true, false) => format!("{head}, no lead: {slot}"),
-					(None, false, _) => head.to_owned(),
-					(None, true, true) => format!("{head} без заявки"),
-					(None, true, false) => format!("{head}, no lead"),
-				};
-				match lead {
-					Some(lead) => lead_text(&mut out, &head, lead, locale),
-					None => out.push(&format!("{head}\n{brand}")),
-				}
-				out.push(&format!("\n{} {provider}", if ru { "Через:" } else { "Via:" }));
 			}
 			Self::AccessRequested { email, name, need } => {
 				let playbook = need == sa_auth::Mcp::Use.as_str();
@@ -422,38 +267,22 @@ impl Note {
 				format!("{count} new leads are waiting for a call. Open the panel.")
 			}),
 		}
-		out.clamp(MAX_MESSAGE);
 		out
 	}
 }
 
-/// A message's length, in characters, whatever went into it: well under Telegram's 4096.
-pub const MAX_MESSAGE: usize = 3500;
-
-/// Longest a customer's field may run in a message, in characters.
+/// Longest a name may run in a message, in characters.
 pub const MAX_NAME: usize = 80;
-pub const MAX_PHONE: usize = 40;
-pub const MAX_NEED: usize = 500;
 
-/// A span of a message shown as `code`, in UTF-16 code units (what the Bot API counts).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Entity {
-	pub offset: usize,
-	pub length: usize,
-}
-
-/// A message: its text and the spans of it that are `code`.
+/// A message: its text and its Telegram `MessageEntity` objects (offsets in UTF-16 code units,
+/// as the Bot API counts), sent with no parse mode.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Rendered {
 	pub text: String,
-	pub code: Vec<Entity>,
+	pub entities: Vec<Value>,
 }
 
 impl Rendered {
-	fn units(&self) -> usize {
-		self.text.encode_utf16().count()
-	}
-
 	pub fn push(&mut self, s: &str) {
 		self.text.push_str(s);
 	}
@@ -462,32 +291,21 @@ impl Rendered {
 	pub fn code(&mut self, s: &str) {
 		let length = s.encode_utf16().count();
 		if length > 0 {
-			self.code.push(Entity { offset: self.units(), length });
+			self.entities.push(json!({"type": "code", "offset": self.text.encode_utf16().count(), "length": length}));
 		}
 		self.text.push_str(s);
 	}
-
-	/// At most `max` characters, the entities cut to what is left.
-	fn clamp(&mut self, max: usize) {
-		let Some((cut, _)) = self.text.char_indices().nth(max) else { return };
-		self.text.truncate(cut);
-		let units = self.units();
-		self.code.retain_mut(|e| {
-			e.length = e.length.min(units.saturating_sub(e.offset));
-			e.offset < units && e.length > 0
-		});
-	}
 }
 
-/// Whether a character is one a customer's text may not carry into a message as it is: any
-/// control character (a line break could start a line that reads as ours), the line and
-/// paragraph separators, and the marks that reorder text (bidi overrides and isolates).
+/// Whether a character is one a user's text may not carry into a message as it is: any control
+/// character (a line break could start a line that reads as ours), the line and paragraph
+/// separators, and the marks that reorder text (bidi overrides and isolates).
 fn hidden(c: char) -> bool {
 	c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 
-/// A customer's text on one line: the characters `hidden` names made spaces, runs of spaces one,
-/// at most `max` characters (the last one "…" when cut).
+/// A user's text on one line: the characters `hidden` names made spaces, runs of spaces one, at
+/// most `max` characters (the last one "…" when cut).
 pub fn one_line(s: &str, max: usize) -> String {
 	let spaced: String = s.chars().map(|c| if hidden(c) { ' ' } else { c }).collect();
 	let joined = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -497,75 +315,9 @@ pub fn one_line(s: &str, max: usize) -> String {
 	}
 }
 
-/// A phone number as a message shows it: digits, `+`, `(`, `)`, `-` and spaces only.
-pub fn phone(s: &str) -> String {
-	let kept: String = s
-		.chars()
-		.map(|c| if hidden(c) { ' ' } else { c })
-		.filter(|c| c.is_ascii_digit() || matches!(c, '+' | '(' | ')' | '-' | ' '))
-		.collect();
-	one_line(&kept, MAX_PHONE)
-}
-
-fn lead_text(out: &mut Rendered, head: &str, lead: &LeadNote, locale: Locale) {
-	let ru = locale == Locale::Ru;
-	out.push(head);
-	out.push("\n");
-	out.push(&lead.brand);
-	if let Some(location) = &lead.location {
-		out.push(&format!(" · {location}"));
-	}
-	let clean = |v: &Option<String>, max| v.as_deref().map(|v| one_line(v, max)).filter(|v| !v.is_empty());
-	if let Some(name) = clean(&lead.name, MAX_NAME) {
-		out.push(if ru { "\nИмя: " } else { "\nName: " });
-		out.code(&name);
-	}
-	if let Some(need) = clean(&lead.need, MAX_NEED) {
-		out.push(if ru { "\nНужно: " } else { "\nNeeds: " });
-		out.code(&need);
-	}
-	if let Some(p) = lead.phone.as_deref().map(phone).filter(|p| !p.is_empty()) {
-		out.push(if ru { "\nТелефон: " } else { "\nPhone: " });
-		out.push(&p);
-	}
-}
-
-/// Minor units as the amount a person reads: whole when it is whole, else with its cents.
-/// Every currency the panel takes has two decimals.
-fn money(minor: i64) -> String {
-	let sign = if minor < 0 { "-" } else { "" };
-	let abs = minor.unsigned_abs();
-	if abs.is_multiple_of(100) {
-		format!("{sign}{}", abs / 100)
-	} else {
-		format!("{sign}{}.{:02}", abs / 100, abs % 100)
-	}
-}
-
 /// UTC, to the minute.
 fn minute(at: Timestamp) -> String {
 	at.strftime("%Y-%m-%d %H:%M UTC").to_string()
-}
-
-/// The line added to a lead's message once a button was pressed; the buttons left under it
-/// are [`after_press`].
-pub fn pressed_line(button: Button, who: &str, locale: Locale) -> String {
-	let who = one_line(who, MAX_NAME);
-	match (button, locale) {
-		(Button::Take, Locale::Ru) => format!("Взял: {who}"),
-		(Button::Take, Locale::En) => format!("Taken by: {who}"),
-		(Button::NoAnswer, Locale::Ru) => format!("Не дозвонился: {who}"),
-		(Button::NoAnswer, Locale::En) => format!("No answer: {who}"),
-	}
-}
-
-/// The buttons a message keeps after one was pressed: none once taken; "Take" still, after
-/// a call nobody answered.
-pub fn after_press(button: Button) -> &'static [Button] {
-	match button {
-		Button::Take => &[],
-		Button::NoAnswer => &[Button::Take],
-	}
 }
 
 /// What the bot says once a chat is linked: to which panel account, so a link opened from
@@ -598,7 +350,7 @@ pub enum Reply {
 	Done,
 	/// Pressed before; nothing more recorded.
 	AlreadyDone,
-	/// The lead is gone from the projection (a rebuild dropped it).
+	/// What the button acts on is gone.
 	LeadGone,
 }
 
@@ -734,60 +486,24 @@ mod tests {
 
 	#[test]
 	fn callbacks_are_bound_to_chat_message_and_button() {
-		let data = callback_data(&KEY, 42, 1001, Button::Take);
-		assert!(data.len() <= 64, "{data}");
-		assert_eq!(parse_callback(&KEY, 42, &data), Some((1001, Button::Take)));
+		let data = callback_data(&KEY, 42, 1001, "take");
+		assert_eq!(parse_callback(&KEY, 42, &data), Some((1001, "take".to_owned())));
 		assert_eq!(parse_callback(&KEY, 43, &data), None, "another chat");
 		assert_eq!(parse_callback(&[8; 32], 42, &data), None, "another key");
-		assert_eq!(parse_callback(&KEY, 42, &data.replacen("t.1001", "t.1002", 1)), None, "another message");
-		assert_eq!(parse_callback(&KEY, 42, &data.replacen("t.", "n.", 1)), None, "another button");
-		assert_eq!(parse_callback(&KEY, 42, "t.1001"), None);
-		assert_eq!(parse_callback(&KEY, 42, "t.1001.zz"), None);
+		assert_eq!(parse_callback(&KEY, 42, &data.replacen("take.1001", "take.1002", 1)), None, "another message");
+		assert_eq!(parse_callback(&KEY, 42, &data.replacen("take.", "no_answer.", 1)), None, "another button");
+		assert_eq!(parse_callback(&KEY, 42, "take.1001"), None);
+		assert_eq!(parse_callback(&KEY, 42, "take.1001.zz"), None);
 		assert_eq!(parse_callback(&KEY, 42, ""), None);
-		let big = callback_data(&KEY, i64::MIN, i64::MAX, Button::NoAnswer);
+		let big = callback_data(&KEY, i64::MIN, i64::MAX, "abcdefghijklmnop");
 		assert!(big.len() <= 64, "{big}");
+		let one_letter = format!("t.1001.{}", hex::encode(callback_mac(&KEY, 42, 1001, "t")));
+		assert_eq!(parse_callback(&KEY, 42, &one_letter), Some((1001, "take".to_owned())), "a message sent with one-letter buttons");
+		assert!(!is_button_id("t") && !is_button_id("Take") && is_button_id("no_answer"));
 	}
 
 	#[test]
 	fn texts() {
-		let lead = LeadNote {
-			brand: "aquafix".into(),
-			location: Some("paris-11".into()),
-			name: None,
-			need: Some("leaking tap".into()),
-			phone: Some("+33 6 00 00 00 00".into()),
-		};
-		assert_eq!(
-			Note::NewLead(lead.clone()).text(Locale::Ru),
-			"Новая заявка\naquafix · paris-11\nНужно: leaking tap\nТелефон: +33 6 00 00 00 00"
-		);
-		let withheld = LeadNote {
-			need: None,
-			phone: None,
-			..lead.clone()
-		};
-		assert_eq!(Note::NewLead(withheld.clone()).text(Locale::En), "New lead\naquafix · paris-11");
-		let doubted = Note::SuspectLead {
-			lead: withheld,
-			suspect: LeadSuspect::TooFast,
-		};
-		assert_eq!(doubted.text(Locale::En), "Suspect lead (antispam: form filled too fast)\naquafix · paris-11");
-		assert_eq!((doubted.rule(), doubted.buttons()), (Rule::NewLead, [Button::Take, Button::NoAnswer].as_slice()));
-		let overdue = Note::ContactOverdue {
-			lead,
-			waiting: SignedDuration::from_mins(47),
-		};
-		assert!(overdue.text(Locale::Ru).starts_with("Заявка ждёт звонка 47 мин\n"));
-		assert_eq!(overdue.buttons(), [Button::Take, Button::NoAnswer]);
-		let paid = Note::PaymentReceived {
-			brand: "aquafix".into(),
-			lead: "L-1".into(),
-			billed: 12050,
-			commission: 3000,
-			currency: "EUR".into(),
-		};
-		assert_eq!(paid.text(Locale::En), "Payment received\naquafix · L-1\nBilled: 120.50 EUR\nCommission: 30 EUR");
-		assert!(paid.buttons().is_empty());
 		let silent = Note::SourceSilent {
 			key_id: "aquafix-site".into(),
 			kind: "site".into(),
@@ -797,63 +513,25 @@ mod tests {
 			silent.text(Locale::Ru),
 			"Источник молчит больше суток\naquafix-site (site): последнее событие 2026-09-29 08:15 UTC"
 		);
-		assert_eq!(money(-5), "-0.05");
-		let booked = Note::Booking {
-			change: BookingChange::Booked,
-			brand: "aquafix".into(),
-			lead: Some(LeadNote {
-				brand: "aquafix".into(),
-				location: Some("royat".into()),
-				phone: Some("+33612345678".into()),
-				..LeadNote::default()
-			}),
-			slot: Some("2026-10-06 14:30 (Paris)".into()),
-			provider: "google_calendar".into(),
-		};
-		assert_eq!(
-			booked.text(Locale::Ru),
-			"Бронь: 2026-10-06 14:30 (Paris)\naquafix · royat\nТелефон: +33612345678\nЧерез: google_calendar"
-		);
-		assert_eq!((booked.rule(), booked.buttons()), (Rule::Booked, [].as_slice()));
-		let orphan = Note::Booking {
-			change: BookingChange::Canceled,
-			brand: "vifnet".into(),
-			lead: None,
-			slot: None,
-			provider: "google_calendar".into(),
-		};
-		assert_eq!(orphan.text(Locale::En), "Booking canceled, no lead\nvifnet\nVia: google_calendar");
-	}
-
-	#[test]
-	fn a_customer_cannot_forge_our_lines_or_links() {
-		let lead = LeadNote {
-			brand: "aquafix".into(),
-			location: None,
-			name: Some("Eve\u{202e}\t".into()),
-			need: Some(format!("tap\nВзял: Mallory\r\n\u{2028}see https://evil.example {}", "x".repeat(10 * 1024))),
-			phone: Some("+33 6 <a>00\n00 https://x".into()),
-		};
-		let r = Note::NewLead(lead).render(Locale::Ru);
-		let lines: Vec<&str> = r.text.lines().collect();
-		assert_eq!(lines.len(), 5, "{lines:?}");
-		assert!(!lines.iter().any(|l| l.starts_with("Взял")), "no line of ours from the customer");
-		assert_eq!(lines[2], "Имя: Eve");
-		assert_eq!(lines[4], "Телефон: +33 6 00 00", "digits and phone punctuation only");
-		let need = lines[3].strip_prefix("Нужно: ").unwrap();
-		assert_eq!(need.chars().count(), MAX_NEED);
-		assert!(need.starts_with("tap Взял: Mallory see https://evil.example x") && need.ends_with('…'));
-		let units: Vec<u16> = r.text.encode_utf16().collect();
-		let spans: Vec<String> = r.code.iter().map(|e| String::from_utf16(&units[e.offset..e.offset + e.length]).unwrap()).collect();
-		assert_eq!(spans, ["Eve", need], "the typed fields, exactly, are code");
-		assert!(r.text.chars().count() <= MAX_MESSAGE);
+		let asked = Note::AccessRequested {
+			email: "eve@x.io\nВзял: Mallory".into(),
+			name: "Eve".into(),
+			need: "sa:operator".into(),
+		}
+		.render(Locale::En);
+		assert_eq!(asked.text, "🔑 Access request\neve@x.io Взял: Mallory asks for sa:operator.\nName: Eve");
+		let units: Vec<u16> = asked.text.encode_utf16().collect();
+		let spans: Vec<String> = asked
+			.entities
+			.iter()
+			.map(|e| {
+				let (o, l) = (e["offset"].as_u64().unwrap() as usize, e["length"].as_u64().unwrap() as usize);
+				String::from_utf16(&units[o..o + l]).unwrap()
+			})
+			.collect();
+		assert_eq!(spans, ["eve@x.io Взял: Mallory", "Eve"], "what a user typed is code, on one line");
 		assert_eq!(one_line("  a \u{2066}b\u{2069}  c ", 80), "a b c");
 		assert_eq!(one_line("abcdef", 4), "abc…");
-		let mut long = Rendered::default();
-		long.push("ab");
-		long.code("cdef");
-		long.clamp(4);
-		assert_eq!((long.text.as_str(), long.code.as_slice()), ("abcd", [Entity { offset: 2, length: 2 }].as_slice()));
 	}
 
 	#[test]

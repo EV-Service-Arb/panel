@@ -5,16 +5,24 @@ use std::collections::BTreeSet;
 
 use eyre::WrapErr;
 use jiff::Timestamp;
-use panel_core::{event::KeyGrant, ids::BrandId};
+use panel_core::ids::BrandId;
 use sa_auth::SourceKind;
 use sqlx::types::Json;
 
 use super::{Store, from_db};
 
+/// A signing key: who holds it (its kind) and the brands it writes for.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Grant {
+	pub key_id: String,
+	pub kind: SourceKind,
+	pub brands: BTreeSet<BrandId>,
+}
+
 /// A source's row, secret still sealed.
 #[derive(Clone, Debug)]
 pub struct SourceRow {
-	pub grant: KeyGrant,
+	pub grant: Grant,
 	pub secret_sealed: Vec<u8>,
 	pub data_key_fp: Vec<u8>,
 	pub created_at: Timestamp,
@@ -45,7 +53,7 @@ impl TryFrom<Row> for SourceRow {
 			.collect::<Result<BTreeSet<_>, _>>()
 			.wrap_err_with(|| format!("source {}", r.key_id))?;
 		Ok(Self {
-			grant: KeyGrant { key_id: r.key_id, kind, brands },
+			grant: Grant { key_id: r.key_id, kind, brands },
 			secret_sealed: r.secret_sealed,
 			data_key_fp: r.data_key_fp,
 			created_at: from_db(r.created_at)?,
@@ -63,7 +71,7 @@ macro_rules! columns {
 
 impl Store {
 	/// Adds a source; `false` when the key id is taken.
-	pub async fn insert_source(&self, grant: &KeyGrant, secret_sealed: &[u8], data_key_fp: &[u8]) -> eyre::Result<bool> {
+	pub async fn insert_source(&self, grant: &Grant, secret_sealed: &[u8], data_key_fp: &[u8]) -> eyre::Result<bool> {
 		let brands: Vec<&str> = grant.brands.iter().map(BrandId::as_str).collect();
 		let inserted = sqlx::query("INSERT INTO sources (key_id, kind, brand_ids, secret_sealed, data_key_fp) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (key_id) DO NOTHING")
 			.bind(&grant.key_id)

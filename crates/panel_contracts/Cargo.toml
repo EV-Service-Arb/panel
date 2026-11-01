@@ -1,6 +1,6 @@
 [package]
 name = "panel_contracts"
-description = "sa.funnel.v1: the panel's wire contract, generated from contracts/proto (prost + pbjson for protojson)"
+description = "concierge's gRPC contract, as the conductor signs its users in through it (tonic, from contracts/proto)"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -10,29 +10,16 @@ readme.workspace = true
 
 # The generated code pulled in with `include!` uses these; machete cannot see into OUT_DIR.
 [package.metadata.cargo-machete]
-ignored = ["pbjson", "prost", "serde", "tonic", "tonic-prost"]
-
-[features]
-# The scope.v1 gRPC servers, for the tests' stand-in banking ledger.
-testing = []
+ignored = ["prost", "tonic", "tonic-prost"]
 
 [dependencies]
-pbjson.workspace = true
-pbjson-types.workspace = true
 prost.workspace = true
-serde.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true
 
 [build-dependencies]
-pbjson-build.workspace = true
-prost.workspace = true
-prost-build.workspace = true
 protox.workspace = true
 tonic-prost-build.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true
 
 [lints]
 workspace = true

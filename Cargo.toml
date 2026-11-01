@@ -42,11 +42,7 @@ hmac = "0.13"
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 jiff = "0.2"
-pbjson = "0.9"
-pbjson-build = "0.9"
-pbjson-types = "0.9"
 prost = "0.14"
-prost-build = "0.14"
 protox = "0.9"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1", features = ["derive"] }
