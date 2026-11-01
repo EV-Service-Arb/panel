@@ -82,7 +82,7 @@ pub enum Archive {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Permission)]
-#[permission("sa:review_archive:tokens")]
+#[permission("sa:admin:tokens")]
 pub enum Tokens {
 	Grant,
 }
