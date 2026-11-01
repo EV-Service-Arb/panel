@@ -68,8 +68,8 @@ die() {
 
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run this from inside the conductor's checkout"
 [ -f "$root/crates/panel_server/Cargo.toml" ] || die "$root is not the conductor's checkout"
-# The others sit beside the conductor's main checkout (_sa/{site_conductor,sites/{panel,aquafix,
-# vifnet}}), also when this is one of its worktrees.
+# The others sit beside the conductor's main checkout (_sa/{site_conductor,review_archive,
+# sites/{panel,aquafix,vifnet}}), also when this is one of its worktrees.
 main_checkout="$(dirname "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)")"
 service_arb="$(dirname "$main_checkout")"
 SITES_DIR="${SITES_DIR:-$service_arb/sites/panel}"

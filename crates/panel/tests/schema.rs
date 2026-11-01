@@ -360,7 +360,7 @@ async fn telegram_roles_become_permissions_both_ways() {
 async fn a_site_origin_is_set_once() {
 	let db = TestDb::create().await;
 	let key = DataKey::from_hex(&DataKey::generate_hex().unwrap()).unwrap();
-	let panel = Panel::new(db.store().await, key);
+	let panel = panel_with(db.store().await, key);
 	let aquafix = || [BrandId::parse("aquafix").unwrap()].into();
 	assert!(panel.add_source("aquafix-site", SourceKind::Site, aquafix(), None).await.is_err(), "a site key without an origin");
 	assert!(
