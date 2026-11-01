@@ -49,7 +49,7 @@
               generated = {
                 enable = true;
                 name = "regenerate derived files";
-                entry = "bash -c '${gen}/bin/gen && git add -A frontend/src/entities/session/model/generated.ts frontend/src/entities/lead/model/generated.ts frontend/src/entities/source/model/generated.ts frontend/src/shared/config/generated.ts frontend/src/shared/api/generated.ts'";
+                entry = "bash -c '${gen}/bin/gen && git add -A frontend/src/entities/session/model/generated.ts frontend/src/entities/source/model/generated.ts'";
                 pass_filenames = false;
                 require_serial = true;
               };
@@ -157,7 +157,7 @@
         deploy = {
           # Settings::required_var_names("production"): the pod exits 78 without any of them.
           # PANEL_DB_PATH is the container's own env (below); the rest the deploy supplies.
-          requiredEnv = [ "PANEL_DB_PATH" "PANEL_DATA_KEY" "PANEL_PUBLIC_ORIGIN" "CONCIERGE_PUBLIC_ORIGIN" "CONCIERGE_GRPC_ADDR" "RP_CLIENT_SECRET_SA" "PANEL_ASSERTION_KEY" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" ];
+          requiredEnv = [ "PANEL_DB_PATH" "PANEL_DATA_KEY" "PANEL_PUBLIC_ORIGIN" "CONCIERGE_PUBLIC_ORIGIN" "CONCIERGE_GRPC_ADDR" "RP_CLIENT_SECRET_SA" "PANEL_ASSERTION_KEY" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" "PANEL_SITES_URL" ];
           # from the sops-backed Secret, never literal env
           secretEnv = [
             "PANEL_DATA_KEY"
@@ -165,63 +165,32 @@
             "RP_CLIENT_SECRET_SA"
             "PANEL_ASSERTION_KEY"
             "TELEGRAM_BOT_TOKEN"
-            "GOOGLE_OAUTH_CLIENT_SECRET"
-            "GOOGLE_CALENDAR_REFRESH_TOKEN_AQUAFIX"
-            "GOOGLE_CALENDAR_REFRESH_TOKEN_VIFNET"
           ];
-          # POSTHOG_PROJECT_API_KEY (phc_, public like the landings', not a secret; + POSTHOG_HOST):
-          # serve sends the leads' life to PostHog; unset, nothing is sent (serve warns).
-          # POSTHOG_PROJECT_ID (+ POSTHOG_APP_HOST): the experiments link to their funnels in
-          # PostHog; unset, no links. Links are opened by the browser: no egress for them.
-          # Google Calendar booking pull (docs/ARCHITECTURE.md, Booking): the OAuth client both or
-          # neither; a brand's calendar is pulled only with its refresh token
-          # (`panel booking google-authorize <brand>` makes one); its calendar id defaults to
-          # `primary`. A token without the client fails the boot.
           # PANEL_CSP_PLATFORM_MFE: `0` (default) or `1`. With `1` the pages' CSP also allows the
           # platform's MFE directories (https://evinvest.ltd/api/auth/mfe/ and /wallet/mfe/) in
           # script-src and the origin in connect-src. The front end always loads them from there,
-          # so production sets `1`.
-          # SCOPE_LEDGER_* (docs/ARCHITECTURE.md, Invoices): banking's ScopeLedger over mTLS, the
-          # address and the three *_PEM_FILE paths all or none; unset, /api/v1/invoices answers
-          # 503. The *_PEM_FILE values are literal paths (`/etc/settings/<VAR>`) to files mounted
-          # from the Secret, as invest's are: the paths are not secrets, so not in secretEnv.
+          # so production sets `1`. TELEGRAM_BOT_TOKEN needs the forward (it sends sites' notes).
           optionalEnv = [
             "PANEL_CSP_PLATFORM_MFE"
             "SENTRY_DSN"
             "TELEGRAM_BOT_TOKEN"
             "TELEGRAM_BOT_USERNAME"
             "TELEGRAM_LOCALE"
-            "POSTHOG_PROJECT_API_KEY"
-            "POSTHOG_HOST"
-            "POSTHOG_PROJECT_ID"
-            "POSTHOG_APP_HOST"
-            "GOOGLE_OAUTH_CLIENT_ID"
-            "GOOGLE_OAUTH_CLIENT_SECRET"
-            "GOOGLE_CALENDAR_SYNC_MINUTES"
-            "GOOGLE_CALENDAR_REFRESH_TOKEN_AQUAFIX"
-            "GOOGLE_CALENDAR_ID_AQUAFIX"
-            "GOOGLE_CALENDAR_REFRESH_TOKEN_VIFNET"
-            "GOOGLE_CALENDAR_ID_VIFNET"
-            "SCOPE_LEDGER_ADDR"
-            "SCOPE_LEDGER_TLS_CA_PEM_FILE"
-            "SCOPE_LEDGER_TLS_CERT_PEM_FILE"
-            "SCOPE_LEDGER_TLS_KEY_PEM_FILE"
           ];
           ingress = {
-            # in-cluster only, by service DNS: the landings' ingest and place reads
+            # in-cluster only, by service DNS: the landings' and bots' ingest
             # (docs/ARCHITECTURE.md, Deploy requirements)
-            excludePathPrefixes = [ "/api/ingest" "/api/internal" ];
-            # per client IP at the edge; the panel bounds concurrency, not who calls. /api/hooks:
-            # the booking providers' webhooks (public, signature-checked; none registered yet)
+            excludePathPrefixes = [ "/api/ingest" ];
+            # per client IP at the edge; the conductor bounds concurrency, not who calls. /api/hooks:
+            # the booking providers' webhooks, forwarded to sites (public, signature-checked there)
             rateLimitPathPrefixes = [ "/auth" "/api/hooks" ];
           };
           egress = {
-            # in-cluster peers, at the addresses these name: concierge's gRPC, the services the
-            # forward reaches (docs/ARCHITECTURE.md, Forward), and banking's ScopeLedger
-            grpcEnv = [ "CONCIERGE_GRPC_ADDR" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" "SCOPE_LEDGER_ADDR" ];
-            # the Bot API; PostHog's capture host (POSTHOG_HOST's default — follow it if it is
-            # pointed elsewhere); Google's token endpoint and Calendar API for the booking pull
-            hosts = [ "api.telegram.org:443" "us.i.posthog.com:443" "oauth2.googleapis.com:443" "www.googleapis.com:443" ];
+            # in-cluster peers, at the addresses these name: concierge's gRPC and the services the
+            # forward reaches (docs/ARCHITECTURE.md, Forward)
+            grpcEnv = [ "CONCIERGE_GRPC_ADDR" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" "PANEL_SITES_URL" ];
+            # the Bot API
+            hosts = [ "api.telegram.org:443" ];
           };
         };
 
@@ -238,13 +207,9 @@
             # /bin/panel, for `kubectl exec … panel source add` and the like
             contents = [ bin ];
             # the production guards (`#[required_in("production")]`) are armed wherever it runs
-            # PostHog: the project the landings send to (Cloud US 614067, their
-            # deploy/config.nix); the phc_ token is a public write-only ingest key
             env = {
               APP_ENV = "production";
               PANEL_DB_PATH = dbPath;
-              POSTHOG_PROJECT_API_KEY = "phc_sBwWEgdgockVmfyucBRkTTo6iZ4Y2eApSGorD22WLzj3";
-              POSTHOG_PROJECT_ID = "614067";
             };
             # the epoch versions the sa catalog `serve` publishes to concierge: it must travel with
             # the build, or a tag whose catalog changed boots on the previous epoch and is refused
@@ -269,8 +234,8 @@
             nix build                         the panel binary
             nix build .#${pname}-container    OCI image, the front end in it (Linux only)
             nix build .#frontend              the front end's static export
-            nix run .#local-stack             the panel and both landings on this machine,
-                                              wired together (docs/LOCAL.md)
+            nix run .#local-stack             the conductor, sites_panel and both landings on
+                                              this machine, wired together (docs/LOCAL.md)
             nix run .#publish -- major|minor|patch [note]
                                               tag the next vX.Y.Z and push it: CI ships the image
             nix run .#gen                     the front end's mirror of the Rust types
@@ -317,8 +282,8 @@
             git push origin "$next"
           '';
         };
-        # The panel (dev sign-in) and the landings beside its checkout, wired together on this
-        # machine; the script is the source, shellchecked here (docs/LOCAL.md). It builds the
+        # The conductor (dev sign-in), sites_panel and the landings beside its checkout, wired
+        # together on this machine; the script is the source, shellchecked here (docs/LOCAL.md). It builds the
         # binary and the front end itself, unless PANEL_BIN / PANEL_WEB_DIR name others: the
         # app does not depend on them, so naming a cargo build skips the Nix one.
         localStack = pkgs.writeShellApplication {

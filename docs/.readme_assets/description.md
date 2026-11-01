@@ -1,31 +1,18 @@
-The Service-Arb panel (`sa.evinvest.ltd`): where the funnel of the Service-Arb brands — from a
-lead to a payment — is recorded and read. The plan is `SA-PANEL-SPEC.md` (§ references in the
-code point there); this repository holds its backend.
+The Service-Arb conductor (`sa.evinvest.ltd`): the host the Service-Arb services live behind.
+It knows who a person is — people sign in through concierge (the conductor is its relying
+party, client `sa`, and publishes the whole `sa` permission catalog) — and who a machine is: the
+source keys the landings, bots and other sources sign what they send with.
 
-What exists so far is ingest. Sources (the landings, and later review_archive and a GBP
-import, the panel's own screens) send `sa.funnel.v1` events — a versioned protobuf
-contract, spoken as protojson — to `POST /api/ingest/v1/events`, signed with a per-source HMAC
-key that may write only for its own brands. Every accepted event goes into an append-only
-journal in SQLite (one file, replicated off the pod by litestream), PII sealed apart; the
-funnel's projections (`leads` with their stages, `calls`, `payments`) are derived from it and
-can be rebuilt from it at any time. The `reporting_*` views expose them without PII.
+Everything else is a service behind the origin, told who is calling by an assertion the
+conductor signs for that one request: sites_panel (the sites business — leads, places, pricing,
+experiments, bookings, invoices — under `/api/sites` and the `/sites` page), review_archive and
+playbook. Ingest is authenticated here and forwarded to sites with the key's grant; what a key
+may write is sites' to judge.
 
-People sign in through concierge (the panel is its relying party, client `sa`): any active
-account signs in, and the `sa` permissions it holds (the panel publishes their catalog; the
-aliases `sa:operator` and `sa:admin` bundle them) open its sections. `/api/v1` is the
-operator API the panel's front end works through — leads and their stages, semi-manual
-calls, payments typed in by hand, the funnel, and (admins) the sources.
+Two hubs run here too: live updates (one WebSocket per screen, fed by sites' change feed and the
+conductor's own changes, each told only to who may read it) and a Telegram bot (each user's
+private chat, linked from their profile; sites' notes and the conductor's own — a source gone
+silent, an access request — through an outbox paced to Telegram's limits; buttons that call
+sites as the user who pressed).
 
-A Telegram bot notifies each user in a private chat they link from their profile — a new
-lead, with buttons that record "taken" and "no answer" as the operator API would; a lead past
-its contact SLA; for admins, payments and a source gone silent — through an outbox in the
-same database, paced to Telegram's limits.
-
-Admins edit each place's live settings — the phones, hours and service area the landings
-show — and each brand's price list and experiments (a kill switch, the weights, the holdout
-over what the landing declares), and the landings read them from the panel instead of a
-release. What PostHog counts (visits, intents, the experiments' numbers) is looked at in
-PostHog; the panel sends it each lead's life after the form, without PII.
-
-Not here yet: the GBP import. See
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for where things live.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for where things live.
