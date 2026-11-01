@@ -19,6 +19,9 @@ use uuid::Uuid;
 const INDEX: &str = r#"<html><script src="/_next/static/chunks/app-3f2a.js" async=""></script><script>self.__next_f=[]</script></html>"#;
 const LEADS: &str = r#"<html><script>self.__next_f.push([1,"leads"])</script><SCRIPT id="x">self.__next_f=[]</SCRIPT></html>"#;
 
+/// The page the sites' element mounts in, routing inside it.
+const SITES: &str = r#"<html><mfe-sites-panel api="/api/sites" base="/sites"></mfe-sites-panel></html>"#;
+
 /// `'sha256-…'` of an inline script's text, as the browser hashes it.
 fn hash(script: &str) -> String {
 	format!("'sha256-{}'", base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script.as_bytes())))
@@ -50,6 +53,9 @@ impl Export {
 			("web/index.html", INDEX),
 			("web/404.html", "<html>not here</html>"),
 			("web/leads/index.html", LEADS),
+			("web/sites/index.html", SITES),
+			("web/sites/index.txt", "sites payload"),
+			("web/sites/__next._tree.txt", "sites tree"),
 			("web/_next/static/chunks/app-3f2a.js", "console.log(1)"),
 			("web/favicon.ico", "ico"),
 			("secret.txt", "do not serve"),
@@ -226,6 +232,34 @@ async fn hashed_assets_are_immutable_and_nothing_revalidates_by_date() {
 	assert_eq!((status, body.as_str()), (StatusCode::OK, INDEX));
 }
 
+/// Any view of the sites page loads the page, and the payload Next's client-side navigation asks
+/// for under a view is the page's: a click from a conductor screen to `/sites/leads` stays soft.
+/// The bundle the page loads is the forward's (`/sites/mfe`), never a page; and its policy is the
+/// pages' own, `'self'` already admitting the bundle.
+#[tokio::test]
+async fn the_sites_page_serves_every_view_of_it() {
+	let export = Export::new();
+	let app = app(&export.web());
+	for uri in ["/sites/", "/sites/leads", "/sites/leads/", "/sites/leads/aquafix/L-1"] {
+		let (status, h, body) = get_(&app, uri).await;
+		assert_eq!((status, body.as_str()), (StatusCode::OK, SITES), "{uri}");
+		assert!(is_page(&h), "{uri}");
+		assert_eq!(sources(policy(&h), "script-src")[0], "'self'", "{uri}: the bundle is this origin's");
+	}
+	for (uri, body) in [
+		("/sites/leads/index.txt?_rsc=1x2y", "sites payload"),
+		("/sites/leads/aquafix/__next._tree.txt", "sites tree"),
+		("/sites/index.txt", "sites payload"),
+	] {
+		let (status, _, got) = get_(&app, uri).await;
+		assert_eq!((status, got.as_str()), (StatusCode::OK, body), "{uri}");
+	}
+	assert_eq!(get_(&app, "/sites/leads/nothing.txt").await.0, StatusCode::NOT_FOUND);
+	let (status, h, body) = get_(&app, "/sites/mfe/mfe-sites.js").await;
+	assert_eq!((status, body.as_str()), (StatusCode::NOT_FOUND, r#"{"error":"not found"}"#), "the forward's, not the export's");
+	assert!(!is_page(&h));
+}
+
 #[tokio::test]
 async fn the_api_side_never_falls_through_to_the_front_end() {
 	let export = Export::new();
@@ -243,6 +277,8 @@ async fn the_api_side_never_falls_through_to_the_front_end() {
 		"/grafana/d/abc",
 		"/cabinet",
 		"/cabinet/mfe/account-chip.js",
+		"/api/sites/leads",
+		"/api/hooks/booking/cal_com/aquafix",
 	] {
 		let (status, h, body) = get_(&app, uri).await;
 		assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");

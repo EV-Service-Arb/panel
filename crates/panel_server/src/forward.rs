@@ -1,8 +1,11 @@
-//! The services behind the panel's origin (docs/ARCHITECTURE.md, Forward): a prefix of ours
+//! The services behind the conductor's origin (docs/ARCHITECTURE.md, Forward): a prefix of ours
 //! is streamed to a service both ways, and who is calling is told to it by an assertion the
-//! panel signs for that one request ([`sa_auth`]), never by the browser's cookies.
+//! conductor signs for that one request ([`sa_auth`]), never by the browser's cookies.
 //!
 //! ```text
+//! /api/sites/*                     → sites /api/v1/*            session + assertion; CSRF on writes
+//! /api/hooks/booking/*             → sites (same path)          open: the providers' webhooks
+//! /sites/mfe/*                     → sites /mfe/*               open: the sites page's bundle
 //! /api/review_archive/grafana/*    → review_archive /grafana/*  session + assertion; a POST is a read
 //! /api/review_archive/*            → review_archive /*          session + assertion; CSRF on writes
 //! /review_archive/mfe/*            → review_archive /mfe/*      open: the dashboard's bundle
@@ -10,8 +13,11 @@
 //!                                                               POST carries playbook's own nonce
 //! /playbook_mcp/*, two .well-known → playbook (same path)       open: OAuth and bearer, no cookie
 //! ```
+//!
+//! [`Services`] is the one client and signing key every call to a service goes through: the
+//! forward's, ingest's, and the hubs' own reads of sites.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
 	Json, Router,
@@ -58,7 +64,25 @@ struct Route {
 }
 
 /// Longest prefixes first: the first match wins.
-const ROUTES: [Route; 7] = [
+const ROUTES: [Route; 10] = [
+	Route {
+		prefix: "/api/sites",
+		upstream: "/api/v1",
+		service: Service::Sites,
+		gate: Gate::Session(Writes::Csrf),
+	},
+	Route {
+		prefix: "/api/hooks/booking",
+		upstream: "/api/hooks/booking",
+		service: Service::Sites,
+		gate: Gate::Open,
+	},
+	Route {
+		prefix: "/sites/mfe",
+		upstream: "/mfe",
+		service: Service::Sites,
+		gate: Gate::Open,
+	},
 	Route {
 		prefix: "/api/review_archive/grafana",
 		upstream: "/grafana",
@@ -128,29 +152,84 @@ const DROPPED_UP: [&str; 10] = [
 ];
 const DROPPED_DOWN: [&str; 8] = ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade", "set-cookie"];
 
-/// Where each service is, and the key the panel vouches with.
+/// Where each service is, and the key the conductor vouches with.
 pub struct Upstreams {
 	pub review_archive: Uri,
 	pub playbook: Uri,
+	pub sites: Uri,
 	pub signer: Signer,
+}
+
+/// The services, and how the conductor calls them.
+#[derive(Clone)]
+pub struct Services {
+	upstreams: Arc<Upstreams>,
+	client: Client<HttpConnector, Body>,
+}
+
+impl Services {
+	pub fn new(upstreams: Upstreams) -> Self {
+		let mut connector = HttpConnector::new();
+		connector.set_connect_timeout(Some(Duration::from_secs(5)));
+		Self {
+			upstreams: Arc::new(upstreams),
+			client: Client::builder(hyper_util::rt::TokioExecutor::new()).build(connector),
+		}
+	}
+
+	/// `method path[?query]` to `service`, `principal` vouched for by an assertion bound to the
+	/// path; what only the conductor may say, and hop-by-hop headers, are not passed either way.
+	/// The answer streams.
+	pub(crate) async fn send(
+		&self,
+		service: Service,
+		method: Method,
+		path_and_query: &str,
+		mut headers: HeaderMap,
+		principal: Option<Principal>,
+		body: Body,
+	) -> Result<Response, hyper_util::client::legacy::Error> {
+		let path = path_and_query.split_once('?').map_or(path_and_query, |(path, _)| path);
+		let base = match service {
+			Service::ReviewArchive => &self.upstreams.review_archive,
+			Service::Playbook => &self.upstreams.playbook,
+			Service::Sites => &self.upstreams.sites,
+		};
+		let uri: Uri = format!("{}{path_and_query}", base.to_string().trim_end_matches('/'))
+			.parse()
+			.expect("a path and query that arrived in a URI stay one under a bare origin");
+		strip(&mut headers, &DROPPED_UP);
+		headers.remove(header::HOST);
+		if let Some(principal) = principal {
+			let token = self.upstreams.signer.sign(&Assertion {
+				aud: service,
+				principal,
+				method: method.to_string(),
+				path: path.to_owned(),
+				exp: jiff::Timestamp::now().as_second() + sa_auth::TTL,
+			});
+			headers.insert(HeaderName::from_static(sa_auth::HEADER), HeaderValue::from_str(&token).expect("a JWS is base64url and dots"));
+		}
+		let mut req = Request::new(body);
+		*req.method_mut() = method;
+		*req.uri_mut() = uri;
+		*req.headers_mut() = headers;
+		let res = self.client.request(req).await?;
+		let (mut parts, body) = res.into_parts();
+		strip(&mut parts.headers, &DROPPED_DOWN);
+		Ok(Response::from_parts(parts, Body::new(body)))
+	}
 }
 
 #[derive(Clone)]
 pub struct Forward {
 	sign_in: SignIn,
-	upstreams: std::sync::Arc<Upstreams>,
-	client: Client<HttpConnector, Body>,
+	services: Services,
 }
 
 impl Forward {
-	pub fn new(sign_in: SignIn, upstreams: Upstreams) -> Self {
-		let mut connector = HttpConnector::new();
-		connector.set_connect_timeout(Some(Duration::from_secs(5)));
-		Self {
-			sign_in,
-			upstreams: std::sync::Arc::new(upstreams),
-			client: Client::builder(hyper_util::rt::TokioExecutor::new()).build(connector),
-		}
+	pub fn new(sign_in: SignIn, services: Services) -> Self {
+		Self { sign_in, services }
 	}
 
 	pub fn routes(self) -> Router {
@@ -159,6 +238,14 @@ impl Forward {
 			router = router.route(r.prefix, any(forward)).route(&format!("{}/{{*rest}}", r.prefix), any(forward));
 		}
 		router.with_state(self)
+	}
+
+	pub(crate) fn panel(&self) -> &panel::Panel {
+		&self.sign_in.panel
+	}
+
+	pub(crate) fn services(&self) -> &Services {
+		&self.services
 	}
 }
 
@@ -177,7 +264,7 @@ async fn forward(State(f): State<Forward>, req: Request) -> Response {
 	}
 	let upstream_path = format!("{}{rest}", route.upstream);
 	let upstream_path = if upstream_path.is_empty() { "/".to_owned() } else { upstream_path };
-	let assertion = match route.gate {
+	let principal = match route.gate {
 		Gate::Open => None,
 		Gate::Session(writes) => {
 			let write = writes != Writes::Reads && !matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
@@ -187,19 +274,13 @@ async fn forward(State(f): State<Forward>, req: Request) -> Response {
 			// a write must not outlive a revoked grant by even the cached GetMe's minute
 			let freshness = if write { Freshness::Fresh } else { Freshness::Cached };
 			match signin::check(&f.sign_in, req.headers(), freshness).await {
-				Ok(caller) => Some(Assertion {
-					aud: route.service,
-					principal: Principal::User(User {
-						sub: caller.user_id.to_string(),
-						email: caller.email.clone(),
-						email_verified: caller.email_verified,
-						name: caller.preferred_name.clone(),
-						permissions: caller.permissions.iter().filter(|p| p.starts_with(route.service.prefix())).collect(),
-					}),
-					method: req.method().to_string(),
-					path: upstream_path.clone(),
-					exp: jiff::Timestamp::now().as_second() + sa_auth::TTL,
-				}),
+				Ok(caller) => Some(Principal::User(User {
+					sub: caller.user_id.to_string(),
+					email: caller.email,
+					email_verified: caller.email_verified,
+					name: caller.preferred_name,
+					permissions: caller.permissions.iter().filter(|p| p.starts_with(route.service.prefix())).collect(),
+				})),
 				// a page the browser navigated to goes to sign in and comes back; a call is told
 				Err(Denied::Unauthenticated) if route.service == Service::Playbook && *req.method() == Method::GET => {
 					let back = req.uri().path_and_query().map_or(path.as_str(), |pq| pq.as_str());
@@ -209,32 +290,13 @@ async fn forward(State(f): State<Forward>, req: Request) -> Response {
 			}
 		}
 	};
-	let base = match route.service {
-		Service::ReviewArchive => &f.upstreams.review_archive,
-		Service::Playbook => &f.upstreams.playbook,
-		Service::Sites => unreachable!("phase 3 of the split: no route forwards to sites yet"),
+	let upstream = match req.uri().query() {
+		Some(q) => format!("{upstream_path}?{q}"),
+		None => upstream_path,
 	};
-	let query = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
-	let uri: Uri = match format!("{}{upstream_path}{query}", base.to_string().trim_end_matches('/')).parse() {
-		Ok(u) => u,
-		Err(_) => return json_error(StatusCode::BAD_REQUEST, "not a forwardable path"),
-	};
-	let (mut parts, body) = req.into_parts();
-	parts.uri = uri;
-	strip(&mut parts.headers, &DROPPED_UP);
-	parts.headers.remove(header::HOST);
-	if let Some(a) = assertion {
-		let token = f.upstreams.signer.sign(&a);
-		parts
-			.headers
-			.insert(HeaderName::from_static(sa_auth::HEADER), HeaderValue::from_str(&token).expect("a JWS is base64url and dots"));
-	}
-	match f.client.request(Request::from_parts(parts, body)).await {
-		Ok(res) => {
-			let (mut parts, body) = res.into_parts();
-			strip(&mut parts.headers, &DROPPED_DOWN);
-			Response::from_parts(parts, Body::new(body))
-		}
+	let (parts, body) = req.into_parts();
+	match f.services.send(route.service, parts.method, &upstream, parts.headers, principal, body).await {
+		Ok(res) => res,
 		Err(e) => {
 			tracing::warn!(error = %e, service = ?route.service, "a forward failed");
 			json_error(StatusCode::BAD_GATEWAY, "the service did not answer")
@@ -275,5 +337,8 @@ mod tests {
 		assert_eq!(route("/api/review_archive/grafanas"), Some(("/api/review_archive", Gate::Session(Writes::Csrf))));
 		assert_eq!(route("/api/review_archived"), None);
 		assert_eq!(route("/review_archive"), None, "the page is the front end's");
+		assert_eq!(route("/api/sites/leads"), Some(("/api/sites", Gate::Session(Writes::Csrf))));
+		assert_eq!(route("/sites/mfe/mfe-sites.js"), Some(("/sites/mfe", Gate::Open)));
+		assert_eq!(route("/sites/leads"), None, "the page is the front end's");
 	}
 }

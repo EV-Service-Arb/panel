@@ -1,15 +1,14 @@
-//! The panel's Telegram bot (spec §8): the Bot API over HTTPS, the background work of
-//! `serve`, and the profile's `/api/v1/telegram` routes. What a message says and to whom,
-//! and what a button does, is the engine's (`panel::telegram`).
+//! The conductor's Telegram bot: the Bot API over HTTPS, sites as the hub reads it, the
+//! background work of `serve`, and the profile's `/api/v1/telegram` routes. What a message says
+//! and to whom, and what a button does, is the engine's (`panel::telegram`).
 //!
-//! **Updates arrive by long polling, not a webhook.** The panel runs on the rpi5 behind a
-//! Cloudflare tunnel; a webhook would need a public route to `/api/telegram/…` and a secret
-//! header check on it — surface for anyone on the internet — while `getUpdates` needs only
-//! egress to `api.telegram.org`. Telegram answers a second poller 409, so one replica polls,
-//! under a lease in Postgres that another takes over when it lapses; the offset lives there
-//! too, so a new holder resumes where the last one stopped. Every update is handled
-//! idempotently (a link token redeems once, a button's event id derives from it), so an
-//! update handled twice across a takeover does nothing twice.
+//! **Updates arrive by long polling, not a webhook.** A webhook would need a public route and a
+//! secret header check on it — surface for anyone on the internet — while `getUpdates` needs
+//! only egress to `api.telegram.org`. Telegram answers a second poller 409, so one replica
+//! polls, under a lease in the database that another takes over when it lapses; the offset lives
+//! there too, so a new holder resumes where the last one stopped. Every update is handled
+//! idempotently (a link token redeems once, a button's press carries the same Idempotency-Key),
+//! so an update handled twice across a takeover does nothing twice.
 //!
 //! Without `TELEGRAM_BOT_TOKEN` none of this runs: `serve` warns, and the profile answers
 //! that Telegram is not configured.
@@ -21,25 +20,26 @@ use std::{
 
 use axum::{
 	Extension, Json, Router,
+	body::{Body, to_bytes},
 	extract::{State, rejection::JsonRejection},
-	http::StatusCode,
+	http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
 	response::{IntoResponse, Response},
 	routing::{get, put},
 };
 use jiff::{SignedDuration, Timestamp};
 use panel::{
 	Panel,
-	operator::ActionError,
-	telegram::{Account, Bot, Chat, Directory, InlineButton, Notifier, Update},
+	telegram::{Account, Bot, Call, Chat, Directory, Identity, InlineButton, NotePage, Notifier, Sites, Update},
 };
-use panel_core::notify::{Entity, Failure, Rendered, Rule};
+use panel_core::notify::{Failure, Rendered, Rule};
+use sa_auth::{Principal, Service, User};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{sync::watch, task::JoinSet};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::{api::ApiError, concierge::Concierge, signin::Caller};
+use crate::{api::ApiError, concierge::Concierge, forward::Services, signin::Caller};
 
 /// The Bot API's root.
 pub const API_BASE: &str = "https://api.telegram.org";
@@ -150,11 +150,6 @@ impl BotApi {
 	}
 }
 
-/// The `code` spans, as the Bot API's `entities`.
-fn entities(m: &Rendered) -> Value {
-	json!(m.code.iter().map(|e| json!({"type": "code", "offset": e.offset, "length": e.length})).collect::<Vec<_>>())
-}
-
 fn keyboard(buttons: &[InlineButton]) -> Value {
 	let row = |b: &InlineButton| match b {
 		InlineButton::Callback { label, data } => json!([{"text": label, "callback_data": data}]),
@@ -165,7 +160,7 @@ fn keyboard(buttons: &[InlineButton]) -> Value {
 
 impl Bot for BotApi {
 	async fn send(&self, chat_id: i64, message: &Rendered, buttons: &[InlineButton]) -> Result<i64, Failure> {
-		let mut body = json!({"chat_id": chat_id, "text": message.text, "entities": entities(message), "link_preview_options": {"is_disabled": true}});
+		let mut body = json!({"chat_id": chat_id, "text": message.text, "entities": message.entities, "link_preview_options": {"is_disabled": true}});
 		if !buttons.is_empty() {
 			body["reply_markup"] = keyboard(buttons);
 		}
@@ -181,7 +176,7 @@ impl Bot for BotApi {
 			"chat_id": chat_id,
 			"message_id": message_id,
 			"text": message.text,
-			"entities": entities(message),
+			"entities": message.entities,
 			"link_preview_options": {"is_disabled": true},
 			"reply_markup": keyboard(buttons),
 		});
@@ -204,20 +199,16 @@ pub fn parse_update(raw: &Value) -> Option<Update> {
 	};
 	if let Some(q) = raw.get("callback_query") {
 		let message = q.get("message")?;
-		// Only the `code` spans are kept: they are the ones the panel set, and what keeps a
-		// customer's words from turning into a link when the message is edited.
-		let code = message
+		// Only the formatting is kept: Telegram adds a link of its own over a URL it sees, and a
+		// customer's words must not become one when the message is edited.
+		const FORMATTING: [&str; 9] = ["code", "pre", "bold", "italic", "underline", "strikethrough", "spoiler", "blockquote", "expandable_blockquote"];
+		let entities = message
 			.get("entities")
 			.and_then(Value::as_array)
 			.map(|all| {
 				all.iter()
-					.filter(|e| e.get("type").and_then(Value::as_str) == Some("code"))
-					.filter_map(|e| {
-						Some(Entity {
-							offset: usize::try_from(e.get("offset")?.as_u64()?).ok()?,
-							length: usize::try_from(e.get("length")?.as_u64()?).ok()?,
-						})
-					})
+					.filter(|e| e.get("type").and_then(Value::as_str).is_some_and(|t| FORMATTING.contains(&t)))
+					.cloned()
 					.collect()
 			})
 			.unwrap_or_default();
@@ -228,7 +219,7 @@ pub fn parse_update(raw: &Value) -> Option<Update> {
 			data: q.get("data").and_then(Value::as_str).unwrap_or_default().to_owned(),
 			message: Rendered {
 				text: message.get("text").and_then(Value::as_str).unwrap_or_default().to_owned(),
-				code,
+				entities,
 			},
 		});
 	}
@@ -374,10 +365,7 @@ struct RulesBody {
 async fn set_rules(State(s): State<TelegramState>, Extension(caller): Extension<Caller>, b: Result<Json<RulesBody>, JsonRejection>) -> Result<Json<Value>, ApiError> {
 	let Json(b) = b.map_err(|e| ApiError::BadRequest(e.body_text()))?;
 	let rules = b.rules.iter().map(|(r, on)| Ok((r.parse::<Rule>()?, *on))).collect::<Result<Vec<_>, panel_core::Invalid>>()?;
-	s.panel.telegram_set_rules(caller.user_id, &caller.permissions, &rules).await.map_err(|e| match e {
-		ActionError::Invalid(e) => ApiError::BadRequest(e.0),
-		other => ApiError::from(other),
-	})?;
+	s.panel.telegram_set_rules(caller.user_id, &caller.permissions, &rules).await??;
 	settings(State(s), Extension(caller)).await
 }
 
@@ -386,14 +374,14 @@ async fn set_rules(State(s): State<TelegramState>, Extension(caller): Extension<
 /// Runs the bot until `shutdown` turns true: the poller (on the replica holding its lease),
 /// the fan-out, the delivery and the access checks, each on its own schedule. A failing pass
 /// is reported and tried again at the next tick; nothing here ends `serve`.
-pub async fn run(notifier: Notifier<BotApi, Concierge>, name: BotName, shutdown: watch::Receiver<bool>) {
+pub async fn run(notifier: Notifier<BotApi, Concierge, Services>, name: BotName, shutdown: watch::Receiver<bool>) {
 	let notifier = Arc::new(notifier);
 	let mut work = JoinSet::new();
 	work.spawn(poll(notifier.clone(), name, shutdown.clone()));
 	let n = notifier.clone();
 	work.spawn(crate::every(FAN_OUT_EVERY, shutdown.clone(), "telegram fan-out", move || {
 		let n = n.clone();
-		async move { n.panel.telegram_fan_out(Timestamp::now(), n.locale, &n.cabinet).await.map(drop) }
+		async move { n.fan_out(Timestamp::now()).await.map(drop) }
 	}));
 	let n = notifier.clone();
 	work.spawn(crate::every(DELIVER_EVERY, shutdown.clone(), "telegram delivery", move || {
@@ -412,7 +400,7 @@ pub async fn run(notifier: Notifier<BotApi, Concierge>, name: BotName, shutdown:
 	}
 }
 
-async fn poll(n: Arc<Notifier<BotApi, Concierge>>, name: BotName, mut shutdown: watch::Receiver<bool>) {
+async fn poll(n: Arc<Notifier<BotApi, Concierge, Services>>, name: BotName, mut shutdown: watch::Receiver<bool>) {
 	let holder = Uuid::now_v7();
 	let stopped = |s: &watch::Receiver<bool>| *s.borrow();
 	while !name.known() && !stopped(&shutdown) {
@@ -483,20 +471,79 @@ async fn poll(n: Arc<Notifier<BotApi, Concierge>>, name: BotName, mut shutdown: 
 }
 
 impl Directory for Concierge {
-	async fn me(&self, access: &str) -> Result<panel::telegram::Identity, panel::telegram::DirectoryError> {
+	async fn me(&self, access: &str) -> Result<Identity, panel::telegram::DirectoryError> {
 		use panel::telegram::DirectoryError;
 
 		use crate::concierge::ConciergeError;
 		match Concierge::me(self, access).await {
-			Ok(me) => Ok(panel::telegram::Identity {
+			Ok(me) => Ok(Identity {
 				user_id: me.user_id,
+				email: me.email,
+				email_verified: me.email_verified,
+				preferred_name: me.preferred_name,
 				permissions: me.permissions,
-				display_name: if me.preferred_name.trim().is_empty() { me.email } else { me.preferred_name },
 			}),
 			Err(ConciergeError::Refused(_)) => Err(DirectoryError::Refused),
 			Err(ConciergeError::Unavailable(why)) => Err(DirectoryError::Unavailable(why)),
 			Err(ConciergeError::Failed(why)) => Err(DirectoryError::Failed(why)),
 		}
+	}
+}
+
+/// How long a call of the hub to sites may take.
+const SITES_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The most of sites' answer the hub reads: a page of notes, with room.
+const SITES_ANSWER: usize = 16 * 1024 * 1024;
+
+impl Services {
+	/// `GET path?query` of sites as the conductor, its JSON answer.
+	async fn conductor_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> eyre::Result<T> {
+		let call = self.send(Service::Sites, Method::GET, path, HeaderMap::new(), Some(Principal::Conductor), Body::empty());
+		let res = tokio::time::timeout(SITES_TIMEOUT, call)
+			.await
+			.map_err(|_| eyre::eyre!("sites did not answer {path} in time"))??;
+		eyre::ensure!(res.status() == StatusCode::OK, "sites answered {path} with {}", res.status());
+		let body = to_bytes(res.into_body(), SITES_ANSWER).await.map_err(|e| eyre::eyre!("reading sites' answer to {path}: {e}"))?;
+		serde_json::from_slice(&body).map_err(|e| eyre::eyre!("sites' answer to {path}: {e}"))
+	}
+}
+
+impl Sites for Services {
+	async fn notes(&self, after: i64, limit: usize) -> eyre::Result<NotePage> {
+		self.conductor_get(&format!("/api/conductor/notifications?after={after}&limit={limit}")).await
+	}
+
+	async fn received(&self) -> eyre::Result<std::collections::BTreeMap<String, Timestamp>> {
+		self.conductor_get("/api/conductor/sources/received").await
+	}
+
+	async fn press(&self, who: &Identity, call: &Call, idempotency_key: &str) -> eyre::Result<u16> {
+		let method: Method = call.method.parse().map_err(|_| eyre::eyre!("a button's method {}", call.method))?;
+		let mut headers = HeaderMap::new();
+		headers.insert(
+			HeaderName::from_static("idempotency-key"),
+			HeaderValue::from_str(idempotency_key).expect("tg/<outbox>/<button id> is visible ASCII"),
+		);
+		let body = match &call.body {
+			Value::Null => Body::empty(),
+			body => {
+				headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+				Body::from(serde_json::to_vec(body).expect("a JSON value serializes"))
+			}
+		};
+		let user = User {
+			sub: who.user_id.to_string(),
+			email: who.email.clone(),
+			email_verified: who.email_verified,
+			name: who.preferred_name.clone(),
+			permissions: who.permissions.iter().filter(|p| p.starts_with(Service::Sites.prefix())).collect(),
+		};
+		let sent = self.send(Service::Sites, method, &call.path, headers, Some(Principal::User(user)), body);
+		let res = tokio::time::timeout(SITES_TIMEOUT, sent)
+			.await
+			.map_err(|_| eyre::eyre!("sites did not answer a press in time"))??;
+		Ok(res.status().as_u16())
 	}
 }
 
@@ -555,7 +602,7 @@ mod tests {
 				data: "t.1.aa".into(),
 				message: Rendered {
 					text: "New lead".into(),
-					code: vec![Entity { offset: 2, length: 3 }]
+					entities: vec![json!({"type": "code", "offset": 2, "length": 3})]
 				}
 			})
 		);

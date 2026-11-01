@@ -1,6 +1,6 @@
 [package]
 name = "panel_server"
-description = "The Service-Arb panel service: the `panel` binary, its CLI and the HTTP ingest"
+description = "The Service-Arb conductor: the `panel` binary, its CLI, the sign-in, the forward and the hubs"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -16,6 +16,10 @@ path = "src/lib.rs"
 name = "panel"
 path = "src/main.rs"
 
+[features]
+# What the HTTP tests share: a stand-in service, the conductor signed in, a browser.
+testing = ["panel/testing", "tower/util"]
+
 [dependencies]
 axum = { workspace = true, features = ["ws"] }
 base64.workspace = true
@@ -25,7 +29,7 @@ ev_lib = { workspace = true, features = ["settings", "error_monitoring"] }
 eyre.workspace = true
 http-body-util.workspace = true
 hyper-util.workspace = true
-jiff.workspace = true
+jiff = { workspace = true, features = ["serde"] }
 panel.workspace = true
 panel_contracts.workspace = true
 panel_core.workspace = true
@@ -49,8 +53,10 @@ zeroize.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
+hex.workspace = true
+hmac.workspace = true
 panel = { workspace = true, features = ["testing"] }
-panel_contracts = { workspace = true, features = ["testing"] }
+panel_server = { workspace = true, features = ["testing"] }
 sqlx.workspace = true
 tower = { workspace = true, features = ["util"] }
 
