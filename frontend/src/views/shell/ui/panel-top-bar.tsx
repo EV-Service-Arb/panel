@@ -43,7 +43,7 @@ import { LOCALES, type Locale, chooseLocale, useLocale, useT } from "@/shared/i1
 type Open = "sites" | "sheet" | null;
 
 /**
- * `[Service-Arb⌄] [Sites⌄] [Review Archive] … [Sources] [Usage tokens] [wallet] [bell] [language] [chip]`; on a phone the screens go into a
+ * `[Service-Arb⌄] [Sites⌄] [Review Archive] … [tokens] [wallet] [bell] [language] [chip] [≡ Sources, Usage]`; on a phone the screens go into a
  * Sheet. The Sites items are `mfe-sites-nav`'s: the conductor knows none of the sites' routes.
  * The end slot is right-anchored and the chip is last, so the tokens appearing or changing width
  * grow leftwards and never move the chip.
@@ -131,10 +131,11 @@ export function PanelTopBar() {
       }
       end={
         <div className="flex items-center gap-1">
-          <OwnScreens className="hidden md:flex" />
+          <OwnScreens bar className="hidden md:flex" />
           <NotificationsMenu />
           <LanguageMenu />
           <AccountChip me={me} onSignOut={signOut} className="ml-1" />
+          <ScreensMenu />
         </div>
       }
     />
@@ -216,8 +217,38 @@ function LanguageMenu() {
   );
 }
 
+/** The screens the bar keeps behind its menu; a phone's Sheet lists them with the rest. */
+const inMenu = (id: string): id is "sources" | "usage" => id === "sources" || id === "usage";
+
+function ScreensMenu() {
+  const t = useT();
+  const me = useMe();
+  const pathname = usePathname();
+  const label = { sources: t("nav.sources"), usage: t("usage.title") };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="ghost" size="sm" icon className="hidden md:inline-flex" aria-label={t("nav.menu")}>
+          <Menu aria-hidden />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        {ownScreens(me, WALLET_PAGE_ENABLED)
+          .filter(inMenu)
+          .map((id) => (
+            <DropdownMenuItem key={id} asChild>
+              <Link href={ROUTES[id]} aria-current={pathname.startsWith(ROUTES[id]) ? "page" : undefined}>
+                {label[id]}
+              </Link>
+            </DropdownMenuItem>
+          ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /** The caller's own screens; Tokens is labelled with the count, never called a balance: evinvest.ltd's wallet is another ledger. */
-function OwnScreens({ className, onNavigate }: { className?: string; onNavigate?: () => void }) {
+function OwnScreens({ bar = false, className, onNavigate }: { bar?: boolean; className?: string; onNavigate?: () => void }) {
   const t = useT();
   const me = useMe();
   const tokens = useTokens();
@@ -230,7 +261,9 @@ function OwnScreens({ className, onNavigate }: { className?: string; onNavigate?
   };
   return (
     <div className={cn("flex items-center gap-1", className)}>
-      {ownScreens(me, WALLET_PAGE_ENABLED).map((id) => {
+      {ownScreens(me, WALLET_PAGE_ENABLED)
+        .filter((id) => !(bar && inMenu(id)))
+        .map((id) => {
         const here = pathname.startsWith(ROUTES[id]);
         return (
           <Link key={id} href={ROUTES[id]} onClick={() => onNavigate?.()} aria-current={here ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "justify-start gap-2", id === "wallet" && "md:size-8 md:justify-center md:px-0", here && "bg-hover/50")}>
