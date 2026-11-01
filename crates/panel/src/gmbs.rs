@@ -46,12 +46,13 @@ fn places_error(e: sa_places::Error) -> eyre::Result<Refused> {
 	}
 }
 
-/// A gmail as a person types it: trimmed, lowercased, no space, one `@` between two parts.
+/// A gmail as a person types it: trimmed, lowercased, no space. An address or an alias for one,
+/// as review_archive took them.
 fn address(raw: &str) -> Result<String, Refused> {
 	let gmail = raw.trim().to_lowercase();
-	match gmail.split_once('@') {
-		Some((user, domain)) if !user.is_empty() && !domain.is_empty() && !domain.contains('@') && !gmail.contains(char::is_whitespace) => Ok(gmail),
-		_ => Err(Refused::Invalid(format!("{raw:?} is not an email address"))),
+	match gmail.is_empty() || gmail.contains(char::is_whitespace) {
+		true => Err(Refused::Invalid(format!("{raw:?} is not an address or an alias for one"))),
+		false => Ok(gmail),
 	}
 }
 

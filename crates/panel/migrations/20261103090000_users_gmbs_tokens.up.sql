@@ -19,7 +19,7 @@ CREATE TABLE gmails (
 	-- The id every service stores; never reused.
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	owner BLOB NOT NULL REFERENCES users (user_id),
-	gmail TEXT NOT NULL CHECK (gmail = lower(trim(gmail)) AND gmail NOT GLOB '*[ 	]*' AND length(gmail) - length(replace(gmail, '@', '')) = 1),
+	gmail TEXT NOT NULL CHECK (gmail = lower(trim(gmail)) AND gmail != '' AND gmail NOT GLOB '*[ 	]*'),
 	created_at INTEGER NOT NULL,
 	removed_at INTEGER
 ) STRICT;

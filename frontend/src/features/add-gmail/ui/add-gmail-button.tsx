@@ -9,8 +9,8 @@ import { useT } from "@/shared/i18n";
 import { notifyFailure } from "@/shared/ui/notify";
 import { useButtonSize, useControlSize } from "@/shared/ui/touch";
 
-/** The backend lowercases and trims; one `@` and no spaces is all the form asks before sending. */
-const looksLikeEmail = (v: string) => /^[^\s@]+@[^\s@]+$/.test(v.trim());
+/** The backend lowercases and trims; an address or an alias for one, without spaces. */
+const looksLikeEmail = (v: string) => /^\S+$/.test(v.trim());
 
 export function AddGmailButton({ onAdded }: { onAdded: () => void }) {
   const t = useT();
@@ -56,7 +56,7 @@ export function AddGmailButton({ onAdded }: { onAdded: () => void }) {
             </DialogHeader>
             <Field className="flex flex-col gap-1">
               <FieldLabel htmlFor={`${id}-gmail`}>{t("gmbs.gmail.label")}</FieldLabel>
-              <Input id={`${id}-gmail`} type="email" size={size} autoCapitalize="none" value={gmail} onChange={(e) => setGmail(e.target.value)} />
+              <Input id={`${id}-gmail`} size={size} autoCapitalize="none" value={gmail} onChange={(e) => setGmail(e.target.value)} />
             </Field>
             <DialogFooter>
               <Button type="submit" size={button()} disabled={busy || !looksLikeEmail(gmail)}>
