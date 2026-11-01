@@ -92,7 +92,7 @@ impl ApiRoute {
 	}
 }
 
-/// Every `/api/v1` route on [`ApiState`]; the profile's Telegram routes, open to every
+/// Every `/api/v1` route on `ApiState`; the profile's Telegram routes, open to every
 /// signed-in user, are [`crate::telegram`]'s.
 pub fn api_routes() -> Vec<ApiRoute> {
 	[api::routes(), access::routes(), gmbs::routes(), tokens::routes()].into_iter().flatten().collect()

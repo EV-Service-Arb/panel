@@ -1,5 +1,5 @@
 //! The conductor's own `/api/v1`: `/me`, the source keys and the connected sites
-//! ([`crate::connected`]). JSON in and out; every request has
+//! (`connected`). JSON in and out; every request has
 //! passed the sign-in gate (`signin::gate`), so a [`Caller`] is in its extensions.
 
 use std::collections::BTreeSet;
