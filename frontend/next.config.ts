@@ -7,8 +7,8 @@ import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
  * Rust binary serves `out/` next to `/api` and `/auth` on one origin (see
  * README.md, "How it is served").
  *
- * `next dev` instead proxies `/api` and `/auth` to a backend — the real one, or
- * `npm run dev:stub` — so the cookies and the CSRF header behave as in production.
+ * `next dev` instead proxies `/api`, `/auth` and the sites' bundle to a backend — the real one,
+ * or `npm run dev:stub` — so the cookies and the CSRF header behave as in production.
  */
 export default function config(phase: string): NextConfig {
   if (phase === PHASE_DEVELOPMENT_SERVER) {
@@ -22,6 +22,7 @@ export default function config(phase: string): NextConfig {
         return [
           { source: "/api/:path*", destination: `${backend}/api/:path*` },
           { source: "/auth/:path*", destination: `${backend}/auth/:path*` },
+          { source: "/sites/mfe/:path*", destination: `${backend}/sites/mfe/:path*` },
         ];
       },
     };

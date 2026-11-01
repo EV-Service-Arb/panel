@@ -4,7 +4,7 @@
  * The contract is the backend's: `hello` on connect, `changed` after each write,
  * close 4401 without a session.
  *
- *   STUB_LIVE=off    no socket at all (the upgrade answers 404): the panel falls back to polling
+ *   STUB_LIVE=off    no socket at all (the upgrade answers 404): the status stays `reconnecting`, then `offline`
  *   STUB_LIVE=4401   close every socket at once as "session gone" (4403: "access lost")
  */
 import { createHash } from "node:crypto";
@@ -15,7 +15,7 @@ const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const MODE = process.env.STUB_LIVE ?? "on";
 const open = new Set<Duplex>();
 
-export const liveEnabled = MODE !== "off";
+const liveEnabled = MODE !== "off";
 
 /** One unfragmented, unmasked frame: `0x1` text, `0x8` close, `0xA` pong. */
 function frame(opcode: number, payload: Buffer): Buffer {
