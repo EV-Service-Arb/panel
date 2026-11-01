@@ -19,7 +19,6 @@ eyre.workspace = true
 futures.workspace = true
 getrandom.workspace = true
 hex.workspace = true
-hmac.workspace = true
 jiff = { workspace = true, features = ["serde"] }
 panel_core.workspace = true
 sa_auth.workspace = true
