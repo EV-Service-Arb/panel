@@ -8,6 +8,7 @@
 //! GET    /api/v1/gmbs/resolve?place=  Candidates
 //! POST   /api/v1/gmails/{id}/gmbs {place_id}  → 201 Gmb; 409 that gmail has it
 //! DELETE /api/v1/gmbs/{id}            → 204
+//! PUT    /api/v1/gmbs/enabled {gmbs, enabled}  → 204; 404 one is not theirs, and none switched
 //! ```
 //!
 //! Before the import from review_archive, the writes answer 503.
@@ -45,6 +46,7 @@ pub(crate) fn routes() -> Vec<ApiRoute> {
 		ApiRoute::new(M::GET, "/gmbs/resolve", None, Cached, resolve),
 		ApiRoute::new(M::POST, "/gmails/{id}/gmbs", None, Cached, add_gmb),
 		ApiRoute::new(M::DELETE, "/gmbs/{id}", None, Cached, remove_gmb),
+		ApiRoute::new(M::PUT, "/gmbs/enabled", None, Cached, switch),
 	]
 }
 
@@ -62,6 +64,8 @@ pub struct GmbDto {
 	pub gbp_location: Option<String>,
 	/// RFC 3339.
 	pub created_at: String,
+	/// The caller's switch; review_archive inherits it.
+	pub enabled: bool,
 }
 
 /// A gmail of the caller's, with the GMBs it manages.
@@ -110,6 +114,7 @@ impl From<Gmb> for GmbDto {
 			gbp_account: b.gbp_account,
 			gbp_location: b.gbp_location,
 			created_at: b.created_at.to_string(),
+			enabled: b.enabled,
 		}
 	}
 }
@@ -198,5 +203,19 @@ async fn remove_gmb(State(panel): State<Panel>, Extension(caller): Extension<Cal
 	let gmb = id(&raw)?;
 	panel.remove_gmb(caller.user_id, gmb, Timestamp::now()).await??;
 	tracing::info!(user_id = %caller.user_id, gmb_id = gmb, "GMB removed");
+	Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Switch {
+	gmbs: Vec<i64>,
+	enabled: bool,
+}
+
+async fn switch(State(panel): State<Panel>, Extension(caller): Extension<Caller>, b: Result<Json<Switch>, JsonRejection>) -> ApiResult<StatusCode> {
+	let Switch { gmbs, enabled } = body(b)?;
+	panel.switch_gmbs(caller.user_id, &gmbs, enabled).await??;
+	tracing::info!(user_id = %caller.user_id, ?gmbs, enabled, "GMBs switched");
 	Ok(StatusCode::NO_CONTENT)
 }

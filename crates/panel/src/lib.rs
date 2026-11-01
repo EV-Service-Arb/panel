@@ -25,7 +25,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use eyre::WrapErr;
 use jiff::Timestamp;
 use panel_core::{
-	ids::BrandId,
+	ids::{BrandId, SiteOrigin},
 	signature::{self, SignatureError},
 	tokens::Renewal,
 };
@@ -144,11 +144,12 @@ impl Panel {
 	}
 
 	/// Registers a source that may write events of `kind` for `brands`, with a fresh
-	/// secret. `None` when the key id is taken.
-	pub async fn add_source(&self, key_id: &str, kind: SourceKind, brands: BTreeSet<BrandId>) -> eyre::Result<Option<NewSource>> {
+	/// secret; a site's with its `origin`. `None` when the key id is taken.
+	pub async fn add_source(&self, key_id: &str, kind: SourceKind, brands: BTreeSet<BrandId>, origin: Option<SiteOrigin>) -> eyre::Result<Option<NewSource>> {
 		eyre::ensure!(panel_core::ids::is_slug(key_id), "a key id is a lowercase slug of 1–64 of [a-z0-9_-]");
 		eyre::ensure!(!brands.is_empty(), "a source writes for at least one brand");
 		eyre::ensure!(kind.keyed(), "a key of kind {kind} is not issued: it is written without one");
+		eyre::ensure!(origin.is_some() == (kind == SourceKind::Site), "a site key has an origin, and no other kind has one");
 		let secret = Zeroizing::new(DataKey::generate_hex()?);
 		let sealed = self.key.seal(&source_secret_aad(key_id), secret.as_bytes())?;
 		let grant = Grant {
@@ -156,11 +157,18 @@ impl Panel {
 			kind,
 			brands,
 		};
-		let added = self.store.insert_source(&grant, &sealed, &self.key.fingerprint()).await?;
+		let added = self.store.insert_source(&grant, origin.as_ref(), &sealed, &self.key.fingerprint()).await?;
 		if added {
 			self.live.changed(sources_changed());
 		}
 		Ok(added.then(|| NewSource { key_id: key_id.to_owned(), secret }))
+	}
+
+	/// Gives a site key issued before origins its origin, once; the same origin again is no change.
+	pub async fn set_site_origin(&self, key_id: &str, origin: &SiteOrigin) -> eyre::Result<()> {
+		eyre::ensure!(self.store.set_site_origin(key_id, origin).await?, "no active site key {key_id} without another origin");
+		self.live.changed(sources_changed());
+		Ok(())
 	}
 
 	/// Revokes a source's key; `false` when there was no such key, or it was revoked already.

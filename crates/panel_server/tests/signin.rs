@@ -454,13 +454,25 @@ async fn every_account_signs_in_and_its_permissions_open_the_sections() {
 		admin.get(&app, "/api/v1/me").await.body["permissions"],
 		json!(SA_ADMIN.members.iter().copied().collect::<PermissionSet>())
 	);
-	let added = admin.post(&app, "/api/v1/sources", json!({"key_id": "vifnet-site", "kind": "site", "brands": ["vifnet"]})).await;
+	let added = admin
+		.post(
+			&app,
+			"/api/v1/sources",
+			json!({"key_id": "vifnet-site", "kind": "site", "brands": ["vifnet"], "origin": "https://vifnet.site"}),
+		)
+		.await;
 	assert_eq!(added.status, StatusCode::CREATED, "{}", added.body);
 	assert_eq!(added.body["secret"].as_str().unwrap().len(), 64);
 	let listed = admin.get(&app, "/api/v1/sources").await;
 	assert_eq!(listed.body["sources"][0]["key_id"], "vifnet-site");
 	assert!(listed.body["sources"][0].get("secret").is_none(), "a secret is shown once");
-	let again = admin.post(&app, "/api/v1/sources", json!({"key_id": "vifnet-site", "kind": "site", "brands": ["vifnet"]})).await;
+	let again = admin
+		.post(
+			&app,
+			"/api/v1/sources",
+			json!({"key_id": "vifnet-site", "kind": "site", "brands": ["vifnet"], "origin": "https://vifnet.site"}),
+		)
+		.await;
 	assert_eq!(again.status, StatusCode::CONFLICT);
 	assert_eq!(admin.send(&app, Method::DELETE, "/api/v1/sources/vifnet-site", None, true).await.status, StatusCode::NO_CONTENT);
 
@@ -615,7 +627,27 @@ async fn key_changes_ask_concierge_afresh() {
 
 	let panel_key = b.post(&app, "/api/v1/sources", json!({"key_id": "hand", "kind": "panel", "brands": ["aquafix"]})).await;
 	assert_eq!(panel_key.status, StatusCode::BAD_REQUEST, "{}", panel_key.body);
-	let site = b.post(&app, "/api/v1/sources", json!({"key_id": "aquafix-site", "kind": "site", "brands": ["aquafix"]})).await;
+	for (body, why) in [
+		(json!({"key_id": "aquafix-site", "kind": "site", "brands": ["aquafix"]}), "a site key without its origin"),
+		(
+			json!({"key_id": "aquafix-site", "kind": "site", "brands": ["aquafix"], "origin": "https://aquafix.top/"}),
+			"an origin has no path",
+		),
+		(
+			json!({"key_id": "aquafix-bot", "kind": "bot", "brands": ["aquafix"], "origin": "https://aquafix.top"}),
+			"only a site has an origin",
+		),
+	] {
+		let refused = b.post(&app, "/api/v1/sources", body).await;
+		assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{why}: {}", refused.body);
+	}
+	let site = b
+		.post(
+			&app,
+			"/api/v1/sources",
+			json!({"key_id": "aquafix-site", "kind": "site", "brands": ["aquafix"], "origin": "https://aquafix.top"}),
+		)
+		.await;
 	assert_eq!(site.status, StatusCode::CREATED, "{}", site.body);
 
 	// The permission is taken away at concierge. Reads ride the cache for up to a minute; minting
@@ -628,7 +660,13 @@ async fn key_changes_ask_concierge_afresh() {
 		}
 	});
 	assert_eq!(b.get(&app, "/api/v1/sources").await.status, StatusCode::OK, "cached");
-	let minted = b.post(&app, "/api/v1/sources", json!({"key_id": "vifnet-site", "kind": "site", "brands": ["vifnet"]})).await;
+	let minted = b
+		.post(
+			&app,
+			"/api/v1/sources",
+			json!({"key_id": "vifnet-site", "kind": "site", "brands": ["vifnet"], "origin": "https://vifnet.site"}),
+		)
+		.await;
 	assert_eq!(minted.status, StatusCode::FORBIDDEN, "{}", minted.body);
 	let revoked = b.send(&app, Method::DELETE, "/api/v1/sources/aquafix-site", None, true).await;
 	assert_eq!(revoked.status, StatusCode::FORBIDDEN);
@@ -785,6 +823,7 @@ async fn no_permission_opens_no_section() {
 			"/gmbs/resolve",
 			"/gmails/{id}/gmbs",
 			"/gmbs/{id}",
+			"/gmbs/enabled",
 			"/tokens",
 			"/tokens/ledger",
 			"/tokens/usage",

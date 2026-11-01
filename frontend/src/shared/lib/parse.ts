@@ -48,6 +48,11 @@ export function oneOf<const L extends readonly string[]>(values: L): Parser<L[nu
 const record: Parser<Record<string, unknown>> = (v, path) =>
   typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : fail(path, "an object", v);
 
+/** An object used as a map: every value checked by `p`. */
+export function recordOf<T>(p: Parser<T>): Parser<Record<string, T>> {
+  return (v, path) => Object.fromEntries(Object.entries(record(v, path)).map(([k, item]) => [k, p(item, `${path}.${k}`)]));
+}
+
 type Shape = Record<string, Parser<unknown>>;
 export type Parsed<S extends Shape> = { [K in keyof S]: ReturnType<S[K]> };
 

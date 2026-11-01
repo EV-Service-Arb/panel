@@ -26,6 +26,11 @@ export async function removeGmb(id: number): Promise<void> {
   await http.send("DELETE", `/api/v1/gmbs/${id}`, undefined, ignoreBody);
 }
 
+/** All of `ids` or none: one not the caller's refuses the lot. */
+export async function switchGmbs(ids: number[], enabled: boolean): Promise<void> {
+  await http.send("PUT", "/api/v1/gmbs/enabled", { gmbs: ids, enabled }, ignoreBody);
+}
+
 export async function fetchSitesPlaces(): Promise<SitesPlace[]> {
   return (await http.get("/api/sites/places", sitesPlacesParser)).places;
 }

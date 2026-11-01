@@ -12,9 +12,11 @@ charged from what review_archive tells it.
 ```text
 browser ─session──▶ conductor ─x-sa-assertion (User)──────────────▶ sites /api/v1, review_archive, playbook
 landings/bots ─HMAC▶ conductor ─x-sa-assertion (Source) + raw body ▶ sites /api/ingest/v1
-conductor ◀── pulls (Conductor) ── sites /api/conductor/{changes, notifications, sources/received}
+conductor ◀── pulls (Conductor) ── sites /api/conductor/{changes, notifications, sources/received,
+                                                          internal-reads}
 conductor ◀── pulls (Conductor) ── review_archive /api/conductor/charges
 conductor ─── pushes (Conductor) ─▶ review_archive /api/conductor/gmbs   GMBs, balances, the cursor
+conductor ── GET <origin>/.well-known/sa-site, public :443 ──────▶ each site key's landing
 landings ──────────────────────── direct, in-cluster ────────────▶ sites /api/internal
 ```
 
@@ -45,6 +47,7 @@ crates/panel_server/     the `panel` binary: CLI and HTTP, thin over `Panel`
   src/cookies.rs         __Host- cookies, the double-submit CSRF check
   src/http.rs            the router; the /api/v1 route table and the section each sits under
   src/api.rs             GET /me, /sources
+  src/connected.rs       GET /sources/sites: each site key's landing report beside sites' view
   src/access.rs          /api/v1/access/requests
   src/ingest.rs          the signed requests: authenticated here, forwarded to sites
   src/forward.rs         the services behind the origin; `Services`, the one client and signing
@@ -163,8 +166,12 @@ reserved paths (`web.rs`) are derived from it.
   under `/api/review_archive/grafana` takes the cached `GetMe` and no CSRF.
 - **A path stays under its upstream prefix:** a `.` or `..` segment, `%2e`, `%2f`, `%5c` and `\`
   decoded, is a 400.
+- **The outline.** Every signed-in page sits beside it: the open service's own views (the sites:
+  `<mfe-sites-nav>`, mounted on every page and shown on theirs; the review archive: its places,
+  Telegram and settings), then the caller's gmails, each opening to its GMBs, with their switches.
+  `/` is the GMBs' own page.
 - **The pages.** `/sites` mounts `<mfe-sites-panel api="/api/sites" base="/sites" csrf-cookie>`
-  from `/sites/mfe/`, and the top bar keeps `<mfe-sites-nav>` mounted; `/review_archive` mounts
+  from `/sites/mfe/`; `/review_archive` mounts
   `<mfe-review-archive-dashboard grafana="/grafana/">` from `/review_archive/mfe/`. Any `/sites/<view>` or
   `/review_archive/<view>` without a dot in its last segment is that page, for the element to
   route, and a file below a view (`/sites/<view>/index.txt`, `…/__next.*.txt`) is the page's
@@ -226,9 +233,11 @@ What a key may write — its kind's types, its brands, a bot's lookup — is sit
 event. An unknown key and a bad signature answer the same 401, so key ids cannot be probed for;
 only a timestamp outside the window is told apart.
 
-**Keys** (`/api/v1/sources`, `panel source add|list|revoke`): one kind and a set of brands each,
-the secret shown once. Kinds `panel` and `booking` are written by sites itself: no key is
-issued for them.
+**Keys** (`/api/v1/sources`, `panel source add|list|set-origin|revoke`): one kind and a set of
+brands each, the secret shown once. Kinds `panel` and `booking` are written by sites itself: no
+key is issued for them. A `site` key carries its landing's origin (`https://<domain>[:port]`,
+nothing after it; plain http on `localhost` / `127.0.0.1` for a landing on this machine): given
+when the key is issued, or once with `set-origin` for a key issued before origins.
 
 ## The conductor's API, `/api/v1`
 
@@ -237,9 +246,12 @@ JSON; timestamps RFC 3339; errors `{"error": "…"}` with 400 / 403 / 404 / 409 
 ```text
 GET    /me                                  {user_id, email, preferred_name, permissions,
                                             dev_sign_in}: every sa permission, every service's
-GET    /sources              Admin          {sources: [{key_id, kind, brands, created_at, revoked_at}]}
-POST   /sources              Admin, fresh   {key_id, kind, brands} → 201 {key_id, secret} (shown
-                                            once), 409 if taken; kind panel or booking → 400
+GET    /sources              Admin          {sources: [{key_id, kind, brands, created_at, revoked_at,
+                                            origin}]}
+POST   /sources              Admin, fresh   {key_id, kind, brands, origin} → 201 {key_id, secret}
+                                            (shown once), 409 if taken; kind panel or booking, a
+                                            site without an origin or another kind with one → 400
+GET    /sources/sites        Admin          the Connected sites table, below
 DELETE /sources/{key_id}     Admin, fresh   204, 404
 POST   /access/requests                     {need} → 201 {need, requested_at}, made now; 200 the one
                                             standing (made within 24 h: nobody told again);
@@ -256,13 +268,15 @@ DELETE /telegram/link                       204, 404
 PUT    /telegram/rules                      {rules: {new_lead: false, …}} → 200 as GET; 400 for a
                                             rule they do not open
 GET    /gmails                              {gmails: [{id, gmail, created_at, gmbs: [{id, place_id,
-                                            name, address, gbp_account, gbp_location, created_at}]}]}
-                                            the caller's, removed ones left out
+                                            name, address, gbp_account, gbp_location, created_at,
+                                            enabled}]}]} the caller's, removed ones left out
 POST   /gmails                              {gmail} → 201 the gmail; 409 held already
 DELETE /gmails/{id}                         204; its GMBs count as removed
 GET    /gmbs/resolve?place=                 {candidates: [{place_id, name, address}]} (sa_places)
 POST   /gmails/{id}/gmbs                    {place_id} → 201 the GMB; 409 under that gmail already
 DELETE /gmbs/{id}                           204
+PUT    /gmbs/enabled                        {gmbs: [id], enabled} → 204: every one switched, or none
+                                            (404 one not the caller's)
 GET    /tokens                              {balance, daily, cap, kickbacks}: renewed, the
                                             kick-backs not claimed
 GET    /tokens/ledger?before=&limit=        {entries, next}: newest first, limit 1–200
@@ -275,6 +289,20 @@ POST   /admin/tokens/{user}  Tokens, fresh  {set: n, note?} | {add: n, note?} | 
 
 An id in a path that is not the caller's is a 404. Before the import (below) the gmail and GMB
 writes and every tokens route answer 503.
+**Connected sites** (`GET /sources/sites`): for every active site key at once, its landing's own
+report and sites' view of it, all asked together (joined, nothing spawned):
+
+```text
+{sites: [{key_id, brands, origin, report}], received, internal_reads}
+  report          {state: "reported", report: <the landing's /.well-known/sa-site body>}
+                  | {state: "failed", detail} | {state: "no_origin"}
+                  GET <origin>/.well-known/sa-site: no redirect followed, 5 s, ≤ 64 KiB, 200 and
+                  the report's shape, its brand one of the key's — else failed
+  received        sites GET /api/conductor/sources/received  {state: "read", value: {key_id: at}}
+  internal_reads  sites GET /api/conductor/internal-reads    {state: "read", value: {since, reads:
+                  {brand: {locations, pricing, experiments}}}}; either {state: "failed", detail}
+                  (5 s; or no forward)
+```
 
 The page `/access?need=&continue=` (outside the shell) is where a service sends a signed-in user
 lacking `need`: it asks, then reads `/me` every 30 s and goes on to `continue` (a path, the
@@ -322,7 +350,8 @@ closes              4401 the session ended   1001 the server is stopping
 ## Tokens and GMBs
 
 A person's gmails and the GMBs (Google places) each manages are the conductor's; the services
-store their ids. Tokens are a ledger: a balance is its rows' sum, renewed a day's worth when
+store their ids. A GMB is on or off by its owner's switch (`gmbs_off`), which the services inherit
+for their own work: off, review_archive walks none of its tracks. Tokens are a ledger: a balance is its rows' sum, renewed a day's worth when
 read (`TOKENS_DAILY` up to `TOKENS_CAP`; a first balance `TOKENS_START_CAP_MULTIPLE` caps). What
 spends them — today review_archive's walks — charges after the fact.
 
@@ -334,7 +363,7 @@ follow (10 s)   GET review_archive /api/conductor/charges?after=<cursor>&limit=5
                 as kick-backs, the cursor moved; an unknown sub fails the page, the cursor stays
 push (a change, a page, 60 s)
                 PUT review_archive /api/conductor/gmbs (Conductor): every GMB ever (removed ones
-                marked), every user's balance renewed, and the cursor they were read at, from
+                marked, each on or off), every user's balance renewed, and the cursor they were read at, from
                 one transaction
 ```
 
@@ -350,8 +379,8 @@ push (a change, a page, 60 s)
   Until then tokens and GMBs are closed and `serve` neither follows nor pushes: a balance read
   writes a renewal, which would make the import refuse. A fresh install imports an empty
   document.
-- **A place's site** is sites': its `places.gmb_id`. The `/gmbs` page reads each service's tags
-  from that service, through the forward; a service down or refusing loses only its tags.
+- **A place's site** is sites': its `places.gmb_id`, linked from the outline through the forward;
+  sites down or refusing leaves the GMBs without the link.
 
 ## Telegram
 
@@ -427,8 +456,8 @@ delivery (0.5 s)            lead messages noted > 1 h ago dead ("stale"); > 20 w
 - **Grafana holds no identity.** It signs no one in: its fetches reach a service as a viewer only
   through a token the conductor wrote into that viewer's `/grafana/api/ds/query`, on the loopback
   listener, on GETs, for that query's life. The public listener never takes a token.
-- **A source is only ever revoked.** `sources` refuses DELETE and any UPDATE but of `revoked_at`;
-  a key id is never reused.
+- **A source is only ever revoked.** `sources` refuses DELETE and any UPDATE but of `revoked_at`
+  and a site's `origin` set once from NULL (only a `site` has one); a key id is never reused.
 - **Secrets never sit in the clear.** Sources' HMAC secrets, sessions' tokens and queued Telegram
   texts are sealed (XChaCha20-Poly1305, what they belong to as associated data) under
   `PANEL_DATA_KEY`, whose fingerprint is stored beside each.
@@ -473,6 +502,13 @@ delivery (0.5 s)            lead messages noted > 1 h ago dead ("stale"); > 20 w
   `PANEL_DB_PATH`, the volume (`/data`) and the SQLite file on it to replicate, what the ingress
   must not publish or must rate-limit, and the egress. `checks.contract-env` fails the flake
   when its required variables and the binary's `--print-required-vars` disagree.
+- **What it provides and consumes, by contract name.** `provides.ingest` is
+  `/api/ingest/v1/events`; `consumes` names the peers behind `PANEL_SITES_URL` (`sites_panel`),
+  `PANEL_REVIEW_ARCHIVE_URL` (`review_archive`) and `PANEL_PLAYBOOK_URL` (`playbook_web`), whose
+  URLs and egress devops derives. `checks.provided-paths` fails the flake when `provides` and the
+  binary's `--print-provided-paths` (the constants its router mounts) disagree.
+- **The landings, outbound on :443.** The Connected sites page asks each site key's origin; the
+  origins are data, so the egress is public :443, not a host list.
 - **Ingest stays inside the cluster.** Its sources reach it by service DNS; the IngressRoute that
   publishes `sa.evinvest.ltd` must not route `/api/ingest`, and the NetworkPolicy lets in only
   the pods that send.

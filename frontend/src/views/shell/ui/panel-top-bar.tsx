@@ -12,7 +12,6 @@ import {
   NavigationMenuItem,
   NavigationMenuLink,
   NavigationMenuList,
-  NavigationMenuTrigger,
   Sheet,
   SheetContent,
   SheetHeader,
@@ -21,32 +20,29 @@ import {
   TopBar,
   cn,
   navigationMenuTriggerStyle,
-  useDismissableLayer,
 } from "@evinvest/uikit";
 import { CONCIERGE_ORIGIN } from "@evinvest/concierge";
 import { Check, ChevronDown, Globe, Menu, Wallet } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { DevSignInBadge, ownScreens, seesSites, useMe } from "@/entities/session";
 import { useTokens } from "@/entities/tokens";
 import { AccountChip } from "@/features/account-chip";
 import { useSignOut } from "@/features/sign-out";
-import { SitesElement } from "@/features/sites-element";
 import { NotificationsMenu } from "@/features/telegram-notifications";
 import { safeLocalPath } from "@/shared/api";
 import { ROUTES } from "@/shared/config/routes";
 import { WALLET_PAGE_ENABLED } from "@/shared/config/wallet-page";
 import { LOCALES, type Locale, chooseLocale, useLocale, useT } from "@/shared/i18n";
 
-type Open = "sites" | "sheet" | null;
+import { Outline } from "./outline";
 
 /**
- * `[Service-Arb⌄] [Sites⌄] [Review Archive] … [tokens] [wallet] [bell] [language] [chip] [≡ Sources, Usage]`; on a phone the screens go into a
- * Sheet. The Sites items are `mfe-sites-nav`'s: the conductor knows none of the sites' routes.
- * The end slot is right-anchored and the chip is last, so the tokens appearing or changing width
- * grow leftwards and never move the chip.
+ * `[Service-Arb⌄] [Sites] [Review Archive] … [tokens] [wallet] [bell] [language] [chip] [≡ Sources, Usage]`; on a phone
+ * the screens go into a Sheet, with the outline. The end slot is right-anchored, so the tokens appearing or changing width
+ * grow leftwards and never move the icons.
  */
 export function PanelTopBar() {
   const t = useT();
@@ -54,10 +50,11 @@ export function PanelTopBar() {
   const signOut = useSignOut();
   const router = useRouter();
   const pathname = usePathname();
-  const archive = pathname.startsWith("/review_archive");
-  const gmbs = pathname.startsWith(ROUTES.gmbs);
-  const sites = seesSites(me);
-  const [open, setOpen] = useState<Open>(null);
+  const apps = [
+    ...(seesSites(me) ? [{ href: ROUTES.sites, label: t("nav.sites"), here: pathname.startsWith("/sites") }] : []),
+    { href: ROUTES.reviewArchive, label: t("nav.reviewArchive"), here: pathname.startsWith("/review_archive") },
+  ];
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     // a sites element's link it does not route itself; the account chip's own bubbles from the chip
@@ -67,7 +64,7 @@ export function PanelTopBar() {
       const path = typeof href === "string" ? safeLocalPath(href) : null;
       if (path === null) throw new Error(`ev:navigate: not a path on this origin: ${String(href)}`);
       e.preventDefault();
-      setOpen(null);
+      setOpen(false);
       router.push(path);
     };
     window.addEventListener("ev:navigate", onNavigate);
@@ -79,7 +76,7 @@ export function PanelTopBar() {
       className="px-4 md:px-8"
       start={
         <>
-          <Sheet open={open === "sheet"} onOpenChange={(o) => setOpen(o ? "sheet" : null)}>
+          <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
               <Button type="button" variant="ghost" size="sm" icon className="md:hidden" aria-label={t("nav.menu")}>
                 <Menu aria-hidden />
@@ -90,41 +87,30 @@ export function PanelTopBar() {
                 <SheetTitle>{t("app.name")}</SheetTitle>
                 <DevSignInBadge />
               </SheetHeader>
-              {sites && (
-                // A click on one of its links has routed (CONTRACT §9): the sheet is done.
-                <section aria-label={t("nav.sites")} onClick={() => setOpen(null)}>
-                  <h2 className="px-2 pt-2 text-xs font-medium uppercase tracking-wide text-ink-soft">{t("nav.sites")}</h2>
-                  <SitesElement tag="mfe-sites-nav" />
-                </section>
-              )}
-              <Link href={ROUTES.gmbs} onClick={() => setOpen(null)} aria-current={gmbs ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "w-full justify-start px-2", gmbs && "bg-hover/50")}>
-                {t("nav.gmbs")}
-              </Link>
-              <Link href={ROUTES.reviewArchive} onClick={() => setOpen(null)} aria-current={archive ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "w-full justify-start px-2", archive && "bg-hover/50")}>
-                {t("nav.reviewArchive")}
-              </Link>
-              <OwnScreens className="flex-col items-stretch border-t border-border pt-2" onNavigate={() => setOpen(null)} />
+              {apps.map((a) => (
+                <Link key={a.href} href={a.href} onClick={() => setOpen(false)} aria-current={a.here ? "page" : undefined} className={cn(navigationMenuTriggerStyle(), "w-full justify-start px-2", a.here && "bg-hover/50")}>
+                  {a.label}
+                </Link>
+              ))}
+              <div className="border-t border-border pt-2">
+                <Outline onNavigate={() => setOpen(false)} />
+              </div>
+              <OwnScreens className="flex-col items-stretch border-t border-border pt-2" onNavigate={() => setOpen(false)} />
             </SheetContent>
           </Sheet>
           <AppSwitcher />
           <DevSignInBadge className="hidden sm:inline-flex" />
           <NavigationMenu viewport={false} className="ml-4 hidden md:flex" aria-label={t("nav.primary")}>
             <NavigationMenuList>
-              {sites && <SitesMenu open={open === "sites"} onOpenChange={(o) => setOpen(o ? "sites" : null)} />}
-              <NavigationMenuItem>
-                <NavigationMenuLink asChild className={cn(navigationMenuTriggerStyle(), gmbs && "bg-hover/50")}>
-                  <Link href={ROUTES.gmbs} aria-current={gmbs ? "page" : undefined}>
-                    {t("nav.gmbs")}
-                  </Link>
-                </NavigationMenuLink>
-              </NavigationMenuItem>
-              <NavigationMenuItem>
-                <NavigationMenuLink asChild className={cn(navigationMenuTriggerStyle(), archive && "bg-hover/50")}>
-                  <Link href={ROUTES.reviewArchive} aria-current={archive ? "page" : undefined}>
-                    {t("nav.reviewArchive")}
-                  </Link>
-                </NavigationMenuLink>
-              </NavigationMenuItem>
+              {apps.map((a) => (
+                <NavigationMenuItem key={a.href}>
+                  <NavigationMenuLink asChild className={cn(navigationMenuTriggerStyle(), a.here && "bg-hover/50")}>
+                    <Link href={a.href} aria-current={a.here ? "page" : undefined}>
+                      {a.label}
+                    </Link>
+                  </NavigationMenuLink>
+                </NavigationMenuItem>
+              ))}
             </NavigationMenuList>
           </NavigationMenu>
         </>
@@ -139,31 +125,6 @@ export function PanelTopBar() {
         </div>
       }
     />
-  );
-}
-
-/**
- * Mounted while closed, only hidden (CONTRACT §9): the element keeps its badges and the tab
- * title's count on every screen, and opens with them already drawn. On a phone the whole menu is
- * hidden by CSS and this stays the always-mounted instance.
- */
-function SitesMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const t = useT();
-  const here = usePathname().startsWith("/sites");
-  const itemRef = useRef<HTMLLIElement>(null);
-  const panelRef = useDismissableLayer({ enabled: open, onDismiss: () => onOpenChange(false), exclude: [itemRef] });
-  return (
-    <NavigationMenuItem ref={itemRef} open={open} onOpenChange={onOpenChange}>
-      <NavigationMenuTrigger className={cn(here && "bg-hover/50")}>{t("nav.sites")}</NavigationMenuTrigger>
-      <div
-        ref={panelRef}
-        hidden={!open}
-        onClick={() => onOpenChange(false)}
-        className="absolute top-full left-0 z-50 mt-1.5 min-w-56 rounded-md border border-border bg-popover p-2 text-ink shadow"
-      >
-        <SitesElement tag="mfe-sites-nav" />
-      </div>
-    </NavigationMenuItem>
   );
 }
 

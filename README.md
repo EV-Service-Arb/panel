@@ -47,8 +47,10 @@ export PANEL_DB_PATH=./panel.db
 panel migrate
 
 # A source: its key signs what it sends for the brands named. The secret is printed once.
-panel source add aquafix-site --kind site --brand aquafix
+# A site's key carries its landing's origin (the Sources page asks it /.well-known/sa-site).
+panel source add aquafix-site --kind site --brand aquafix --origin https://aquafix.top
 panel source add aquafix-tg --kind bot --brand aquafix      # a messenger bot
+panel source set-origin vifnet-site https://vifnet.site     # a site key issued before origins, once
 panel source list
 panel source revoke aquafix-site
 

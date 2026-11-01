@@ -51,8 +51,10 @@ What it does (`scripts/local-stack.sh`, which the flake app runs as is):
    landing's `<site>-leads.db`, review_archive's data dir in `review_archive/`, and the logs in
    `logs/`. It persists between runs; `--reset` wipes it. A fresh `panel.db` imports an empty
    document from review_archive, which opens tokens and GMBs.
-2. Seeds, idempotently: the sources `aquafix-site` (brand `aquafix`) and `vifnet-site`
-   (brand `vifnet`) in the conductor, each secret kept in `.local/secrets/` and reused; the
+2. Seeds, idempotently: the sources `aquafix-site` (brand `aquafix`, origin
+   `http://localhost:59081`) and `vifnet-site` (brand `vifnet`, origin `http://localhost:59082`)
+   in the conductor, each secret kept in `.local/secrets/` and reused, a key from an older run
+   given its origin; the
    places `aquafix/{royat, clermont-ferrand, desgenettes, lyon-est, la-mouche, lyon-nord}` and
    `vifnet/vifnet` in sites_panel, registered with nothing set (`sites_panel place register`).
 3. Starts `sites_panel serve` on `127.0.0.1:59121` (its bundle from `PANEL_MFE_DIR`, the
@@ -67,7 +69,7 @@ What it does (`scripts/local-stack.sh`, which the flake app runs as is):
    | --- | --- |
    | `LEAD_WEBHOOK_URL` | `http://127.0.0.1:59120/api/ingest/v1/events` |
    | `LEAD_WEBHOOK_KEY_ID` / `LEAD_WEBHOOK_SECRET` | the seeded source's |
-   | `LOCATIONS_API_URL` | `http://127.0.0.1:59121/api/internal/brands/<brand>` |
+   | `SITES_PANEL_INTERNAL_URL` | `http://127.0.0.1:59121/api/internal` |
    | `LEADS_DB_PATH` | `.local/<site>-leads.db` |
    | `POSTHOG_KEY` | unset: analytics off |
 
@@ -94,6 +96,7 @@ pulling review_archive's dashboards into it.
 | --- | --- |
 | Conductor | <http://127.0.0.1:59120> — opens signed in |
 | Leads, locations | <http://127.0.0.1:59120/sites/leads>, <http://127.0.0.1:59120/sites/places> |
+| Sources, connected sites | <http://127.0.0.1:59120/sources> (with `--role admin`) |
 | sites_panel | <http://127.0.0.1:59121> — `/api/internal` only without an assertion |
 | review_archive, drawn by Grafana | <http://127.0.0.1:59120/review_archive?grafana=true> |
 | Grafana | <http://127.0.0.1:59120/grafana/> |
@@ -192,6 +195,15 @@ what it checks).
 2. `curl -s http://127.0.0.1:59121/api/internal/brands/aquafix/locations/royat` answers the
    new phone at once: that is what the site reads.
 3. Reload <http://royat.localhost:59081/fr>: the new number shows — see the cache note below.
+
+**Connected sites, landing → conductor**
+
+1. `curl -s http://localhost:59081/.well-known/sa-site` answers aquafix's own report: the state of
+   each place, of pricing and of experiments as it reads them from sites_panel (`live`, `empty`,
+   `withdrawn`; `down` with why, `unset` without `SITES_PANEL_INTERNAL_URL`).
+2. Open <http://127.0.0.1:59120/sources>: the Connected sites table shows both keys with that
+   report, kitstart's version, the last event sites took from each key and the last time each
+   brand's data was read from sites' `/api/internal`.
 
 **The cache.** kitstart fetches a place with `cache: "force-cache"` and a 600 s revalidate
 (`PLACE_REVALIDATE_SECONDS`), and the point pages are ISR with `revalidate = 600`. In

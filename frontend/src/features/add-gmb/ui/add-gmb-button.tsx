@@ -70,9 +70,8 @@ export function AddGmbButton({ gmailId, onAdded }: { gmailId: number; onAdded: (
 
   return (
     <>
-      <Button variant="outline" size={button("sm")} onClick={() => setOpen(true)}>
+      <Button variant="ghost" size={button("sm")} icon aria-label={t("gmbs.gmb.add")} title={t("gmbs.gmb.add")} onClick={() => setOpen(true)}>
         <Plus aria-hidden />
-        {t("gmbs.gmb.add")}
       </Button>
       <Dialog
         open={open}

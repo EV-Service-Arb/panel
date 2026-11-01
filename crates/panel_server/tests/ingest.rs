@@ -43,7 +43,13 @@ async fn sites() -> (String, Log) {
 async fn with_source(db: &TestDb) -> (panel::Panel, String) {
 	let panel = panel(db).await;
 	let brands = [BrandId::parse("aquafix").unwrap(), BrandId::parse("vifnet").unwrap()].into();
-	let secret = panel.add_source("aquafix-site", SourceKind::Site, brands).await.unwrap().unwrap().secret.to_string();
+	let secret = panel
+		.add_source("aquafix-site", SourceKind::Site, brands, Some(panel_core::ids::SiteOrigin::parse("https://aquafix.top").unwrap()))
+		.await
+		.unwrap()
+		.unwrap()
+		.secret
+		.to_string();
 	(panel, secret)
 }
 
@@ -127,7 +133,7 @@ async fn a_bots_lookup_reaches_sites_as_its_source_over_no_body() {
 	let (sites, seen) = sites().await;
 	let panel = panel(&db).await;
 	let secret = panel
-		.add_source("aquafix-bot", SourceKind::Bot, [BrandId::parse("aquafix").unwrap()].into())
+		.add_source("aquafix-bot", SourceKind::Bot, [BrandId::parse("aquafix").unwrap()].into(), None)
 		.await
 		.unwrap()
 		.unwrap()

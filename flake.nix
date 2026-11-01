@@ -241,12 +241,22 @@
             rateLimitPathPrefixes = [ "/auth" "/api/hooks" ];
           };
           egress = {
-            # in-cluster peers, at the addresses these name: concierge's gRPC and the services the
-            # forward reaches (docs/ARCHITECTURE.md, Forward)
-            grpcEnv = [ "CONCIERGE_GRPC_ADDR" "PANEL_REVIEW_ARCHIVE_URL" "PANEL_PLAYBOOK_URL" "PANEL_SITES_URL" ];
+            # concierge's gRPC, at the address it names
+            grpcEnv = [ "CONCIERGE_GRPC_ADDR" ];
             # the Bot API; the Places API (GOOGLE_MAPS_KEY)
             hosts = [ "api.telegram.org:443" "places.googleapis.com:443" ];
           };
+        };
+
+        # What the conductor serves to its peers, by endpoint: devops builds a consumer's URL from it.
+        # `checks.provided-paths` holds it to the routes the binary mounts.
+        provides.ingest = "/api/ingest/v1/events";
+        # The services the forward reaches (docs/ARCHITECTURE.md, Forward), by contract name: devops
+        # sets each variable to the peer's in-cluster origin and opens the egress to it.
+        consumes = {
+          PANEL_SITES_URL = "sites_panel";
+          PANEL_REVIEW_ARCHIVE_URL = "review_archive";
+          PANEL_PLAYBOOK_URL = "playbook_web";
         };
 
         containerStd = v_flakes.container.implement {
@@ -275,12 +285,19 @@
           };
         };
         # `implement` knows no key for the above, and throws on one it does not know.
-        containers = lib.mapAttrs (_: c: c // { contract = c.contract // deploy; }) containerStd.containers;
+        containers = lib.mapAttrs (_: c: c // { contract = c.contract // deploy // { inherit provides consumes; }; }) containerStd.containers;
 
         contractEnv = pkgs.runCommand "${pname}-contract-env" { } ''
           ${bin}/bin/${pname} --print-required-vars production | sort > got
           printf '%s\n' ${lib.escapeShellArgs deploy.requiredEnv} | sort > want
           diff -u want got || { echo "flake.nix deploy.requiredEnv disagrees with the binary" >&2; exit 1; }
+          touch "$out"
+        '';
+
+        providedPaths = pkgs.runCommand "${pname}-provided-paths" { } ''
+          ${bin}/bin/${pname} --print-provided-paths | sort > got
+          printf '%s\n' ${lib.escapeShellArgs (lib.attrValues provides)} | sort > want
+          diff -u want got || { echo "flake.nix provides disagrees with the routes the binary mounts" >&2; exit 1; }
           touch "$out"
         '';
 
@@ -367,6 +384,7 @@
         containers = lib.optionalAttrs pkgs.stdenv.isLinux containers;
 
         checks.contract-env = contractEnv;
+        checks.provided-paths = providedPaths;
 
         devShells.default =
           with pkgs;
