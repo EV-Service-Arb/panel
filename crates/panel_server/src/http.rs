@@ -1,6 +1,6 @@
 //! The HTTP surface: `/health`, the sign-in (`/auth/*`, [`crate::signin`]), the conductor's own
 //! `/api/v1` ([`crate::api`], [`crate::access`], [`crate::telegram`]) and its live socket
-//! (`/api/v1/live`, [`crate::live`]); with the forward configured, ingest ([`crate::ingest`]) and
+//! (`/api/v1/live`, [`crate::live`]); with the forward configured, ingest (`ingest.rs`) and
 //! the services behind the origin ([`crate::forward`]).
 
 use std::{sync::Arc, time::Duration};
