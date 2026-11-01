@@ -785,6 +785,7 @@ async fn no_permission_opens_no_section() {
 			"/gmbs/resolve",
 			"/gmails/{id}/gmbs",
 			"/gmbs/{id}",
+			"/gmbs/enabled",
 			"/tokens",
 			"/tokens/ledger",
 			"/tokens/usage",

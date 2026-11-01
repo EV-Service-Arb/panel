@@ -12,6 +12,7 @@ const gmbParser: Parser<Gmb> = object({
   gbp_account: nullable(str),
   gbp_location: nullable(str),
   created_at: str,
+  enabled: bool,
 });
 
 export const gmailsParser: Parser<Gmails> = object({ gmails: arrayOf(object({ id: num, gmail: str, created_at: str, gmbs: arrayOf(gmbParser) })) });
@@ -34,7 +35,6 @@ function byGmb<T>(p: Parser<T>): Parser<Map<number, T>> {
 }
 
 const archiveTagParser = object({ tracked: bool, rating: nullable(num), reviews: nullable(num) });
-export type ArchiveTag = Infer<typeof archiveTagParser>;
 export const archiveParser = object({ gmbs: byGmb(archiveTagParser), places_tracked: num });
 export type Archive = Infer<typeof archiveParser>;
 

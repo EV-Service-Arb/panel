@@ -8,12 +8,13 @@ import { useT } from "@/shared/i18n";
 import { useLiveSocket } from "@/shared/lib/live";
 
 import { followTitleCount } from "../model/title-count";
+import { Outline } from "./outline";
 import { PanelTopBar } from "./panel-top-bar";
 
 /** CONTRACT §9: an element's API answered 401. */
 const UNAUTHENTICATED_EVENT = "sa:unauthenticated";
 
-/** Every signed-in screen under the top bar; the tab's live socket and the elements' window events. */
+/** Every signed-in screen under the top bar, beside the outline; the tab's live socket and the elements' window events. */
 export function ShellFrame({ onForbidden, children }: { onForbidden: () => void; children: ReactNode }) {
   const t = useT();
   useLiveSocket({ onUnauthenticated: goToSignIn, onForbidden });
@@ -28,7 +29,13 @@ export function ShellFrame({ onForbidden, children }: { onForbidden: () => void;
       <div className="sticky top-0 z-30">
         <PanelTopBar />
       </div>
-      <main className="flex min-w-0 flex-1 flex-col">{children}</main>
+      <div className="flex min-h-0 flex-1">
+        {/* `hidden`, not unmounted, on a phone: the outline keeps `mfe-sites-nav` mounted */}
+        <aside className="sticky top-14 hidden h-[calc(100svh-3.5rem)] w-64 shrink-0 overflow-y-auto border-r border-border p-2 md:block">
+          <Outline />
+        </aside>
+        <main className="flex min-w-0 flex-1 flex-col">{children}</main>
+      </div>
     </div>
   );
 }
