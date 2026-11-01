@@ -15,7 +15,7 @@
 //! ```
 //!
 //! [`Services`] is the one client and signing key every call to a service goes through: the
-//! forward's, ingest's, and the hubs' own reads of sites.
+//! forward's, ingest's, Grafana's ([`crate::grafana`]), and the hubs' own reads of sites.
 
 use std::{sync::Arc, time::Duration};
 
@@ -33,7 +33,7 @@ use serde_json::json;
 
 use crate::{
 	cookies,
-	signin::{self, Denied, Freshness, SignIn},
+	signin::{self, Caller, Denied, Freshness, SignIn},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -127,9 +127,31 @@ const ROUTES: [Route; 10] = [
 	},
 ];
 
+/// The services that serve their Grafana dashboards at `GET /dashboards` (docs/ARCHITECTURE.md,
+/// Grafana).
+pub(crate) const DASHBOARDS: [Service; 1] = [Service::ReviewArchive];
+
 /// Every path the forward owns: never the front end's.
 pub fn prefixes() -> impl Iterator<Item = &'static str> {
 	ROUTES.iter().map(|r| r.prefix)
+}
+
+/// Each service's API, `/api/<service>`, with its prefix: what a viewer's token reaches.
+pub(crate) fn apis() -> impl Iterator<Item = (Service, &'static str)> {
+	ROUTES.iter().filter(|r| r.prefix == api_prefix(r.service)).map(|r| (r.service, r.prefix))
+}
+
+fn api_prefix(service: Service) -> String {
+	format!("/api/{}", name(service))
+}
+
+/// The service's serde name: its API's path segment, its Grafana datasource's uid.
+pub(crate) fn name(service: Service) -> String {
+	serde_json::to_value(service)
+		.expect("a unit variant serializes")
+		.as_str()
+		.expect("a unit variant is a string")
+		.to_owned()
 }
 
 /// Whether `path` is `prefix` or below it, by whole segments.
@@ -138,7 +160,7 @@ pub fn under(path: &str, prefix: &str) -> bool {
 }
 
 /// Hop-by-hop headers (RFC 9110 §7.6.1) and what only the panel may say: never passed on.
-const DROPPED_UP: [&str; 10] = [
+pub(crate) const DROPPED_UP: [&str; 11] = [
 	"connection",
 	"keep-alive",
 	"proxy-connection",
@@ -149,8 +171,9 @@ const DROPPED_UP: [&str; 10] = [
 	"cookie",
 	sa_auth::HEADER,
 	cookies::CSRF_HEADER,
+	crate::grafana::VIEWER_HEADER,
 ];
-const DROPPED_DOWN: [&str; 8] = ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade", "set-cookie"];
+pub(crate) const DROPPED_DOWN: [&str; 8] = ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade", "set-cookie"];
 
 /// Where each service is, and the key the conductor vouches with.
 pub struct Upstreams {
@@ -244,26 +267,21 @@ impl Forward {
 		&self.sign_in.panel
 	}
 
+	pub(crate) fn sign_in(&self) -> &SignIn {
+		&self.sign_in
+	}
+
 	pub(crate) fn services(&self) -> &Services {
 		&self.services
 	}
 }
 
-fn json_error(status: StatusCode, msg: &str) -> Response {
+pub(crate) fn json_error(status: StatusCode, msg: &str) -> Response {
 	(status, Json(json!({ "error": msg }))).into_response()
 }
 
 async fn forward(State(f): State<Forward>, req: Request) -> Response {
-	let path = req.uri().path().to_owned();
-	let route = ROUTES.iter().find(|r| under(&path, r.prefix)).expect("mounted under one of ROUTES");
-	let rest = &path[route.prefix.len()..];
-	// decoded as a service might, so no route reaches above its upstream prefix
-	let decoded = rest.to_ascii_lowercase().replace("%2e", ".").replace("%2f", "/").replace("%5c", "/").replace('\\', "/");
-	if decoded.split('/').any(|s| s == "." || s == "..") {
-		return json_error(StatusCode::BAD_REQUEST, "not a forwardable path");
-	}
-	let upstream_path = format!("{}{rest}", route.upstream);
-	let upstream_path = if upstream_path.is_empty() { "/".to_owned() } else { upstream_path };
+	let route = ROUTES.iter().find(|r| under(req.uri().path(), r.prefix)).expect("mounted under one of ROUTES");
 	let principal = match route.gate {
 		Gate::Open => None,
 		Gate::Session(writes) => {
@@ -274,37 +292,67 @@ async fn forward(State(f): State<Forward>, req: Request) -> Response {
 			// a write must not outlive a revoked grant by even the cached GetMe's minute
 			let freshness = if write { Freshness::Fresh } else { Freshness::Cached };
 			match signin::check(&f.sign_in, req.headers(), freshness).await {
-				Ok(caller) => Some(Principal::User(User {
-					sub: caller.user_id.to_string(),
-					email: caller.email,
-					email_verified: caller.email_verified,
-					name: caller.preferred_name,
-					permissions: caller.permissions.iter().filter(|p| p.starts_with(route.service.prefix())).collect(),
-				})),
+				Ok(caller) => Some(Principal::User(user(caller, route.service))),
 				// a page the browser navigated to goes to sign in and comes back; a call is told
 				Err(Denied::Unauthenticated) if route.service == Service::Playbook && *req.method() == Method::GET => {
-					let back = req.uri().path_and_query().map_or(path.as_str(), |pq| pq.as_str());
+					let back = req.uri().path_and_query().map_or(req.uri().path(), |pq| pq.as_str());
 					return Redirect::to(&format!("/auth/login?return_to={}", signin::encode(back))).into_response();
 				}
 				Err(denied) => return denied.into_response(&f.sign_in),
 			}
 		}
 	};
-	let upstream = match req.uri().query() {
-		Some(q) => format!("{upstream_path}?{q}"),
-		None => upstream_path,
-	};
-	let (parts, body) = req.into_parts();
-	match f.services.send(route.service, parts.method, &upstream, parts.headers, principal, body).await {
-		Ok(res) => res,
-		Err(e) => {
-			tracing::warn!(error = %e, service = ?route.service, "a forward failed");
-			json_error(StatusCode::BAD_GATEWAY, "the service did not answer")
+	f.pass(route, req, principal).await
+}
+
+/// `caller`, as `service` is told of them: its slice of their permissions only.
+fn user(caller: Caller, service: Service) -> User {
+	User {
+		sub: caller.user_id.to_string(),
+		email: caller.email,
+		email_verified: caller.email_verified,
+		name: caller.preferred_name,
+		permissions: caller.permissions.iter().filter(|p| p.starts_with(service.prefix())).collect(),
+	}
+}
+
+impl Forward {
+	/// A GET Grafana makes for `viewer` to a service's API: the forward's, as that viewer.
+	pub(crate) async fn as_viewer(&self, viewer: Caller, req: Request) -> Response {
+		match apis().find(|(_, prefix)| under(req.uri().path(), prefix)) {
+			Some((service, prefix)) => {
+				let route = ROUTES.iter().find(|r| r.prefix == prefix).expect("apis() are ROUTES");
+				self.pass(route, req, Some(Principal::User(user(viewer, service)))).await
+			}
+			None => json_error(StatusCode::NOT_FOUND, "not a service's API"),
+		}
+	}
+
+	async fn pass(&self, route: &Route, req: Request, principal: Option<Principal>) -> Response {
+		let rest = &req.uri().path()[route.prefix.len()..];
+		// decoded as a service might, so no route reaches above its upstream prefix
+		let decoded = rest.to_ascii_lowercase().replace("%2e", ".").replace("%2f", "/").replace("%5c", "/").replace('\\', "/");
+		if decoded.split('/').any(|s| s == "." || s == "..") {
+			return json_error(StatusCode::BAD_REQUEST, "not a forwardable path");
+		}
+		let upstream_path = format!("{}{rest}", route.upstream);
+		let upstream_path = if upstream_path.is_empty() { "/".to_owned() } else { upstream_path };
+		let upstream = match req.uri().query() {
+			Some(q) => format!("{upstream_path}?{q}"),
+			None => upstream_path,
+		};
+		let (parts, body) = req.into_parts();
+		match self.services.send(route.service, parts.method, &upstream, parts.headers, principal, body).await {
+			Ok(res) => res,
+			Err(e) => {
+				tracing::warn!(error = %e, service = ?route.service, "a forward failed");
+				json_error(StatusCode::BAD_GATEWAY, "the service did not answer")
+			}
 		}
 	}
 }
 
-fn strip(headers: &mut HeaderMap, names: &[&str]) {
+pub(crate) fn strip(headers: &mut HeaderMap, names: &[&str]) {
 	// a header `Connection` names is hop-by-hop too
 	let named: Vec<String> = headers
 		.get_all(header::CONNECTION)

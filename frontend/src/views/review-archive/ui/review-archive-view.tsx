@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 
 import { SIGN_IN_PATH, csrfCookieName } from "@/shared/api";
+import { ROUTES } from "@/shared/config/routes";
 import { useT } from "@/shared/i18n";
 import { RemoteElement } from "@/shared/mfe";
 
@@ -18,7 +19,7 @@ export function ReviewArchiveView() {
       className="h-full"
       tag="mfe-review-archive-dashboard"
       scriptUrl="/review_archive/mfe/mfe-review-archive-dashboard.js"
-      attributes={{ api: "/api/review_archive", "sign-in": SIGN_IN_PATH, "csrf-cookie": csrf, base: "/review_archive" }}
+      attributes={{ api: "/api/review_archive", "sign-in": SIGN_IN_PATH, "csrf-cookie": csrf, base: "/review_archive", grafana: ROUTES.grafana }}
       fallback={<p className="p-6 text-muted-foreground">{t("reviewArchive.loading")}</p>}
     />
   );

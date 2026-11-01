@@ -1,10 +1,11 @@
 # Running the stack locally
 
-The conductor, sites_panel and both landings (aquafix, vifnet) on one machine, wired as in the
-cluster: a lead posted on a landing reaches sites_panel through the conductor's ingest, and a
-place's phone or hours edited on the sites page shows on the landing through sites'
-`/api/internal`. No concierge, no PostHog, no Telegram, no review_archive or playbook (their
-forwards answer 502): the conductor signs you in by itself (dev sign-in, below).
+The conductor with its Grafana, sites_panel, review_archive and both landings (aquafix, vifnet)
+on one machine, wired as in the cluster: a lead posted on a landing reaches sites_panel through
+the conductor's ingest, a place's phone or hours edited on the sites page shows on the landing
+through sites' `/api/internal`, and review_archive's overview and boards draw in the conductor's
+Grafana. No concierge, no PostHog, no Telegram, no playbook (its forward answers 502), no Google
+(review_archive scans nothing): the conductor signs you in by itself (dev sign-in, below).
 
 ## Prerequisites
 
@@ -15,13 +16,14 @@ forwards answer 502): the conductor signs you in by itself (dev sign-in, below).
   _sa/
     site_conductor/  this repository (its worktrees work too: the others are found beside the main checkout)
     sites/panel/     sites_panel
+    review_archive/  review_archive (skipped, with a message, when missing)
     aquafix/         Service-Arb/aquafix, up to date — the Next.js (kitstart) site
     vifnet/          Service-Arb/vifnet, likewise
   ```
 
-  Elsewhere: `SITES_DIR=… AQUAFIX_DIR=… VIFNET_DIR=… nix run .#local-stack`. A landing checkout
+  Elsewhere: `SITES_DIR=… REVIEW_ARCHIVE_DIR=… AQUAFIX_DIR=… VIFNET_DIR=… nix run .#local-stack`. A landing checkout
   without `package.json` (the old Rust sites) is skipped with a message: `git pull` it.
-- Ports 59120 (conductor), 59121 (sites_panel), 59081 (aquafix) and 59082 (vifnet) free.
+- Ports 59120 (conductor), 59121 (sites_panel), 59110 (review_archive), 59081 (aquafix) and 59082 (vifnet) free.
 
 ## The command
 
@@ -68,7 +70,14 @@ What it does (`scripts/local-stack.sh`, which the flake app runs as is):
 Iterating on the backend: `cargo build -p panel_server`, then
 `PANEL_BIN=$PWD/target/debug/panel nix run .#local-stack` (the same as
 `scripts/local-stack.sh`): what you do not name is built with `nix build`. `SITES_BIN` and
-`SITES_MFE_DIR` do the same for sites_panel.
+`SITES_MFE_DIR` do the same for sites_panel, `REVIEW_ARCHIVE_BIN` and `REVIEW_ARCHIVE_MFE_DIR`
+for review_archive, `PANEL_GRAFANA_SERVER` for Grafana (`nix build .#grafana-server`).
+
+review_archive runs `serve --no-login-check` on `.local/review_archive/` (its config written
+there; `REVIEW_ARCHIVE_DATA_DIR` names another data dir, e.g. a copy of its checkout's `data/`),
+trusting the stack's assertion key, HTTP only: the stack holds the dir's `serve.lock`, so nothing
+walks Maps; the conductor runs Grafana on `.local/grafana/`,
+pulling review_archive's dashboards into it.
 
 ## URLs
 
@@ -77,6 +86,8 @@ Iterating on the backend: `cargo build -p panel_server`, then
 | Conductor | <http://127.0.0.1:59120> — opens signed in |
 | Leads, locations | <http://127.0.0.1:59120/sites/leads>, <http://127.0.0.1:59120/sites/places> |
 | sites_panel | <http://127.0.0.1:59121> — `/api/internal` only without an assertion |
+| review_archive, drawn by Grafana | <http://127.0.0.1:59120/review_archive?grafana=true> |
+| Grafana | <http://127.0.0.1:59120/grafana/> |
 | aquafix, a point | `http://<slug>.localhost:59081/fr`, e.g. <http://royat.localhost:59081/fr> |
 | aquafix, the brand page | <http://localhost:59081/fr> |
 | vifnet | <http://localhost:59082/fr> |
@@ -161,6 +172,10 @@ curl -si http://localhost:59082/quote --data-urlencode locale=fr --data-urlencod
   --data-urlencode 'name=Smoke Test' --data-urlencode bedrooms=3 | head -1
 ```
 
+**A board, review_archive → Grafana**: `node examples/with_grafana.cjs` in review_archive's
+checkout drives a headless browser through the overview and a place's board (its header says
+what it checks).
+
 **A place, sites → landing**
 
 1. Open <http://127.0.0.1:59120/sites/places>, pick aquafix / royat, set a phone (e.g.
@@ -185,7 +200,7 @@ Production has no such bypass: there, wait out the 600 s.
 ## Troubleshooting
 
 - **`port 59120 is taken`**: another stack, or something else —
-  `lsof -nP -iTCP:59120 -sTCP:LISTEN` names it. The same for 59121/59081/59082.
+  `lsof -nP -iTCP:59120 -sTCP:LISTEN` names it. The same for 59121/59110/59081/59082.
 - **A site is skipped**: its checkout is missing or predates the Next site; `git pull` it, or
   point `AQUAFIX_DIR` / `VIFNET_DIR` at another one.
 - **`source … exists but its secret is not in .local/secrets`**: the secret is shown once and

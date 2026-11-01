@@ -21,6 +21,7 @@ use tower::ServiceExt;
 use crate::{
 	concierge::{Concierge, DEV_CODE, DevIdentity},
 	forward::{Forward, Services, Upstreams},
+	grafana::Grafana,
 	http,
 	signin::{SignIn, SignInConfig},
 	telegram::BotName,
@@ -102,6 +103,20 @@ pub fn services(base: &str) -> Services {
 /// The conductor on `panel`, signing in whoever asks as `email` holding `permissions`, with every
 /// service at `base`.
 pub fn app_with(panel: Panel, permissions: PermissionSet, email: &str, base: &str, limits: http::Limits) -> Router {
+	let (sign_in, forward) = conductor(panel, permissions, email, base);
+	http::app(sign_in, Some(forward), None, limits, BotName::off())
+}
+
+/// What a viewer's browser and Grafana reach: the conductor of [`app_with`] with Grafana on `dir`,
+/// Grafana's loopback listener, and Grafana itself, to run.
+pub fn app_with_grafana(panel: Panel, permissions: PermissionSet, email: &str, base: &str, dir: &std::path::Path) -> (Router, Router, Grafana) {
+	let (sign_in, forward) = conductor(panel, permissions, email, base);
+	let grafana = Grafana::new(forward.clone(), dir.to_owned());
+	let app = http::app(sign_in, Some(forward), Some(&grafana), http::Limits::default(), BotName::off());
+	(app, grafana.loopback(), grafana)
+}
+
+fn conductor(panel: Panel, permissions: PermissionSet, email: &str, base: &str) -> (SignIn, Forward) {
 	let who = DevIdentity {
 		permissions,
 		email: email.to_owned(),
@@ -112,7 +127,7 @@ pub fn app_with(panel: Panel, permissions: PermissionSet, email: &str, base: &st
 	};
 	let sign_in = SignIn::new(panel, Concierge::dev(who), config);
 	let forward = Forward::new(sign_in.clone(), services(base));
-	http::app(sign_in, Some(forward), limits, BotName::off())
+	(sign_in, forward)
 }
 
 pub fn app(panel: Panel, permissions: PermissionSet, base: &str) -> Router {

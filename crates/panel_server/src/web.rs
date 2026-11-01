@@ -57,8 +57,8 @@ const TURNSTILE_ORIGIN: &str = "https://challenges.cloudflare.com";
 /// With `platform_mfe`, also the platform's MFE directories (concierge's `/api/auth/mfe/`, the
 /// wallet's `/wallet/mfe/`) in `script-src`, the wallet's in `style-src` (its stylesheet's
 /// `<link>`), its origin in `connect-src` (the elements call its API, cross-origin), and
-/// Turnstile's origin in `script-src` and a `frame-src` of `'self'` (review_archive's dashboard
-/// frames its Grafana) and it (without it the sign-in dialog shows "Captcha failed to load"). Directories, never the origin: a `script-src` of the whole origin would let any
+/// Turnstile's origin in `script-src` and a `frame-src` of `'self'` (an element frames the
+/// conductor's Grafana) and it (without it the sign-in dialog shows "Captcha failed to load"). Directories, never the origin: a `script-src` of the whole origin would let any
 /// script the platform serves run in the panel's session, not only the elements it publishes
 /// for hosts.
 fn csp(platform_mfe: bool, inline: &BTreeSet<String>) -> String {
@@ -134,7 +134,7 @@ fn inline_bodies(html: &str) -> eyre::Result<Vec<&str>> {
 const HASHED: &str = "/_next/static/";
 
 /// Paths that belong to the API side, whether or not a route of theirs is mounted: an unknown
-/// one is a JSON 404, never the front end's page. `/grafana` is held for the dashboards;
+/// one is a JSON 404, never the front end's page. `/grafana` is Grafana's, run or not;
 /// `/cabinet` once served the cabinet's account chip here, and a tab still on an earlier
 /// build may ask for `/cabinet/mfe/*`: a script request must get a 404, not the panel's HTML.
 const RESERVED: [&str; 5] = ["/api", "/auth", "/health", "/grafana", "/cabinet"];

@@ -177,6 +177,7 @@ async fn dev_app(db: &TestDb, permissions: PermissionSet, email: &str) -> Router
 	http::app(
 		SignIn::new(panel(db).await, Concierge::dev(who), config),
 		None,
+		None,
 		Default::default(),
 		panel_server::telegram::BotName::off(),
 	)
