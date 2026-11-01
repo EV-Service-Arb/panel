@@ -182,16 +182,20 @@ sites_panel() {
 		"$SITES_BIN" "$@"
 }
 
-# review_archive on its own data dir, trusting the conductor's assertions; no Google account is
-# checked at boot and no browser is named: a scan fails, the boards draw what is stored.
+# review_archive on its data dir (REVIEW_ARCHIVE_DATA_DIR, e.g. a copy of its checkout's data/),
+# trusting the conductor's assertions, HTTP only: the stack holds the dir's serve.lock, so nothing
+# walks Maps and the boards draw what is stored.
+REVIEW_ARCHIVE_DATA_DIR="${REVIEW_ARCHIVE_DATA_DIR:-$state/review_archive}"
 review_archive() {
-	mkdir -p "$state/review_archive"
+	mkdir -p "$state/review_archive" "$REVIEW_ARCHIVE_DATA_DIR"
 	cat >"$state/review_archive/config.toml" <<EOF
-data_dir = "$state/review_archive"
+data_dir = "$REVIEW_ARCHIVE_DATA_DIR"
 mfe_dir = "$REVIEW_ARCHIVE_MFE_DIR"
 bind = "127.0.0.1:$REVIEW_ARCHIVE_PORT"
 [browser]
 lean = []
+[tokens]
+start_cap_multiple = 2.0
 EOF
 	env -u SENTRY_DSN -u TELEGRAM_BOT_TOKEN -u GOOGLE_MAPS_KEY \
 		APP_ENV=development \
@@ -277,6 +281,8 @@ wait_for sites "$sites_origin/health" 30 "$sites_pid" || die "sites_panel did no
 
 if [ "$review_archive" = 1 ]; then
 	say "starting review_archive on $review_archive_origin"
+	flock "$REVIEW_ARCHIVE_DATA_DIR/serve.lock" sleep infinity &
+	groups+=("$!")
 	prefixed review_archive review_archive serve --no-login-check &
 	review_archive_pid=$!
 	groups+=("$review_archive_pid")

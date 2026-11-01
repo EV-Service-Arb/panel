@@ -74,7 +74,9 @@ Iterating on the backend: `cargo build -p panel_server`, then
 for review_archive, `PANEL_GRAFANA_SERVER` for Grafana (`nix build .#grafana-server`).
 
 review_archive runs `serve --no-login-check` on `.local/review_archive/` (its config written
-there), trusting the stack's assertion key; the conductor runs Grafana on `.local/grafana/`,
+there; `REVIEW_ARCHIVE_DATA_DIR` names another data dir, e.g. a copy of its checkout's `data/`),
+trusting the stack's assertion key, HTTP only: the stack holds the dir's `serve.lock`, so nothing
+walks Maps; the conductor runs Grafana on `.local/grafana/`,
 pulling review_archive's dashboards into it.
 
 ## URLs
