@@ -49,6 +49,8 @@ crates/panel_server/     the `panel` binary: CLI and HTTP, thin over `Panel`
   src/ingest.rs          the signed requests: authenticated here, forwarded to sites
   src/forward.rs         the services behind the origin; `Services`, the one client and signing
                          key every call to them goes through
+  src/grafana.rs         Grafana: its process, /grafana/, the viewers' tokens and the loopback
+                         listener they work on, the services' dashboards
   src/live.rs            GET /api/v1/live, and the follower of sites' change feed
   src/gmbs.rs            /api/v1/gmails, /api/v1/gmbs
   src/tokens.rs          /api/v1/tokens, /api/v1/admin/tokens; review_archive followed and told
@@ -163,7 +165,7 @@ reserved paths (`web.rs`) are derived from it.
   decoded, is a 400.
 - **The pages.** `/sites` mounts `<mfe-sites-panel api="/api/sites" base="/sites" csrf-cookie>`
   from `/sites/mfe/`, and the top bar keeps `<mfe-sites-nav>` mounted; `/review_archive` mounts
-  `<mfe-review-archive-dashboard>` from `/review_archive/mfe/`. Any `/sites/<view>` or
+  `<mfe-review-archive-dashboard grafana="/grafana/">` from `/review_archive/mfe/`. Any `/sites/<view>` or
   `/review_archive/<view>` without a dot in its last segment is that page, for the element to
   route, and a file below a view (`/sites/<view>/index.txt`, `…/__next.*.txt`) is the page's
   own, so Next's client-side navigation to a view stays soft. The bundles run on this origin,
@@ -174,6 +176,33 @@ reserved paths (`web.rs`) are derived from it.
 - Without `PANEL_ASSERTION_KEY`, `PANEL_REVIEW_ARCHIVE_URL`, `PANEL_PLAYBOOK_URL` and
   `PANEL_SITES_URL` (all four, or none), nothing is forwarded, nothing ingested, the hubs hear
   nothing of sites, and review_archive is neither followed nor told.
+
+## Grafana
+
+One Grafana for every service, at `/grafana/` on this origin: an element steers its frame through
+`history` and checks the origin of its messages, which a subdomain would break. `serve` runs it
+(`PANEL_GRAFANA_SERVER` and `PANEL_GRAFANA_DIR`, or neither: no Grafana) on a unix socket in its
+dir, its root URL `<PANEL_PUBLIC_ORIGIN>/grafana/`.
+
+```text
+browser ── /grafana/* ────────────▶ conductor (session; a POST is a read) ──socket──▶ Grafana
+browser ── /grafana/api/ds/query ─▶ conductor: a viewer token into each query whose datasource
+                                    uid is a service; dead once Grafana answers
+Grafana (Infinity) ── GET 127.0.0.1:<any>/api/<service>/… + token ──▶ the forward, as that viewer
+conductor ── GET /dashboards (Conductor), every 60 s, conditional ──▶ each service of
+             forward::DASHBOARDS ──▶ <dir>/dashboards/<service>/<uid>.json ──▶ Grafana
+```
+
+- **Datasources are derived:** one Infinity datasource per service's API (`/api/<service>`), its
+  uid the service's name, its url that API on the loopback listener and nothing beyond it
+  allowed; written, with the dashboards' provider, before Grafana starts.
+- **Dashboards are the services':** coupled to a service's API, they ship with its release. A
+  service that has them is in `forward::DASHBOARDS`, and its `GET /dashboards` answers a JSON
+  array of them, each with its `uid`, and an ETag. A pull that fails — no answer, a 404, a uid
+  another service serves or Grafana refuses — is reported, and what was served before stays.
+- Cookies, assertions, `x-sa-csrf` and the viewer header never reach Grafana, its `Set-Cookie`
+  never comes down, nothing is upgraded. A Grafana that fails is reported and `/grafana/`
+  answers 502; the conductor goes on.
 
 ## Ingest
 
@@ -395,6 +424,9 @@ delivery (0.5 s)            lead messages noted > 1 h ago dead ("stale"); > 20 w
 - **The conductor authenticates, sites authorizes.** A signed request reaches sites only with a
   verified MAC over its timestamp and body (the 5-minute window cannot be dodged by re-stamping);
   what the key may write is never judged here.
+- **Grafana holds no identity.** It signs no one in: its fetches reach a service as a viewer only
+  through a token the conductor wrote into that viewer's `/grafana/api/ds/query`, on the loopback
+  listener, on GETs, for that query's life. The public listener never takes a token.
 - **A source is only ever revoked.** `sources` refuses DELETE and any UPDATE but of `revoked_at`;
   a key id is never reused.
 - **Secrets never sit in the clear.** Sources' HMAC secrets, sessions' tokens and queued Telegram
@@ -421,12 +453,15 @@ delivery (0.5 s)            lead messages noted > 1 h ago dead ("stale"); > 20 w
 - **One image, one origin.** The image carries the binary and the front end's static export,
   and sets `PANEL_WEB_DIR` to it; `serve` answers `/api`, `/auth` and `/health` first, then the
   forward's prefixes, then the files (a directory by its `index.html`, anything else `404.html`
-  with a 404). `/grafana` and `/cabinet` are held: JSON 404s. `/_next/static/*` is `immutable`
+  with a 404). `/cabinet` is held, and `/grafana` without Grafana: JSON 404s. `/_next/static/*` is `immutable`
   for a year, everything else `no-cache`; every page carries a CSP of `default-src 'self'`,
   scripts from this origin and inline only by hash (`web::Files::new` hashes every inline
   `<script>` of every page at boot), `'unsafe-inline'` for styles, `'wasm-unsafe-eval'` (the
   review_archive dashboard), `frame-ancestors 'none'`, `Referrer-Policy: same-origin`, and
   Trusted Types report-only.
+- **Grafana's memory.** ~340 MB at its peak, ~185 of it its binary's pages, and its Infinity plugin
+  server ~80 MB at a board's load, ~110 under a sustained one: the pod's limit has room for both
+  above the conductor. Its dir is `/data/grafana`, unreplicated: provisioned again on every start.
 - **The platform's MFE bundles (`PANEL_CSP_PLATFORM_MFE`).** `0` (default) leaves the CSP as
   above; `1` adds to `script-src` the directories `https://evinvest.ltd/api/auth/mfe/` and
   `https://evinvest.ltd/wallet/mfe/` and `https://challenges.cloudflare.com` (the sign-in

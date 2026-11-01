@@ -11,6 +11,7 @@ pub mod concierge;
 pub mod cookies;
 pub mod forward;
 pub mod gmbs;
+pub mod grafana;
 pub mod http;
 mod ingest;
 pub mod live;

@@ -1,7 +1,7 @@
 //! The HTTP surface: `/health`, the sign-in (`/auth/*`, [`crate::signin`]), the conductor's own
 //! `/api/v1` ([`crate::api`], [`crate::access`], [`crate::gmbs`], [`crate::tokens`],
 //! [`crate::telegram`]) and its live socket
-//! (`/api/v1/live`, [`crate::live`]); with the forward configured, ingest ([`crate::ingest`]) and
+//! (`/api/v1/live`, [`crate::live`]); with the forward configured, ingest (`ingest.rs`) and
 //! the services behind the origin ([`crate::forward`]).
 
 use std::{sync::Arc, time::Duration};
@@ -24,7 +24,9 @@ use tower_http::timeout::TimeoutLayer;
 use crate::{
 	access, api,
 	forward::Forward,
-	gmbs, ingest,
+	gmbs,
+	grafana::Grafana,
+	ingest,
 	live::{self, Live, LiveLimits},
 	signin::{self, Freshness, Gate, SignIn},
 	telegram::{self, BotName, TelegramState},
@@ -116,8 +118,8 @@ impl Default for Limits {
 }
 
 /// Everything the conductor answers but the front end's files; ingest and the forward only with
-/// `forward`.
-pub fn app(sign_in: SignIn, forward: Option<Forward>, limits: Limits, bot: BotName) -> Router {
+/// `forward`, `/grafana/` only with `grafana`.
+pub fn app(sign_in: SignIn, forward: Option<Forward>, grafana: Option<&Grafana>, limits: Limits, bot: BotName) -> Router {
 	let auth = Router::new()
 		.route("/auth/login", get(signin::login))
 		.route("/auth/callback", get(signin::callback))
@@ -147,6 +149,10 @@ pub fn app(sign_in: SignIn, forward: Option<Forward>, limits: Limits, bot: BotNa
 	let app = Router::new().route("/health", get(|| async { "ok" })).merge(auth).merge(live).nest("/api/v1", api);
 	let app = match forward {
 		Some(forward) => app.merge(ingest::routes(forward.clone(), &limits)).merge(forward.routes()),
+		None => app,
+	};
+	let app = match grafana {
+		Some(grafana) => app.merge(grafana.routes()),
 		None => app,
 	};
 	app.layer(middleware::map_response(nosniff))

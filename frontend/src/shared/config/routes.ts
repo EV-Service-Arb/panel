@@ -13,4 +13,6 @@ export const ROUTES = {
   /** The review archive's own views: full navigations into its page. */
   reviewArchiveTelegram: "/review_archive/telegram",
   reviewArchiveActAs: "/review_archive/act-as",
+  /** The conductor's Grafana, which the services' elements frame. */
+  grafana: "/grafana/",
 } as const;
