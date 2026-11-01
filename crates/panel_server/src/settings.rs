@@ -1,7 +1,7 @@
 //! The environment: secrets and the deployment profile. Where to listen is a flag.
 
-use panel::seal::DataKey;
-use panel_core::notify::Locale;
+use panel::{gmbs::Places, seal::DataKey};
+use panel_core::{notify::Locale, tokens::Renewal};
 use sa_auth::{Catalog, PermissionSet};
 use sha2::{Digest, Sha256};
 
@@ -69,6 +69,18 @@ ev_lib::settings! {
 		telegram_bot_username: Option<String>,
 		/// The language of the bot's messages: `ru` or `en`.
 		telegram_locale: String = "ru",
+		/// Tokens added to a balance per day, while it is under TOKENS_CAP.
+		tokens_daily: i64 = "15",
+		/// Where renewal stops; tokens added or granted above it stay.
+		tokens_cap: i64 = "500",
+		/// A person's first balance, in TOKENS_CAPs (e.g. `1`). Needed by every command but
+		/// `migrate`: there is no first balance by default.
+		#[required_in("production")]
+		tokens_start_cap_multiple: Option<f64>,
+		/// The Places API key GMBs are named and addressed with. Unset: a GMB is added by its
+		/// place id alone, unnamed.
+		#[secret]
+		google_maps_key: Option<String>,
 		/// The front end's static export (`frontend/` built, its `out/`), served on the same
 		/// origin behind the API's routes; the image sets it. Unset: `serve` answers the API
 		/// alone, and says so.
@@ -95,6 +107,15 @@ impl Settings {
 	pub fn data_key(&self) -> eyre::Result<DataKey> {
 		let hex = self.panel_data_key.as_deref().ok_or_else(|| eyre::eyre!("PANEL_DATA_KEY must be set"))?;
 		Ok(DataKey::from_hex(hex)?)
+	}
+
+	pub fn renewal(&self) -> eyre::Result<Renewal> {
+		let multiple = self.tokens_start_cap_multiple.ok_or_else(|| eyre::eyre!("TOKENS_START_CAP_MULTIPLE must be set"))?;
+		Ok(Renewal::new(self.tokens_daily, self.tokens_cap, multiple)?)
+	}
+
+	pub fn places(&self) -> eyre::Result<Places> {
+		Places::new(self.google_maps_key.as_deref().map(str::trim).filter(|k| !k.is_empty()).map(str::to_owned))
 	}
 }
 
@@ -377,6 +398,10 @@ mod tests {
 				"TELEGRAM_BOT_TOKEN",
 				"TELEGRAM_BOT_USERNAME",
 				"TELEGRAM_LOCALE",
+				"TOKENS_DAILY",
+				"TOKENS_CAP",
+				"TOKENS_START_CAP_MULTIPLE",
+				"GOOGLE_MAPS_KEY",
 				"PANEL_WEB_DIR",
 				"PANEL_DEV_SIGN_IN",
 				"PANEL_DEV_SIGN_IN_EMAIL",
@@ -395,7 +420,8 @@ mod tests {
 				"PANEL_ASSERTION_KEY",
 				"PANEL_REVIEW_ARCHIVE_URL",
 				"PANEL_PLAYBOOK_URL",
-				"PANEL_SITES_URL"
+				"PANEL_SITES_URL",
+				"TOKENS_START_CAP_MULTIPLE"
 			]
 		);
 		assert!(Settings::required_var_names("development").is_empty());
@@ -482,6 +508,7 @@ mod tests {
 				("PANEL_REVIEW_ARCHIVE_URL", "http://review-archive:59110"),
 				("PANEL_PLAYBOOK_URL", "http://playbook-web.personal:59082"),
 				("PANEL_SITES_URL", "http://sites-panel:59121"),
+				("TOKENS_START_CAP_MULTIPLE", "1"),
 			])
 			.unwrap()
 			.sign_in()
@@ -604,6 +631,7 @@ mod tests {
 				("PANEL_REVIEW_ARCHIVE_URL", "http://review-archive:59110"),
 				("PANEL_PLAYBOOK_URL", "http://playbook-web.personal:59082"),
 				("PANEL_SITES_URL", "http://sites-panel:59121"),
+				("TOKENS_START_CAP_MULTIPLE", "1"),
 				("PANEL_DEV_SIGN_IN", "sa:admin"),
 			])
 			.unwrap()

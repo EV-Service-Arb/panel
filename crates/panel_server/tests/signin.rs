@@ -765,7 +765,25 @@ async fn no_permission_opens_no_section() {
 	};
 	let routes = http::api_routes();
 	let open: Vec<&str> = routes.iter().filter(|r| r.section.is_none()).map(|r| r.path).collect();
-	assert_eq!(open, ["/me", "/access/requests", "/access/requests/mine"], "every other route sits under a section");
+	assert_eq!(
+		open,
+		[
+			"/me",
+			"/access/requests",
+			"/access/requests/mine",
+			"/gmails",
+			"/gmails",
+			"/gmails/{id}",
+			"/gmbs/resolve",
+			"/gmails/{id}/gmbs",
+			"/gmbs/{id}",
+			"/tokens",
+			"/tokens/ledger",
+			"/tokens/usage",
+			"/tokens/claim"
+		],
+		"every other route sits under a section"
+	);
 	for (permissions, email, holds) in [(PermissionSet::from_iter(Vec::<String>::new()), "nobody", false), (admin(), "admin", true)] {
 		let app = app(permissions, &format!("{email}@localhost"));
 		let mut b = Browser::default();
@@ -840,6 +858,7 @@ async fn serve_publishes_the_catalog_first() {
 				("CONCIERGE_GRPC_ADDR", addr.as_str()),
 				("RP_CLIENT_SECRET_SA", SECRET),
 				("PANEL_BUILD_EPOCH", "1791100000"),
+				("TOKENS_START_CAP_MULTIPLE", "1"),
 			])
 			.stdout(std::process::Stdio::null())
 			.stderr(std::process::Stdio::null())

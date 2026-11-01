@@ -69,7 +69,13 @@ impl Drop for TestDb {
 /// A panel on a fresh store with a fresh data key.
 pub async fn panel(db: &TestDb) -> Panel {
 	let key = DataKey::from_hex(&DataKey::generate_hex().expect("random")).expect("a fresh key");
-	Panel::new(db.store().await, key)
+	panel_with(db.store().await, key)
+}
+
+/// A panel on `store`: tokens renewing 15 a day up to 500 from 500, places resolving ids only.
+pub fn panel_with(store: Store, key: DataKey) -> Panel {
+	let renewal = panel_core::tokens::Renewal::new(15, 500, 1.).expect("a valid renewal");
+	Panel::new(store, key, renewal, crate::gmbs::Places::new(None).expect("a Places client"))
 }
 
 /// A request as a source sends it: the body, and the headers' values.

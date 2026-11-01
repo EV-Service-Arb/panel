@@ -6,12 +6,11 @@ use std::collections::BTreeMap;
 
 use jiff::{SignedDuration, Timestamp};
 use panel::{
-	Panel,
 	seal::DataKey,
 	session::{RefreshError, Refresher, SessionKey, Tokens},
 	store::Store,
 	telegram::{Account, Bot, Call, Chat, Directory, DirectoryError, Identity, InlineButton, NotePage, Notifier, Sites, Update},
-	testing::{TestDb, sign},
+	testing::{TestDb, panel_with, sign},
 };
 use panel_core::{
 	ids::BrandId,
@@ -108,7 +107,7 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 	Store::open(db.path()).await.expect("again: nothing to do");
 	{
 		let key = DataKey::from_hex(&DataKey::generate_hex().unwrap()).unwrap();
-		let panel = Panel::new(db.store().await, key);
+		let panel = panel_with(db.store().await, key);
 		let now = Timestamp::now();
 		let secret = panel
 			.add_source("aquafix-site", SourceKind::Site, [BrandId::parse("aquafix").unwrap()].into())
@@ -243,7 +242,10 @@ async fn the_sites_tables_go_and_sent_buttons_name_their_calls() {
 		tables,
 		[
 			"access_requests",
+			"charge_cursors",
 			"consumed_states",
+			"gmails",
+			"gmbs",
 			"sessions",
 			"sources",
 			"telegram_fanout",
@@ -252,7 +254,10 @@ async fn the_sites_tables_go_and_sent_buttons_name_their_calls() {
 			"telegram_outbox",
 			"telegram_poller",
 			"telegram_replies",
-			"telegram_rules"
+			"telegram_rules",
+			"token_kickbacks",
+			"token_ledger",
+			"users"
 		]
 	);
 	let sources: i64 = sqlx::query_scalar("SELECT count(*) FROM sources").fetch_one(&pool).await.unwrap();

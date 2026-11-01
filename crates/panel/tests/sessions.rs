@@ -158,7 +158,7 @@ impl Refresher for Slow {
 async fn two_replicas_present_a_refresh_token_once() {
 	let db = TestDb::create().await;
 	let hex = panel::seal::DataKey::generate_hex().unwrap();
-	let replica = |store| panel::Panel::new(store, panel::seal::DataKey::from_hex(&hex).unwrap());
+	let replica = |store| panel::testing::panel_with(store, panel::seal::DataKey::from_hex(&hex).unwrap());
 	let (a, b) = (replica(db.store().await), replica(db.store().await));
 	let slow = Slow {
 		calls: AtomicUsize::new(0),
