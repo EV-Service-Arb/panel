@@ -24,7 +24,7 @@
         rust = v_flakes.rs.default_nightly system;
         # mold is Linux-only — the adapter throws at *eval* time on Darwin, which
         # would break every target on a mac, not just the ones that link.
-        stdenv = if pkgs.stdenv.isDarwin then pkgs.stdenv else pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv;
+        stdenv = if pkgs.stdenv.hostPlatform.isDarwin then pkgs.stdenv else pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv;
 
         # Single source for the container's exposed port and the prod bind. The binary's
         # own default (`panel_server::DEFAULT_BIND`) is the same port on 127.0.0.1.
@@ -98,11 +98,12 @@
           nativeBuildInputs = with pkgs; [ pkg-config ];
           # ev_lib's `sentry` turns on reqwest's native-tls, which is OpenSSL on Linux
           # (Security.framework on Darwin, which needs nothing here).
-          buildInputs = lib.optionals pkgs.stdenv.isLinux [ pkgs.openssl ];
+          buildInputs = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.openssl ];
           # `cargo test` runs in the devShell and CI; the tests bind loopback servers (fake
           # Telegram, PostHog and concierge), which the Darwin sandbox refuses unless asked
           doCheck = false;
           auditable = false; # cargo-auditable doesn't support edition 2024
+          meta.description = "the panel binary";
         };
 
         # The front end's static export (`next build` → out/), served by `panel serve` from
@@ -143,6 +144,7 @@
             cp -r out "$out"
             runHook postInstall
           '';
+          meta.description = "the front end's static export";
         };
 
         # Grafana (docs/ARCHITECTURE.md, Grafana): the tilers plugin lays out the services' boards
@@ -301,63 +303,6 @@
           touch "$out"
         '';
 
-        help = pkgs.writeShellApplication {
-          name = "help";
-          text = ''
-            cat <<'EOF'
-            nix develop                       toolchain, sqlite
-            nix build                         the panel binary
-            nix build .#${pname}-container    OCI image, the front end in it (Linux only)
-            nix build .#frontend              the front end's static export
-            nix run .#local-stack             the conductor and its Grafana, sites_panel,
-                                              review_archive and both landings on this machine,
-                                              wired together (docs/LOCAL.md)
-            nix run .#publish -- major|minor|patch [note]
-                                              tag the next vX.Y.Z and push it: CI ships the image
-            nix run .#gen                     the front end's mirror of the Rust types
-                                              (pre-commit runs it too)
-            nix run .#help                    this
-            cargo test                        every test; the database ones on throwaway
-                                              SQLite files, nothing to set up
-            the CLI itself: panel --help
-            EOF
-          '';
-        };
-        # The version lives in the tag, not in Cargo.toml: `release-container.yml` ships the image on it.
-        publish = pkgs.writeShellApplication {
-          name = "publish";
-          runtimeInputs = with pkgs; [ git ];
-          text = ''
-            part="''${1:-}"
-            case "$part" in
-              major | minor | patch) ;;
-              *) echo "usage: nix run .#publish -- major|minor|patch [release note]" >&2; exit 1 ;;
-            esac
-            [ -z "$(git status --porcelain)" ] || { echo "uncommitted changes — commit or stash first" >&2; exit 1; }
-            shift
-            note="$*"
-
-            git fetch --tags --force origin >/dev/null # not silenced: a stale tag list reuses a version
-            last="$(git tag -l 'v*' --sort=-v:refname | head -n1)"
-            ver="''${last#v}"; [ -n "$ver" ] || ver="0.0.0"
-            ma="''${ver%%.*}"; rest="''${ver#*.}"; mi="''${rest%%.*}"; pa="''${rest##*.}"
-            case "$part" in
-              major) ma=$((ma + 1)); mi=0; pa=0 ;;
-              minor) mi=$((mi + 1)); pa=0 ;;
-              patch) pa=$((pa + 1)) ;;
-            esac
-            next="v$ma.$mi.$pa"
-            echo "''${last:-<no tag>} → $next"
-
-            # annotated: a lightweight tag has nowhere to put a note, and `--follow-tags` skips it
-            if [ -n "$note" ]; then
-              printf '%s\n\n%s\n' "$next" "$note" | git tag -a "$next" -F -
-            else
-              git tag -a "$next" -m "$next"
-            fi
-            git push origin "$next"
-          '';
-        };
         # The conductor (dev sign-in), sites_panel and the landings beside its checkout, wired
         # together on this machine; the script is the source, shellchecked here (docs/LOCAL.md). It builds the
         # binary and the front end itself, unless PANEL_BIN / PANEL_WEB_DIR name others: the
@@ -370,18 +315,22 @@
       in
       {
         apps = {
-          help = { type = "app"; program = lib.getExe help; };
-          publish = { type = "app"; program = lib.getExe publish; };
-          gen = { type = "app"; program = lib.getExe gen; };
-          local-stack = { type = "app"; program = lib.getExe localStack; };
+          help = v_flakes.utils.help {
+            inherit pkgs self system;
+            about = "  cargo test                      every test; the database ones on throwaway SQLite files\n"
+              + "  panel --help                    the CLI itself";
+          };
+          publish = v_flakes.utils.publish pkgs;
+          gen = { type = "app"; program = lib.getExe gen; meta.description = "the front end's mirror of the Rust types (pre-commit runs it too)"; };
+          local-stack = { type = "app"; program = lib.getExe localStack; meta.description = "the conductor, its Grafana, sites_panel, review_archive and both landings, wired together on this machine (docs/LOCAL.md)"; };
         };
 
         packages = {
           default = bin;
           inherit bin frontend;
-        } // lib.optionalAttrs pkgs.stdenv.isLinux (containerStd.packages // { grafana-server = grafanaServer; });
+        } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (containerStd.packages // { grafana-server = grafanaServer; });
 
-        containers = lib.optionalAttrs pkgs.stdenv.isLinux containers;
+        containers = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux containers;
 
         checks.contract-env = contractEnv;
         checks.provided-paths = providedPaths;
