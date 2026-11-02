@@ -9,6 +9,9 @@
   - [{create post, respond to reviews, local keywords}](https://app.localfalcon.com/dashboard)
     I think I can do first 2 better long-term (given I can specialize); and keywords can't be done better than Semrush anyways I think
 
+- [GMB Radar](https://www.gmbradar.com/local-seo-tool/local-rank-tracker)
+  Demo Vid: https://www.youtube.com/watch?v=m8z3fyb_d3M
+
 - [LocalRank](https://app.localrank.so)
   Has
   - gmaps keyword-reachability
