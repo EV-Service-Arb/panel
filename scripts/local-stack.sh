@@ -300,6 +300,7 @@ wait_for sites "$sites_origin/health" 30 "$sites_pid" || die "sites_panel did no
 
 if [ "$review_archive" = 1 ]; then
 	say "starting review_archive on $review_archive_origin"
+	mkdir -p "$REVIEW_ARCHIVE_DATA_DIR"
 	flock "$REVIEW_ARCHIVE_DATA_DIR/serve.lock" sleep infinity &
 	groups+=("$!")
 	prefixed review_archive review_archive serve --no-login-check &
