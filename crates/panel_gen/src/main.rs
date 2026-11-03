@@ -5,14 +5,14 @@ use std::path::Path;
 
 use ev_lib::ts_gen::Ts;
 use panel::tokens::Kind;
-use panel_core::notify::Rule;
 use panel_server::{
 	access::AccessRequestDto,
+	alerts::AlertsDto,
 	gmbs::{CandidatesDto, GmailsDto},
 	signin::Caller,
-	telegram::TelegramSettingsDto,
 	tokens::{BalanceChangeDto, BalanceDto, LedgerDto, TokenHoldersDto, TokensDto, UsageDto},
 };
+use sa_alerts::Rule;
 use sa_auth::{Catalog, SourceKind};
 
 fn main() {
@@ -50,9 +50,9 @@ fn main() {
 		],
 	);
 	Ts::write(
-		&root.join("entities/telegram/model/generated.ts"),
+		&root.join("entities/alerts/model/generated.ts"),
 		&[
-			Ts::types::<TelegramSettingsDto>(),
+			Ts::types::<AlertsDto>(),
 			Ts::Union {
 				name: "RULES",
 				ty: "Rule",

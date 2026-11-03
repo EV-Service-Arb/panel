@@ -6,19 +6,24 @@ use std::collections::BTreeMap;
 
 use jiff::{SignedDuration, Timestamp};
 use panel::{
+	alerts::{Directory, DirectoryError, Feeds, Hub, Identity},
 	seal::DataKey,
 	session::{RefreshError, Refresher, SessionKey, Tokens},
 	store::Store,
-	telegram::{Account, Bot, Call, Chat, Directory, DirectoryError, Identity, InlineButton, NotePage, Notifier, Sites, Update},
+	telegram::{Account, Bot, Chat, ChatInfo, InlineButton, Target, Update},
 	testing::{TestDb, panel_with, sign},
 };
 use panel_core::{
 	ids::{BrandId, SiteOrigin},
-	notify::{Failure, Locale, Rendered, Rule},
+	notify::{Failure, Locale, Rendered},
 };
+use sa_alerts::{Call, NotePage, Origin, Rule};
 use sa_auth::{PermissionSet, SA_OPERATOR, SourceKind};
 use serde_json::json;
 use zeroize::Zeroizing;
+
+/// The migration that made Telegram one method of the alerts hub.
+const ALERTS: i64 = 20261105090000;
 
 /// A refresher that must not be asked: the tokens above are fresh.
 struct Never;
@@ -50,7 +55,7 @@ struct FakeBot {
 }
 
 impl Bot for FakeBot {
-	async fn send(&self, _: i64, _: &Rendered, _: &[InlineButton]) -> Result<i64, Failure> {
+	async fn send(&self, _: Target, _: &Rendered, _: &[InlineButton], _: Option<Vec<u8>>) -> Result<i64, Failure> {
 		if self.blocked { Err(Failure::Blocked) } else { Ok(1) }
 	}
 
@@ -60,6 +65,14 @@ impl Bot for FakeBot {
 
 	async fn answer(&self, _: &str, _: &str) -> Result<(), Failure> {
 		Ok(())
+	}
+
+	async fn chat(&self, _: &str) -> Result<ChatInfo, Failure> {
+		unreachable!("no chat is added here")
+	}
+
+	async fn is_admin(&self, _: i64, _: i64) -> Result<bool, Failure> {
+		unreachable!("no chat is added here")
 	}
 }
 
@@ -78,17 +91,24 @@ impl Directory for Operators {
 	}
 }
 
-/// Sites with two new leads to tell of, and nothing else.
+/// Sites with two new leads to tell of, and nothing else; review_archive not cut over.
 struct TwoLeads;
 
-impl Sites for TwoLeads {
-	async fn notes(&self, after: i64, _: usize) -> eyre::Result<NotePage> {
+impl Feeds for TwoLeads {
+	async fn notes(&self, service: Origin, after: i64, _: usize) -> eyre::Result<Option<NotePage>> {
+		if service == Origin::ReviewArchive {
+			return Ok(None);
+		}
 		let note = |seq: i64| {
 			json!({"seq": seq, "rule": "new_lead", "event_id": uuid::Uuid::now_v7(), "created_at": Timestamp::now(),
 				"text": {"text": "New lead", "entities": []}, "text_pii": null, "skip_user": null, "buttons": []})
 		};
 		let notes = if after == 0 { vec![note(1), note(2)] } else { vec![] };
-		Ok(serde_json::from_value(json!({"notes": notes, "next": after.max(2)}))?)
+		Ok(Some(serde_json::from_value(json!({"notes": notes, "next": after.max(2)}))?))
+	}
+
+	async fn photo(&self, _: Origin, _: &str) -> eyre::Result<Vec<u8>> {
+		unreachable!("no photo here")
 	}
 
 	async fn received(&self) -> eyre::Result<BTreeMap<String, Timestamp>> {
@@ -142,15 +162,15 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 		assert!(panel.consume_state("state", now + SignedDuration::from_hours(1)).await.unwrap(), "expired marks are dropped");
 		assert_eq!(panel.close_all_sessions(&SessionKey::of_cookie(&opened.cookie).unwrap()).await.unwrap(), Some(user));
 
-		// Access requests, and Telegram: a link, rules, sites' notes and the conductor's own into
+		// Access requests, and alerts: a link, rules, sites' notes and the conductor's own into
 		// the outbox, a delivery, a dead chat, the access checks with their pruning, the poller.
 		let (asked, made) = panel.request_access(user, "o@x.io", "Olga", "sa:operator", now).await.unwrap();
 		assert!(made && asked.need == "sa:operator");
-		let notifier = |blocked| Notifier {
+		let hub = |blocked| Hub {
 			panel: panel.clone(),
 			bot: FakeBot { blocked },
 			concierge: Operators,
-			sites: TwoLeads,
+			feeds: TwoLeads,
 			locale: Locale::Ru,
 			cabinet: cabinet(),
 		};
@@ -161,15 +181,18 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 			payload: Some(token.to_string()),
 			from: Account::default(),
 		};
-		notifier(false).handle(start(7), now).await.unwrap();
-		panel.telegram_set_rules(user, &operator, &[(Rule::NewLead, true)]).await.unwrap().unwrap();
-		panel.telegram_access_seen(user, &operator, "Olga", now).await.unwrap();
-		assert_eq!(notifier(false).fan_out(now).await.unwrap(), 2, "sites' two leads; an operator is not told of access requests");
-		assert_eq!(panel.telegram_notes_after().await.unwrap(), 2);
-		assert_eq!(notifier(false).deliver(now).await.unwrap().sent, 1);
-		assert_eq!(notifier(true).deliver(now + SignedDuration::from_secs(2)).await.unwrap().dead, 1);
+		hub(false).handle(start(7), now).await.unwrap();
+		let destination = panel.alerts(user, &operator).await.unwrap().destinations[0].id;
+		panel.alerts_set_rules(user, &operator, destination, &[(Rule::NewLead, true)]).await.unwrap().unwrap();
+		panel.alerts_access_seen(user, &operator, "Olga", now).await.unwrap();
+		assert_eq!(hub(false).fan_out_own(now).await.unwrap(), 0, "an operator is not told of access requests");
+		assert_eq!(hub(false).take_feed(Origin::Sites, now).await.unwrap(), Some(2), "sites' two leads");
+		assert_eq!(hub(false).take_feed(Origin::ReviewArchive, now).await.unwrap(), None);
+		assert_eq!(panel.alerts_feed_after(Origin::Sites).await.unwrap(), 2);
+		assert_eq!(hub(false).deliver(now).await.unwrap().sent, 1);
+		assert_eq!(hub(true).deliver(now + SignedDuration::from_secs(2)).await.unwrap().dead, 1);
 		assert_eq!(
-			notifier(false).recheck_access(now + SignedDuration::from_hours(24 * 8)).await.unwrap(),
+			hub(false).recheck_access(now + SignedDuration::from_hours(24 * 8)).await.unwrap(),
 			0,
 			"a dead chat is not rechecked"
 		);
@@ -177,7 +200,7 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 		assert_eq!(panel.telegram_poll_lease(holder, now, now + SignedDuration::from_mins(1)).await.unwrap(), Some(0));
 		assert!(panel.telegram_poll_advance(holder, 5).await.unwrap());
 		panel.telegram_poll_release(holder).await.unwrap();
-		notifier(false)
+		hub(false)
 			.handle(
 				Update::Stop {
 					chat: Chat { id: 7, private: true },
@@ -186,7 +209,7 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 			)
 			.await
 			.unwrap();
-		assert!(!panel.telegram_settings(user, &operator).await.unwrap().linked);
+		assert!(panel.alerts(user, &operator).await.unwrap().destinations.is_empty());
 
 		let pool = panel.store().pool();
 		for (sql, refusal) in [
@@ -232,7 +255,7 @@ async fn the_sites_tables_go_and_sent_buttons_name_their_calls() {
 		sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&pool).await.unwrap();
 	}
 
-	migrator.run(&pool).await.unwrap();
+	migrator.run_to(ALERTS - 1, &pool).await.unwrap();
 	let tables: Vec<String> =
 		sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE '\\_%' ESCAPE '\\' AND name <> 'sqlite_sequence' ORDER BY name")
 			.fetch_all(&pool)
@@ -264,7 +287,7 @@ async fn the_sites_tables_go_and_sent_buttons_name_their_calls() {
 	let sources: i64 = sqlx::query_scalar("SELECT count(*) FROM sources").fetch_one(&pool).await.unwrap();
 	assert_eq!(sources, 1);
 	let rows: Vec<(String, Option<String>)> = sqlx::query_as("SELECT buttons, last_error FROM telegram_outbox ORDER BY id").fetch_all(&pool).await.unwrap();
-	let sent: Vec<panel::telegram::Button> = serde_json::from_str(&rows[0].0).unwrap();
+	let sent: Vec<sa_alerts::Button> = serde_json::from_str(&rows[0].0).unwrap();
 	assert_eq!(
 		sent.iter()
 			.map(|b| (b.id.as_str(), b.call.method.as_str(), b.call.path.as_str(), &b.call.body, b.leaves.clone()))
@@ -326,7 +349,7 @@ async fn telegram_roles_become_permissions_both_ways() {
 		.await
 		.unwrap();
 
-	migrator.run(&pool).await.unwrap();
+	migrator.run_to(ALERTS - 1, &pool).await.unwrap();
 	let held = |sql: &'static str, user: uuid::Uuid| {
 		let pool = pool.clone();
 		async move {
@@ -416,6 +439,75 @@ async fn a_site_origin_is_set_once() {
 		assert!(err.contains(refusal), "{sql}: {err}");
 	}
 	pool.close().await;
+}
+
+/// A linked chat becomes its user's private destination — the rules they chose, their access,
+/// what was sent to it (its buttons still pressable under the same ids) — and the sites cursor
+/// carries over; on the way down, the same.
+#[tokio::test]
+async fn telegram_links_become_private_destinations_both_ways() {
+	let db = TestDb::create().await;
+	let pool = db.pool().await;
+	let migrator = sqlx::migrate!("./migrations");
+	migrator.undo(&pool, ALERTS - 1).await.unwrap();
+	let (ann, bob) = (uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2));
+	for sql in [
+		"INSERT INTO telegram_links (user_id, chat_id, linked_at, permissions, permissions_checked_at, display_name, tg_username) \
+		 VALUES (x'00000000000000000000000000000001', 7, 10, '[\"sa:sites:work:read\"]', 11, 'Ann', 'ann')",
+		"INSERT INTO telegram_links (user_id, chat_id, linked_at, permissions, permissions_checked_at, display_name, dead_at) \
+		 VALUES (x'00000000000000000000000000000002', 8, 12, NULL, 13, 'Bob', 99)",
+		"INSERT INTO telegram_rules VALUES (x'00000000000000000000000000000001', 'new_lead', 0)",
+		"INSERT INTO telegram_outbox (user_id, chat_id, rule, event_id, buttons, state, next_attempt_at, created_at, sent_at, tg_message_id) \
+		 VALUES (x'00000000000000000000000000000001', 7, 'new_lead', zeroblob(16), '[]', 'sent', 1, 1, 1, 9)",
+		"INSERT INTO telegram_outbox (user_id, chat_id, rule, event_id, buttons, state, next_attempt_at, created_at, sent_at, tg_message_id) \
+		 VALUES (x'00000000000000000000000000000001', 7, 'booked', zeroblob(16), '[]', 'sent', 1, 1, 1, 9)",
+		"DELETE FROM telegram_outbox WHERE rule = 'booked'",
+		"UPDATE telegram_poller SET notes_after = 42",
+	] {
+		sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&pool).await.unwrap();
+	}
+
+	migrator.run(&pool).await.unwrap();
+	let destinations: Vec<(uuid::Uuid, String, i64, Option<String>, bool)> = sqlx::query_as(
+		"SELECT d.user_id, t.kind, t.chat_id, t.title, t.dead_at IS NOT NULL FROM alert_destinations d \
+		 JOIN telegram_destinations t ON t.destination_id = d.id ORDER BY d.id",
+	)
+	.fetch_all(&pool)
+	.await
+	.unwrap();
+	assert_eq!(destinations, [(ann, "private".into(), 7, Some("@ann".into()), false), (bob, "private".into(), 8, None, true)]);
+	let rules: Vec<(String, bool)> = sqlx::query_as("SELECT rule, enabled FROM alert_rules").fetch_all(&pool).await.unwrap();
+	assert_eq!(rules, [("new_lead".to_owned(), false)]);
+	let access: Vec<(Option<String>, i64)> = sqlx::query_as("SELECT permissions, confirmed_at FROM alert_access ORDER BY user_id")
+		.fetch_all(&pool)
+		.await
+		.unwrap();
+	assert_eq!(access, [(Some(r#"["sa:sites:work:read"]"#.to_owned()), 11), (None, 13)]);
+	let after: i64 = sqlx::query_scalar("SELECT after FROM alert_feeds WHERE service = 'sites'").fetch_one(&pool).await.unwrap();
+	assert_eq!(after, 42);
+	let sent: Vec<i64> = sqlx::query_scalar("SELECT id FROM telegram_outbox").fetch_all(&pool).await.unwrap();
+	assert_eq!(sent, [1], "what was sent, under its id");
+	sqlx::query(
+		"INSERT INTO telegram_outbox (destination_id, user_id, chat_id, rule, event_id, buttons, state, next_attempt_at, created_at) \
+	             SELECT destination_id, $1, 7, 'booked', zeroblob(16), '[]', 'dead', 1, 1 FROM telegram_destinations WHERE chat_id = 7",
+	)
+	.bind(ann)
+	.execute(&pool)
+	.await
+	.unwrap();
+	let next: i64 = sqlx::query_scalar("SELECT max(id) FROM telegram_outbox").fetch_one(&pool).await.unwrap();
+	assert_eq!(next, 3, "an id handed out before is never handed out again");
+
+	migrator.undo(&pool, ALERTS - 1).await.unwrap();
+	let links: Vec<(uuid::Uuid, i64, Option<String>, Option<i64>)> = sqlx::query_as("SELECT user_id, chat_id, tg_username, dead_at FROM telegram_links ORDER BY user_id")
+		.fetch_all(&pool)
+		.await
+		.unwrap();
+	assert_eq!(links, [(ann, 7, Some("ann".into()), None), (bob, 8, None, Some(99))]);
+	let rules: Vec<(uuid::Uuid, String, bool)> = sqlx::query_as("SELECT user_id, rule, enabled FROM telegram_rules").fetch_all(&pool).await.unwrap();
+	assert_eq!(rules, [(ann, "new_lead".to_owned(), false)]);
+	let notes_after: i64 = sqlx::query_scalar("SELECT notes_after FROM telegram_poller").fetch_one(&pool).await.unwrap();
+	assert_eq!(notes_after, 42);
 }
 
 fn origin(raw: &str) -> SiteOrigin {

@@ -35,8 +35,9 @@ jiff = { workspace = true, features = ["serde"] }
 panel.workspace = true
 panel_contracts.workspace = true
 panel_core.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["multipart"] }
 rustix.workspace = true
+sa_alerts.workspace = true
 sa_auth = { workspace = true, features = ["catalog"] }
 sa_places.workspace = true
 serde.workspace = true
@@ -56,6 +57,7 @@ uuid = { workspace = true, features = ["serde"] }
 zeroize.workspace = true
 
 [dev-dependencies]
+axum = { workspace = true, features = ["multipart"] }
 hex.workspace = true
 hmac.workspace = true
 panel = { workspace = true, features = ["testing"] }

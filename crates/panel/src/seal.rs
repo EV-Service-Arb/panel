@@ -116,9 +116,19 @@ pub fn source_secret_aad(key_id: &str) -> Vec<u8> {
 	[b"sa-panel/source-secret/v1/".as_slice(), key_id.as_bytes()].concat()
 }
 
-/// Associated data of a queued Telegram message's text.
-pub fn telegram_text_aad(rule: &str, event_id: uuid::Uuid, chat_id: i64) -> Vec<u8> {
-	[b"sa-panel/tg-text/v1/".as_slice(), rule.as_bytes(), b"/", event_id.as_bytes(), &chat_id.to_be_bytes()].concat()
+/// Associated data of a queued Telegram message's text. A chat without a topic binds as it did
+/// before topics, so what was queued then still opens.
+pub fn telegram_text_aad(rule: &str, event_id: uuid::Uuid, chat_id: i64, topic_id: Option<i64>) -> Vec<u8> {
+	let topic = topic_id.map(i64::to_be_bytes);
+	[
+		b"sa-panel/tg-text/v1/".as_slice(),
+		rule.as_bytes(),
+		b"/",
+		event_id.as_bytes(),
+		&chat_id.to_be_bytes(),
+		topic.as_ref().map_or(&[][..], |t| t.as_slice()),
+	]
+	.concat()
 }
 
 #[cfg(test)]

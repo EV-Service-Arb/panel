@@ -5,10 +5,11 @@
 //! not sit in the clear. [`session`] is signing in through concierge and the sessions that
 //! follow; [`access`] the access requests; [`gmbs`] people's gmails and the GMBs they manage;
 //! [`tokens`] their balances and review_archive's charges, and [`import`] both from there;
-//! [`telegram`] the bot's links, rules, outbox and buttons; [`live`] the bus that tells the
-//! server's sockets what changed.
+//! [`alerts`] the hub: users' destinations and rules, the feeds fanned out to them; [`telegram`]
+//! the method that reaches them; [`live`] the bus that tells the server's sockets what changed.
 
 pub mod access;
+pub mod alerts;
 pub mod gmbs;
 pub mod import;
 pub mod live;

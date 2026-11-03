@@ -26,7 +26,7 @@ impl Panel {
 			email: email.to_owned(),
 			name: name.to_owned(),
 			requested_at: now,
-			event_id: crate::telegram::derived_event_id(&["access_requested", &user.to_string(), need, &now.to_string()]),
+			event_id: crate::alerts::derived_event_id(&["access_requested", &user.to_string(), need, &now.to_string()]),
 		};
 		db::put(&mut tx, &request).await?;
 		tx.commit().await.wrap_err("committing an access request")?;

@@ -1,6 +1,6 @@
 [package]
 name = "panel"
-description = "The conductor's engine: sessions through concierge, source keys, access requests, people's GMBs and tokens, the Telegram and live hubs' state"
+description = "The conductor's engine: sessions through concierge, source keys, access requests, people's GMBs and tokens, the alerts and live hubs' state"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -22,13 +22,16 @@ hex.workspace = true
 jiff = { workspace = true, features = ["serde"] }
 panel_core.workspace = true
 reqwest.workspace = true
+sa_alerts.workspace = true
 sa_auth.workspace = true
 sa_places.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
+strum.workspace = true
 subtle.workspace = true
+tg_types.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

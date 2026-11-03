@@ -518,11 +518,11 @@ pub(crate) async fn check(s: &SignIn, headers: &HeaderMap, freshness: Freshness)
 		return Err(Denied::Failed(StatusCode::BAD_GATEWAY, "sign-in failed"));
 	}
 	if fresh {
-		// A Telegram link sends only on permissions concierge confirmed lately; every answer
-		// the gate gets is such a confirmation. A no-op for an unlinked user.
+		// Alerts go only on permissions concierge confirmed lately; every answer the gate gets is
+		// such a confirmation.
 		let display = if me.preferred_name.trim().is_empty() { &me.email } else { &me.preferred_name };
-		if let Err(e) = s.panel.telegram_access_seen(me.user_id, &me.permissions, display, Timestamp::now()).await {
-			crate::report(&e, "recording a user's access for Telegram");
+		if let Err(e) = s.panel.alerts_access_seen(me.user_id, &me.permissions, display, Timestamp::now()).await {
+			crate::report(&e, "recording a user's access for alerts");
 		}
 		// The user's gmails and tokens hang on this row.
 		let user = panel::tokens::User {
