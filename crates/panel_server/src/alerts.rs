@@ -80,14 +80,17 @@ pub struct AlertsDto {
 #[derive(Clone, Debug, Serialize, TS)]
 #[ts(rename = "Destination")]
 pub struct DestinationDto {
+	#[ts(type = "number")]
 	pub id: i64,
 	/// `private`: the caller's own chat with the bot, the only one PII and buttons go to.
 	#[ts(type = "\"private\" | \"channel\" | \"group\"")]
 	pub kind: &'static str,
 	/// A private chat's account, a channel's or group's title.
 	pub title: Option<String>,
+	#[ts(type = "number | null")]
 	pub topic_id: Option<i64>,
 	/// The GMB rules only for this gmail's GMBs.
+	#[ts(type = "number | null")]
 	pub gmail_id: Option<i64>,
 	/// Why nothing reaches it: a test that arrives clears it.
 	pub dead: Option<String>,

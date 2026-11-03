@@ -31,10 +31,10 @@ export function UsageView() {
       <Access />
       <UsageCard />
       <Section title={t("account.integrations")}>
-        <a className="text-sm text-ink hover:underline" href={ROUTES.reviewArchiveTelegram}>
-          {t("account.telegram")}
+        <a className="text-sm text-ink hover:underline" href={ROUTES.alerts}>
+          {t("account.alerts")}
         </a>
-        <p className="text-sm text-ink-soft">{t("account.telegram.hint")}</p>
+        <p className="text-sm text-ink-soft">{t("account.alerts.hint")}</p>
       </Section>
     </PageFrame>
   );
