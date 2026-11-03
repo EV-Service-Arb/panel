@@ -79,6 +79,7 @@ async fn the_binary_refuses_dev_sign_in_off_loopback() {
 			("PANEL_DB_PATH", path.as_str()),
 			("PANEL_DATA_KEY", key.as_str()),
 			("PANEL_DEV_SIGN_IN", "sa:admin"),
+			("PANEL_DEV_SIGN_IN_EMAIL", "dev@localhost"),
 			("PANEL_PUBLIC_ORIGIN", origin),
 		])
 	};
@@ -102,6 +103,7 @@ async fn the_binary_takes_an_alias_or_a_list_of_permissions() {
 			("PANEL_DB_PATH", path.as_str()),
 			("PANEL_DATA_KEY", key.as_str()),
 			("PANEL_DEV_SIGN_IN", who),
+			("PANEL_DEV_SIGN_IN_EMAIL", "dev@localhost"),
 			("PANEL_PUBLIC_ORIGIN", ORIGIN),
 		])
 	};
@@ -168,6 +170,7 @@ impl Browser {
 
 async fn dev_app(db: &TestDb, permissions: PermissionSet, email: &str) -> Router {
 	let who = DevIdentity {
+		user_id: DevIdentity::named(email),
 		permissions,
 		email: email.to_owned(),
 	};

@@ -833,6 +833,7 @@ async fn no_permission_opens_no_section() {
 	let panel = panel(&db).await;
 	let app = |permissions: PermissionSet, email: &str| {
 		let who = panel_server::concierge::DevIdentity {
+			user_id: panel_server::concierge::DevIdentity::named(email),
 			permissions,
 			email: email.to_owned(),
 		};

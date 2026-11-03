@@ -42,11 +42,7 @@ fn email(permissions: &PermissionSet) -> String {
 }
 
 fn user_id(permissions: &PermissionSet) -> uuid::Uuid {
-	DevIdentity {
-		permissions: permissions.clone(),
-		email: email(permissions),
-	}
-	.user_id()
+	DevIdentity::named(&email(permissions))
 }
 
 /// Sites' change feed, as the test feeds it: each connection opens with `resync`, then every

@@ -10,6 +10,7 @@
 #   nix run .#local-stack -- --role operator
 #   nix run .#local-stack -- --watch       every part rebuilt and restarted as its checkout is edited
 #   nix run .#local-stack -- --port-offset 1000   every port moved by 1000: a second stack, e.g. a worktree's
+#   nix run .#local-stack -- --reset --from-prod   prod's databases, from their litestream replicas
 #
 # The conductor and its front end come from `nix build .#bin` / `.#frontend` of this checkout,
 # unless PANEL_BIN / PANEL_WEB_DIR name others (PANEL_BIN=target/debug/panel for a cargo build);
@@ -26,18 +27,24 @@ PANEL_PORT="${PANEL_BIND:?$need}"
 PANEL_PORT="${PANEL_PORT##*:}"
 WEB_DEV_PORT="${PANEL_WEB_PORT:?$need}"
 offset=0
+# whom dev sign-in is, whatever --role: with --from-prod, prod's own account
+DEV_EMAIL="admin@evinvest.ltd"
+# prod's host, as ~/.ssh/config names it: --from-prod reads review_archive's blobs off its volume
+PROD_SSH="rpi5-ts"
 AQUAFIX_PLACES=(royat clermont-ferrand desgenettes lyon-est la-mouche lyon-nord)
 VIFNET_PLACES=(vifnet)
 
 reset=0
 sites=1
 watch=0
+from_prod=0
 role="admin"
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--reset) reset=1 ;;
 	--no-sites) sites=0 ;;
 	--watch) watch=1 ;;
+	--from-prod) from_prod=1 ;;
 	--port-offset)
 		offset="${2:-}"
 		[[ "$offset" =~ ^[0-9]+$ ]] || {
@@ -52,7 +59,7 @@ while [ $# -gt 0 ]; do
 		;;
 	-h | --help)
 		cat <<'EOF'
-local-stack [--reset] [--no-sites] [--watch] [--role admin|operator] [--port-offset <n>]
+local-stack [--reset] [--no-sites] [--watch] [--role admin|operator] [--port-offset <n>] [--from-prod]
 
   The conductor (dev sign-in, its Grafana at /grafana/), sites_panel, review_archive, aquafix and
   vifnet, wired together, each on the port its dev shell sets. State in .local/ (--reset wipes
@@ -60,6 +67,10 @@ local-stack [--reset] [--no-sites] [--watch] [--role admin|operator] [--port-off
   --watch: every part rebuilt and restarted as its checkout is edited, and the conductor's front end
   from `next dev`, whose origin is then the one to open.
   --port-offset <n>: every port moved by n, beside the stack on the usual ones.
+  --from-prod: prod's panel.db, sites_panel.db and review_archive.db from their litestream replicas
+  (the keys from ../devops's sops), and review_archive's blobs over ssh (PROD_SSH), into a state
+  with none of them: with --reset.
+  Dev sign-in is one user whatever --role (DEV_EMAIL, at the top of the script): prod's, when copied.
 EOF
 		exit 0
 		;;
@@ -136,6 +147,41 @@ for port in "${ports[@]}"; do
 	[ -n "$port" ] || continue # a checkout absent, skipped below
 	busy "$port" && die "port $port is taken — another local stack, or \`lsof -nP -iTCP:$port -sTCP:LISTEN\` says who"
 done
+
+# ── prod's data ──────────────────────────────────────────────────────────────────────────
+
+REVIEW_ARCHIVE_DATA_DIR="${REVIEW_ARCHIVE_DATA_DIR:-$state/review_archive}"
+if [ "$from_prod" = 1 ]; then
+	DEVOPS_DIR="${DEVOPS_DIR:-$(dirname "$service_arb")/devops}"
+	GITOPS_DIR="${GITOPS_DIR:-$(dirname "$service_arb")/gitops}"
+	copies=("$state/panel.db:panel-data/panel.db" "$state/sites_panel.db:sites-panel-data/sites_panel.db"
+		"$REVIEW_ARCHIVE_DATA_DIR/review_archive.db:review-archive-data/review_archive.db")
+	for c in "${copies[@]}"; do
+		[ ! -e "${c%%:*}" ] || die "--from-prod restores into a state without ${c%%:*}: add --reset"
+	done
+	say "restoring prod's databases from their litestream replicas"
+	# the replicas as gitops main configures them, not as an old checkout of it says
+	git -C "$GITOPS_DIR" fetch -q origin main
+	git -C "$GITOPS_DIR" show FETCH_HEAD:clusters/rpi5/tenants/service-arb/manifests.yaml |
+		yq eval-all '[select(.kind == "ConfigMap" and .data["litestream.yml"])][0].data["litestream.yml"]' >"$state/litestream.yml"
+	secret() { sops -d --extract "[\"$1\"]" "$DEVOPS_DIR/nix/secrets/host.json"; }
+	r2_key="$(secret r2_access_key_id)"
+	r2_secret="$(secret r2_secret_access_key)"
+	mkdir -p "$REVIEW_ARCHIVE_DATA_DIR"
+	for c in "${copies[@]}"; do
+		# the caller's AWS_* would win over litestream's own variables
+		env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY LITESTREAM_ACCESS_KEY_ID="$r2_key" LITESTREAM_SECRET_ACCESS_KEY="$r2_secret" \
+			litestream restore -config "$state/litestream.yml" -o "${c%%:*}" "/pvc/${c#*:}"
+	done
+	unset r2_key r2_secret
+	say "copying review_archive's blobs from $PROD_SSH"
+	# not replicated: read off the volume on the host
+	ssh -o BatchMode=yes "$PROD_SSH" bash -s <<'REMOTE' | tar -C "$REVIEW_ARCHIVE_DATA_DIR" -xf -
+set -euo pipefail
+pv="$(sudo -n k3s kubectl -n service-arb get pvc review-archive-data -o jsonpath='{.spec.volumeName}')"
+sudo -n tar -C "$(sudo -n k3s kubectl get pv "$pv" -o jsonpath='{.spec.local.path}')" -cf - blobs
+REMOTE
+fi
 
 # ── the builds ───────────────────────────────────────────────────────────────────────────
 
@@ -235,6 +281,7 @@ panel() {
 		PANEL_DATA_KEY="$(cat "$state/data-key")" \
 		PANEL_PUBLIC_ORIGIN="$public_origin" \
 		PANEL_DEV_SIGN_IN="sa:$role" \
+		PANEL_DEV_SIGN_IN_EMAIL="$DEV_EMAIL" \
 		PANEL_WEB_DIR="$PANEL_WEB_DIR" \
 		PANEL_ASSERTION_KEY="$assertion_key" \
 		PANEL_SITES_URL="$sites_origin" \
@@ -258,7 +305,6 @@ sites_panel() {
 # review_archive on its data dir (REVIEW_ARCHIVE_DATA_DIR, e.g. a copy of its checkout's data/),
 # trusting the conductor's assertions, HTTP only: the stack holds the dir's serve.lock, so nothing
 # walks Maps and the boards draw what is stored.
-REVIEW_ARCHIVE_DATA_DIR="${REVIEW_ARCHIVE_DATA_DIR:-$state/review_archive}"
 review_archive() {
 	mkdir -p "$state/review_archive" "$REVIEW_ARCHIVE_DATA_DIR"
 	cat >"$state/review_archive/config.toml" <<EOF
@@ -287,24 +333,22 @@ if [ "$fresh" = 1 ]; then
 	echo '{"people": [], "gmails": [], "gmbs": [], "ledger": [], "kickbacks": []}' >"$state/review-archive-export.json"
 	panel import review-archive "$state/review-archive-export.json"
 fi
-# A source's secret is shown once: kept in .local/secrets/<key id> for the next run. Its origin
-# is the landing's, set again for a key an older run made without one (the same origin is no change).
-source_secret() {
+# The stack's own keys, `<brand>-local`: a copy of prod has prod's `<brand>-site`, whose secrets
+# are not here. A secret is shown once: kept in .local/secrets/<key id> for the next run. Its origin
+# is the landing's; the same origin again is no change, another one is refused.
+source_key() {
 	local key_id="$1" brand="$2" origin="$3" file="$state/secrets/$1"
 	if panel source list | awk -v k="$key_id" '$1 == k && $NF == "active" { found = 1 } END { exit !found }'; then
 		[ -s "$file" ] || die "source $key_id exists but its secret is not in $file — start over with --reset"
-		panel source set-origin "$key_id" "$origin"
+		panel source set-origin "$key_id" "$origin" || die "source $key_id has another origin than $origin — start over with --reset"
 	else
 		panel source add "$key_id" --kind site --brand "$brand" --origin "$origin" | awk '$1 == "secret:" { print $2 }' >"$file"
 		[ -s "$file" ] || die "panel source add $key_id printed no secret"
 	fi
-	cat "$file"
 }
 # a landing with no checkout has no port, and no source either
-AQUAFIX_SECRET=""
-VIFNET_SECRET=""
-[ -z "$AQUAFIX_PORT" ] || AQUAFIX_SECRET="$(source_secret aquafix-site aquafix "http://localhost:$AQUAFIX_PORT")"
-[ -z "$VIFNET_PORT" ] || VIFNET_SECRET="$(source_secret vifnet-site vifnet "http://localhost:$VIFNET_PORT")"
+[ -z "$AQUAFIX_PORT" ] || source_key aquafix-local aquafix "http://localhost:$AQUAFIX_PORT"
+[ -z "$VIFNET_PORT" ] || source_key vifnet-local vifnet "http://localhost:$VIFNET_PORT"
 register() {
 	sites_panel place register "$1" "$2" >/dev/null 2>>"$state/logs/seed.log" || die "registering $1/$2 failed: see $state/logs/seed.log"
 }
@@ -360,7 +404,7 @@ wait_for() {
 # `watched <checkout> <watchexec's filters…> -- <command>`: <command> (bash, the functions above
 # included) in that checkout's dev shell, stopped and run again as the files watched change
 export -f panel sites_panel review_archive
-export state public_origin role PANEL_WEB_DIR assertion_key assertion_public sites_origin review_archive_origin \
+export state public_origin role DEV_EMAIL PANEL_WEB_DIR assertion_key assertion_public sites_origin review_archive_origin \
 	PANEL_GRAFANA_SERVER PANEL_BIN SITES_BIN SITES_MFE_DIR REVIEW_ARCHIVE_BIN REVIEW_ARCHIVE_MFE_DIR REVIEW_ARCHIVE_DATA_DIR REVIEW_ARCHIVE_PORT
 watched() {
 	local dir="$1"
@@ -425,7 +469,7 @@ started=()
 # A landing's own dev command (`nix run .#dev`, kitstart's next dev) in its checkout: its leads
 # to the conductor's ingest, its places from sites_panel; its leads in a file of ours, analytics off.
 start_site() {
-	local name="$1" dir="$2" port="$3" key_id="$4" secret="$5"
+	local name="$1" dir="$2" port="$3" key_id="$4"
 	if [ ! -f "$dir/package.json" ] || [ ! -f "$dir/flake.nix" ]; then
 		echo "skipping $name: $dir is not a kitstart checkout (missing, or older than the Next site — git pull)" >&2
 		return 0
@@ -437,7 +481,7 @@ start_site() {
 			PORT="$port" \
 			LEAD_WEBHOOK_URL="$origin/api/ingest/v1/events" \
 			LEAD_WEBHOOK_KEY_ID="$key_id" \
-			LEAD_WEBHOOK_SECRET="$secret" \
+			LEAD_WEBHOOK_SECRET="$(cat "$state/secrets/$key_id")" \
 			SITES_PANEL_INTERNAL_URL="$sites_origin/api/internal" \
 			LEADS_DB_PATH="$state/$name-leads.db" \
 			nix run .#dev
@@ -446,8 +490,8 @@ start_site() {
 	started+=("$name:$port:$!")
 }
 if [ "$sites" = 1 ]; then
-	start_site aquafix "$AQUAFIX_DIR" "$AQUAFIX_PORT" aquafix-site "$AQUAFIX_SECRET"
-	start_site vifnet "$VIFNET_DIR" "$VIFNET_PORT" vifnet-site "$VIFNET_SECRET"
+	start_site aquafix "$AQUAFIX_DIR" "$AQUAFIX_PORT" aquafix-local
+	start_site vifnet "$VIFNET_DIR" "$VIFNET_PORT" vifnet-local
 	for s in ${started[@]+"${started[@]}"}; do
 		IFS=: read -r name port pid <<<"$s"
 		# The first `nix run .#dev` may install node_modules: minutes, not seconds.

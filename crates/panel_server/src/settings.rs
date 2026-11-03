@@ -3,7 +3,6 @@
 use panel::{gmbs::Places, seal::DataKey};
 use panel_core::{notify::Locale, tokens::Renewal};
 use sa_auth::{Catalog, PermissionSet};
-use sha2::{Digest, Sha256};
 
 ev_lib::settings! {
 	/// Each secret is needed only by what uses it; a missing one fails that, with an error
@@ -97,8 +96,7 @@ ev_lib::settings! {
 		/// `development`, beside any concierge variable, and unless PANEL_PUBLIC_ORIGIN is
 		/// `http://localhost[:port]` or `http://127.0.0.1[:port]`.
 		panel_dev_sign_in: Option<String>,
-		/// The dev user's email; `dev-<alias name>@localhost`, `dev-none@localhost`, or for a
-		/// list `dev-<its hash>@localhost` by default.
+		/// The dev user's email, whichever permissions `PANEL_DEV_SIGN_IN` gives them.
 		panel_dev_sign_in_email: Option<String>,
 		app_env: String = "development",
 	}
@@ -321,10 +319,10 @@ impl Settings {
 		.map(|(name, _)| name)
 		.collect();
 		eyre::ensure!(concierge.is_empty(), "PANEL_DEV_SIGN_IN replaces the concierge sign-in: unset {}", concierge.join(", "));
-		let (permissions, name) = dev_permissions(&who)?;
+		let permissions = dev_permissions(&who)?;
 		let origin = set(&self.panel_public_origin).ok_or_else(|| eyre::eyre!("PANEL_DEV_SIGN_IN needs PANEL_PUBLIC_ORIGIN, e.g. http://$PANEL_BIND"))?;
 		loopback_http_origin(&origin)?;
-		let email = set(&self.panel_dev_sign_in_email).unwrap_or_else(|| format!("dev-{name}@localhost"));
+		let email = set(&self.panel_dev_sign_in_email).ok_or_else(|| eyre::eyre!("PANEL_DEV_SIGN_IN needs PANEL_DEV_SIGN_IN_EMAIL: whom it signs in as, whatever the permissions"))?;
 		Ok(Some(DevSignIn {
 			permissions,
 			email,
@@ -333,25 +331,21 @@ impl Settings {
 	}
 }
 
-/// `PANEL_DEV_SIGN_IN`'s set, resolved against the `sa` catalog, and a name for its default
-/// email.
-fn dev_permissions(raw: &str) -> eyre::Result<(PermissionSet, String)> {
+/// `PANEL_DEV_SIGN_IN`'s set, resolved against the `sa` catalog.
+fn dev_permissions(raw: &str) -> eyre::Result<PermissionSet> {
 	if raw == "none" {
-		return Ok((PermissionSet::from_iter(Vec::<String>::new()), "none".to_owned()));
+		return Ok(PermissionSet::from_iter(Vec::<String>::new()));
 	}
 	let catalog = Catalog::collect("sa", 0);
 	if let Some(members) = catalog.aliases.get(raw) {
-		let name = raw.trim_start_matches("sa:").to_owned();
-		return Ok((members.iter().cloned().collect(), name));
+		return Ok(members.iter().cloned().collect());
 	}
 	let listed: Vec<&str> = raw.split(',').map(str::trim).collect();
 	if let Some(unknown) = listed.iter().find(|p| !catalog.permissions.contains(**p)) {
 		let aliases: Vec<&str> = catalog.aliases.keys().map(String::as_str).collect();
 		eyre::bail!("PANEL_DEV_SIGN_IN: `{unknown}` is neither `none`, an alias ({}), nor an sa permission", aliases.join(", "));
 	}
-	let permissions: PermissionSet = listed.into_iter().collect();
-	let digest = Sha256::digest(serde_json::to_vec(&permissions).expect("a set of strings serializes"));
-	Ok((permissions, digest[..4].iter().map(|b| format!("{b:02x}")).collect()))
+	Ok(listed.into_iter().collect())
 }
 
 /// `http://localhost[:port]` or `http://127.0.0.1[:port]`, nothing after it: an origin only
@@ -576,9 +570,23 @@ mod tests {
 	#[test]
 	fn dev_sign_in_is_development_on_loopback_only() {
 		assert!(from(&[]).unwrap().dev_sign_in().unwrap().is_none());
-		let dev = |vars: &[(&str, &str)]| from(vars).unwrap().dev_sign_in();
+		let dev = |vars: &[(&str, &str)]| {
+			let mut vars = vars.to_vec();
+			if !vars.iter().any(|(k, _)| *k == "PANEL_DEV_SIGN_IN_EMAIL") {
+				vars.push(("PANEL_DEV_SIGN_IN_EMAIL", "dev@localhost"));
+			}
+			from(&vars).unwrap().dev_sign_in()
+		};
 		let on = dev(&[("PANEL_DEV_SIGN_IN", "sa:admin"), ("PANEL_PUBLIC_ORIGIN", "http://127.0.0.1:59120")]).unwrap().unwrap();
-		assert_eq!(on.email, "dev-admin@localhost");
+		assert_eq!(on.email, "dev@localhost");
+		let e = format!(
+			"{}",
+			from(&[("PANEL_DEV_SIGN_IN", "sa:admin"), ("PANEL_PUBLIC_ORIGIN", "http://localhost")])
+				.unwrap()
+				.dev_sign_in()
+				.unwrap_err()
+		);
+		assert!(e.contains("needs PANEL_DEV_SIGN_IN_EMAIL"), "no email of its own per permission set: {e}");
 		let op = dev(&[
 			("PANEL_DEV_SIGN_IN", "sa:operator"),
 			("PANEL_DEV_SIGN_IN_EMAIL", "ann@example.com"),
@@ -600,7 +608,7 @@ mod tests {
 		assert!(e.contains("`sa:sites:work:nope`"), "the unknown one named: {e}");
 		assert!(dev(&[("PANEL_DEV_SIGN_IN", "admin"), ("PANEL_PUBLIC_ORIGIN", "http://localhost")]).is_err(), "the roles are gone");
 		let none = dev(&[("PANEL_DEV_SIGN_IN", "none"), ("PANEL_PUBLIC_ORIGIN", "http://localhost")]).unwrap().unwrap();
-		assert_eq!((none.permissions.iter().count(), none.email.as_str()), (0, "dev-none@localhost"));
+		assert_eq!(none.permissions.iter().count(), 0);
 
 		for origin in [
 			"https://sa.evinvest.ltd",

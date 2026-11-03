@@ -30,6 +30,7 @@ Grafana, and the conductor's GMBs and tokens reach review_archive. No concierge,
 ```sh
 nix run .#local-stack                  # build, seed, start all four; Ctrl-C stops everything
 nix run .#local-stack -- --reset       # wipe .local/ first: databases, keys, the landings' leads
+nix run .#local-stack -- --reset --from-prod   # prod's data in place of a fresh state (below)
 nix run .#local-stack -- --no-sites    # the conductor and sites_panel, no landings
 nix run .#local-stack -- --role operator
 nix run .#local-stack -- --watch       # every part rebuilt and restarted as its checkout is edited
@@ -58,8 +59,8 @@ What it does (`scripts/local-stack.sh`, which the flake app runs as is):
    landing's `<site>-leads.db`, review_archive's data dir in `review_archive/`, and the logs in
    `logs/`. It persists between runs; `--reset` wipes it. A fresh `panel.db` imports an empty
    document from review_archive, which opens tokens and GMBs.
-2. Seeds, idempotently: the sources `aquafix-site` (brand `aquafix`, origin
-   `<aquafix>`) and `vifnet-site` (brand `vifnet`, origin `<vifnet>`)
+2. Seeds, idempotently: the sources `aquafix-local` (brand `aquafix`, origin
+   `<aquafix>`) and `vifnet-local` (brand `vifnet`, origin `<vifnet>`)
    in the conductor, each secret kept in `.local/secrets/` and reused, a key from an older run
    given its origin; the
    places `aquafix/{royat, clermont-ferrand, desgenettes, lyon-est, la-mouche, lyon-nord}` and
@@ -116,11 +117,13 @@ to `/etc/hosts`.
 ## Dev sign-in
 
 `PANEL_DEV_SIGN_IN` — an alias (`sa:admin`, `sa:operator`), a comma-separated list of `sa`
-permissions, or `none` — (and optionally `PANEL_DEV_SIGN_IN_EMAIL`, by default
-`dev-admin@localhost` for `sa:admin`) replaces concierge: `/auth/login` sends the browser
-straight to `/auth/callback`, which opens a real session for a made-up user holding
-those. An unknown permission fails the boot, named. The account menu shows the user as **Dev
-sign-in (dev-admin@localhost)**, `GET /api/v1/me` answers
+permissions, or `none` — with `PANEL_DEV_SIGN_IN_EMAIL` replaces concierge: `/auth/login` sends
+the browser straight to `/auth/callback`, which opens a real session for that email's user
+holding those permissions: the database's user of that email when it has one (a copy of prod's),
+else one named by it. The email is the same whatever the permissions, so is the user and what
+they hold; the stack's is `DEV_EMAIL` in `scripts/local-stack.sh`, prod's `admin@evinvest.ltd`.
+An unknown permission fails the boot, named. The account menu shows the user as **Dev sign-in
+(<email>)**, `GET /api/v1/me` answers
 `"dev_sign_in": true` (for a UI badge), and `serve` logs `DEV SIGN-IN ON` at start.
 
 The binary refuses it at start (exit 78, every command) in any `APP_ENV` but `development`,
@@ -160,6 +163,17 @@ curl -s -b "$jar" -H "x-sa-csrf: $csrf" -H 'content-type: application/json' \
 Or skip the session: `sites_panel place set aquafix royat --phone +33499887766` with the stack's
 `PANEL_DB_PATH=.local/sites_panel.db PANEL_DATA_KEY=$(cat .local/data-key)`.
 
+## Prod's data
+
+`--from-prod` (with `--reset`: it fills a state that has none of them) restores prod's `panel.db`,
+`sites_panel.db` and `review_archive.db` from their litestream replicas in R2, as gitops main
+configures them (`../gitops`, fetched), with the R2 keys from `../devops`'s sops
+(`DEVOPS_DIR`, `GITOPS_DIR` name others), and copies review_archive's blobs, which are not
+replicated, off its volume over ssh (`PROD_SSH` in the script). Everyone's data comes along; dev
+sign-in is prod's `admin@evinvest.ltd`. What prod sealed under its own `PANEL_DATA_KEY` (prod's
+sessions, its sources' secrets, sites' Google tokens) does not open here: the landings sign with
+the stack's own `<brand>-local` keys. Nothing walks Maps, nothing is told to Telegram.
+
 ## The end-to-end check
 
 With the stack up:
@@ -170,7 +184,7 @@ With the stack up:
    e.g. `0612345678`, and a postcode such as `63130`). The site answers with its thanks page.
 2. The site keeps the lead in `.local/aquafix-leads.db` and its outbox posts it, signed, to
    the conductor within about 10 s (kitstart's `WEBHOOK_TICK_MS`), which forwards it to
-   sites_panel: `[sites]` logs `ingested a batch key_id="aquafix-site" accepted=1`; the site's
+   sites_panel: `[sites]` logs `ingested a batch key_id="aquafix-local" accepted=1`; the site's
    side is the row in
    `sqlite3 .local/aquafix-leads.db 'select id, state, attempts, last_error from webhook_outbox'`
    (`delivered`).

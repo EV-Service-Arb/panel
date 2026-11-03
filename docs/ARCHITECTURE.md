@@ -129,7 +129,7 @@ POST /auth/logout    CSRF; every session of the user is closed
 - **Cookies** are `__Host-` and `Secure` when `PANEL_PUBLIC_ORIGIN` is https, bare over plain
   http (development only), all `SameSite=Lax`.
 - **Dev sign-in** (`PANEL_DEV_SIGN_IN=sa:admin|sa:operator|<permission>,…|none`, docs/LOCAL.md):
-  `Concierge::dev` answers for one made-up user holding that set; the pre-login, the state, the
+  `Concierge::dev` answers for `PANEL_DEV_SIGN_IN_EMAIL`'s user (the database's of that email, else one named by it) holding that set; the pre-login, the state, the
   session and the gate run unchanged. Refused at boot (exit 78) in any profile but development,
   beside any concierge variable, and unless `PANEL_PUBLIC_ORIGIN` is loopback http.
 - `serve` needs a sign-in: concierge's four variables (all or none), or dev sign-in.

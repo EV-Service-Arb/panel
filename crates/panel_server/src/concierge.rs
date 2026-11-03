@@ -121,14 +121,16 @@ pub const DEV_CODE: &str = "dev-sign-in";
 /// Who [`Concierge::dev`] signs everyone in as.
 #[derive(Clone, Debug)]
 pub struct DevIdentity {
+	pub user_id: Uuid,
 	pub permissions: PermissionSet,
 	pub email: String,
 }
 
 impl DevIdentity {
-	/// Named by the email, so a local database keeps one user per dev identity across restarts.
-	pub fn user_id(&self) -> Uuid {
-		let digest = Sha256::digest(format!("sa-panel/dev-sign-in/{}", self.email));
+	/// The user of `email` in a database that has none yet: named by it, so a local database keeps
+	/// one user per dev identity across restarts.
+	pub fn named(email: &str) -> Uuid {
+		let digest = Sha256::digest(format!("sa-panel/dev-sign-in/{email}"));
 		uuid::Builder::from_custom_bytes(digest[..16].try_into().expect("SHA-256 is 32 bytes")).into_uuid()
 	}
 
@@ -139,7 +141,7 @@ impl DevIdentity {
 
 	fn me(&self) -> Me {
 		Me {
-			user_id: self.user_id(),
+			user_id: self.user_id,
 			email: self.email.clone(),
 			email_verified: true,
 			preferred_name: self.display_name(),
@@ -201,7 +203,7 @@ impl Concierge {
 					return Err(ConciergeError::Refused(Code::Unauthenticated));
 				}
 				return Ok(Issued {
-					user_id: who.user_id(),
+					user_id: who.user_id,
 					tokens: who.tokens()?,
 				});
 			}

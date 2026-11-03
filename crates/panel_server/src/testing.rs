@@ -117,6 +117,7 @@ pub fn app_with_grafana(panel: Panel, permissions: PermissionSet, email: &str, b
 
 fn conductor(panel: Panel, permissions: PermissionSet, email: &str, base: &str) -> (SignIn, Forward) {
 	let who = DevIdentity {
+		user_id: DevIdentity::named(email),
 		permissions,
 		email: email.to_owned(),
 	};
