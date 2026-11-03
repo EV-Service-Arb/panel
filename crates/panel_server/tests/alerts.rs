@@ -963,8 +963,20 @@ async fn a_test_revives_a_dead_chat() {
 	assert!(matches!(s.n.test(user, channel).await.unwrap(), Err(Refused::Invalid(_))));
 	assert!(dead().await.is_some(), "still dead");
 	assert!(matches!(s.n.test(Uuid::now_v7(), channel).await.unwrap(), Err(Refused::NotFound)), "not theirs");
+	// Since added, it became a group under another title: the test that arrives learns it.
+	s.mock.chat("-1001", -1001, "supergroup", false, 77);
 	s.n.test(user, channel).await.unwrap().unwrap();
 	assert_eq!(dead().await, None);
+	let now = s
+		.panel
+		.alerts(user, &aliases::operator())
+		.await
+		.unwrap()
+		.destinations
+		.into_iter()
+		.find(|d| d.id == channel)
+		.unwrap();
+	assert_eq!((now.kind, now.title.as_deref()), (panel::telegram::Kind::Group, Some("chat -1001")));
 }
 
 // ── the outbox ───────────────────────────────────────────────────────────────────────────

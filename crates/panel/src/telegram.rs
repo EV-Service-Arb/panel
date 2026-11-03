@@ -337,7 +337,17 @@ impl<B: Bot, C: Refresher + Directory, F: Feeds> Hub<B, C, F> {
 		if let Err(f) = self.bot.send(to, &test, &[], None).await {
 			return Ok(Err(Refused::Invalid(format!("Telegram refused the test: {}", failure_text(&f)))));
 		}
+		// A chat's title is what the bot sees once it is in: an imported one's is learned here; one
+		// Telegram does not describe keeps what it had, the test having reached it all the same.
+		let seen = match d.kind {
+			Kind::Private => None,
+			Kind::Channel | Kind::Group => self.bot.chat(&d.chat_id.to_string()).await.ok(),
+		};
 		let mut conn = self.panel.store.pool().acquire().await.wrap_err("a connection to test a destination")?;
+		if let Some(info) = seen {
+			let kind = if info.kind == "channel" { Kind::Channel } else { Kind::Group };
+			db::describe(&mut conn, destination, kind, info.title.as_deref()).await?;
+		}
 		db::revive(&mut conn, destination).await?;
 		self.panel.live.changed(alerts_changed(user));
 		Ok(Ok(()))

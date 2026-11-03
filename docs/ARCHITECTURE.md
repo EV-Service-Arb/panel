@@ -6,7 +6,7 @@ who a machine is (the source keys), the shell the browser loads, and the forward
 behind the origin — sites_panel (the sites business: leads, places, pricing, experiments,
 bookings, invoices), review_archive and playbook. Each service trusts only the assertion the
 conductor signs for a request; none of them sees a session, and none calls the conductor: it
-reads them. Live updates and Telegram are its hubs, fed by what sites tells it; tokens are
+reads them. Live updates and alerts are its hubs, fed by what the services tell it; tokens are
 charged from what review_archive tells it.
 
 ```text
@@ -14,7 +14,8 @@ browser ─session──▶ conductor ─x-sa-assertion (User)──────
 landings/bots ─HMAC▶ conductor ─x-sa-assertion (Source) + raw body ▶ sites /api/ingest/v1
 conductor ◀── pulls (Conductor) ── sites /api/conductor/{changes, notifications, sources/received,
                                                           internal-reads}
-conductor ◀── pulls (Conductor) ── review_archive /api/conductor/charges
+conductor ◀── pulls (Conductor) ── review_archive /api/conductor/{charges, notifications,
+                                                                   captures/<sha>.png}
 conductor ─── pushes (Conductor) ─▶ review_archive /api/conductor/gmbs   GMBs, balances, the cursor
 conductor ── GET <origin>/.well-known/sa-site, public :443 ──────▶ each site key's landing
 landings ──────────────────────── direct, in-cluster ────────────▶ sites /api/internal
@@ -24,15 +25,18 @@ A cargo workspace; dependencies point inwards only.
 
 ```text
 crates/panel_core/       no I/O: brand ids, the HMAC of a signed request and its window, the
-                         Telegram rules, the conductor's own messages, the buttons' signed data,
-                         retry and pacing, tokens' renewal and a charge's split
+                         conductor's own alert messages, the buttons' signed data, retry and
+                         pacing, tokens' renewal and a charge's split
 crates/panel/            the engine: `Panel` (sources and their authentication, sessions, access
                          requests, the hubs' state), `seal` (XChaCha20-Poly1305 at rest), `store`
-                         (SQLite, migrations/ applied on open, writes BEGIN IMMEDIATE), `telegram`
-                         (links, rules, outbox, delivery, buttons; the Bot, Directory and Sites
-                         ports), `live` (the in-process bus), `gmbs`, `tokens` (the ledger,
-                         review_archive's charges, the snapshot), `import` (review_archive's,
-                         once)
+                         (SQLite, migrations/ applied on open, writes BEGIN IMMEDIATE), `alerts`
+                         (the hub: access, destinations, rules, the feeds fanned out; the
+                         Directory and Feeds ports), `telegram` (the method: links, chats, outbox,
+                         delivery, buttons; the Bot port), `live` (the in-process bus), `gmbs`,
+                         `tokens` (the ledger, review_archive's charges, the snapshot), `import`
+                         (review_archive's, once)
+crates/sa_alerts/        no I/O: the alert rules, and the notes a service publishes to the
+                         conductor and their check; sites and review_archive take it too
 crates/sa_auth/          the `sa` permissions (concierge_iam derives), the aliases `sa:operator` /
                          `sa:admin`, and the assertion: a User, a Source or the Conductor, for one
                          request of one service
@@ -57,12 +61,13 @@ crates/panel_server/     the `panel` binary: CLI and HTTP, thin over `Panel`
   src/live.rs            GET /api/v1/live, and the follower of sites' change feed
   src/gmbs.rs            /api/v1/gmails, /api/v1/gmbs
   src/tokens.rs          /api/v1/tokens, /api/v1/admin/tokens; review_archive followed and told
-  src/telegram.rs        the Bot API, sites as the bot reads it, the bot's work in `serve`,
-                         /api/v1/telegram
+  src/alerts.rs          /api/v1/alerts; the services' feeds as the hub reads them; the hub's
+                         work in `serve`
+  src/telegram.rs        the Bot API, its long poll
   src/web.rs             the front end's static export (PANEL_WEB_DIR), behind every other route
   src/settings.rs        the environment (ev_lib `settings!`)
 crates/panel_gen/        `nix run .#gen`: the front end's mirror of Rust types (ev_lib `ts_gen`),
-                         into frontend/src/entities/{session,source,gmb,tokens,telegram}/model/generated.ts,
+                         into frontend/src/entities/{session,source,gmb,tokens,alerts}/model/generated.ts,
                          committed;
                          the pre-commit hook re-runs it
 contracts/proto/concierge/v1/  concierge's auth and directory protos, vendored at the commit in
@@ -88,8 +93,8 @@ GET /auth/callback   state = the cookie's (constant time), and not redeemed befo
                      + sa_csrf → 303 return_to, else /
 /api/v1/*            not GET: x-sa-csrf must equal sa_csrf; the session (access token rotated
                      when within 30 s of expiry, see below); GetMe (cached ≤ 60 s per session,
-                     asked afresh for POST/DELETE /sources and the Telegram link, one retry when
-                     concierge does not answer) → the caller's permissions, else 401 (cookies
+                     asked afresh for POST/DELETE /sources, the Telegram link and a chat added,
+                     one retry when concierge does not answer) → the caller's permissions, else 401 (cookies
                      cleared) / 503; then the route's section, else 403
 POST /auth/logout    CSRF; every session of the user is closed
 ```
@@ -98,7 +103,7 @@ POST /auth/logout    CSRF; every session of the user is closed
   concrete `sa` permissions the user holds (no alias, no wildcard; anything outside `sa` is a
   failed answer). Every `/api/v1` route sits under one section — Admin
   (`sa:admin:sources:manage`), Tokens (`sa:admin:tokens:grant`) — or none (`/me`,
-  `/access/requests*`, `/telegram*`, the caller's own gmails, GMBs and tokens). Each fresh
+  `/access/requests*`, `/alerts*`, the caller's own gmails, GMBs and tokens). Each fresh
   `GetMe` upserts the user (`users`: id, email, name), whom tokens and gmails belong to.
   `http::api_routes` is the table the router is built from and the tests walk.
 - **The catalog.** `serve` publishes `Catalog::collect("sa", PANEL_BUILD_EPOCH)` — the whole `sa`
@@ -260,13 +265,18 @@ POST   /access/requests                     {need} → 201 {need, requested_at},
 GET    /access/requests/mine                {requests: [{need, requested_at}]}; a need is held
                                             when every permission it stands for is, and both
                                             routes drop the caller's requests held
-GET    /telegram                            {enabled, linked, blocked, account, rules: {rule: bool}}
-                                            (the rules the caller's permissions open)
-POST   /telegram/link        fresh          → 201 {url: "https://t.me/<bot>?start=<token>"};
+GET    /alerts                              {enabled, bot, rules, destinations: [{id, kind, title,
+                                            topic_id, gmail_id, dead, rules: {rule: bool}}]} (the
+                                            rules open to the caller)
+POST   /alerts/telegram/link fresh          → 201 {url: "https://t.me/<bot>?start=<token>"};
                                             503 without a bot
-DELETE /telegram/link                       204, 404
-PUT    /telegram/rules                      {rules: {new_lead: false, …}} → 200 as GET; 400 for a
-                                            rule they do not open
+POST   /alerts/telegram/chats fresh         {chat, gmail_id} → 201 as GET; 400 refused (nothing
+                                            stored), 409 a destination already
+PUT    /alerts/destinations/{id}/rules      {rules: {new_lead: false, …}} → 200 as GET; 400 for a
+                                            rule not open to them
+PUT    /alerts/destinations/{id}/gmail      {gmail_id} → 200 as GET; 404 not theirs
+POST   /alerts/destinations/{id}/test       204; 400 with what Telegram said
+DELETE /alerts/destinations/{id}            204, 404
 GET    /gmails                              {gmails: [{id, gmail, created_at, gmbs: [{id, place_id,
                                             name, address, gbp_account, gbp_location, created_at,
                                             enabled}]}]} the caller's, removed ones left out
@@ -332,8 +342,8 @@ closes              4401 the session ended   1001 the server is stopping
   for 60 s is followed again after 1 s, doubling to 30 s, so what was missed meanwhile is read
   again.
 - **The conductor's own topics:** `sources` (a key minted or revoked; holders of
-  `sa:admin:sources:manage`) and `telegram` (the user's link made, undone or found blocked;
-  their rules; that user only).
+  `sa:admin:sources:manage`) and `alerts` (the user's destinations added, removed, found dead
+  or revived; their rules; that user only).
 - **The shell relays.** The front end holds the one socket and re-dispatches on `window`, as
   `CustomEvent`s: `sa:live` (each server message as is, and a `{type:"resync"}` after the shell
   reconnects), `sa:live-status` (`{status}`; answered to an element's
@@ -382,66 +392,92 @@ push (a change, a page, 60 s)
 - **A place's site** is sites': its `places.gmb_id`, linked from the outline through the forward;
   sites down or refusing leaves the GMBs without the link.
 
-## Telegram
+## Alerts
 
-A bot (`TELEGRAM_BOT_TOKEN`; it needs the forward) writes to each user in a private chat. Rules:
-`new_lead`, `contact_overdue` and `booked` (`sa:sites:work:leads:edit`, on by default),
-`payment_received` and `source_silent` (`sa:admin:sources:manage`, off by default),
-`access_requested` (every permission of `sa:admin`, on by default).
+One hub: rules, their audiences, destinations and the fan-out are the conductor's; the services
+only publish notes (`sa_alerts`), and Telegram is one method of reaching a destination
+(`TELEGRAM_BOT_TOKEN`; it needs the forward). Without a bot, nothing is sent.
 
 ```text
-POST /api/v1/telegram/link  GetMe asked afresh; 256 random bits, base64url; SHA-256 stored with
-                            the caller's permissions, 10 min → t.me/<bot>?start=<token>
-/start <token>              private chats only, not forwarded; the token redeemed once →
-                            telegram_links(user ⇄ chat); a chat linked to another account is
-                            refused ("/stop first"), the token kept
-/stop, DELETE …/link        unlinked; what the outbox still owed them is dropped
-fan-out (2 s)               sites' notes: GET /api/conductor/notifications?after=<cursor>&limit=500
-                            (Conductor) → in one write transaction, each note claimed (rule,
-                            event) and queued for its recipients, and the cursor moved to the
-                            page's `next`; an unknown rule or a button the hub cannot call fails
-                            the page, the cursor stays (loud, never skipped)
-                            the conductor's own: sources silent ≥ 24 h (sites' last receipt per
-                            key, GET /api/conductor/sources/received, else the key's creation;
-                            once per full day of it), access requests (once a day per user and need)
-delivery (0.5 s)            lead messages noted > 1 h ago dead ("stale"); > 20 waiting for a chat
-                            folded into one "N new leads, open the panel" without PII; claim in
-                            one write transaction (nothing while the outbox is paused): ≤ 25 tries
-                            started in any second, one per chat per second, none to a chat with a
-                            send in flight; leased 60 s → the user's access checked again →
-                            sendMessage → sent | retry | dead
+rule               feed            audience                                         default
+new_lead           sites           sa:sites:work:leads:edit                         on
+contact_overdue    sites           sa:sites:work:leads:edit                         on
+booked             sites           sa:sites:work:leads:edit                         on
+payment_received   sites           sa:admin:sources:manage                          off
+source_silent      conductor       sa:admin:sources:manage                          off
+access_requested   conductor       every permission of sa:admin                     on
+review_gone        review_archive  the owners of the GMBs the note names            on
+review_new, review_changed, review_reappeared, scan_failed   (the same)             off
 ```
 
-- **A note is sites' rendering**: its text and Telegram entities, a PII text sent only to holders
-  of `sa:sites:work:pii:see`, the user who is not told (`skip_user`), and its buttons
-  (`{id, label, pressed, call: {method, path under /api/v1/, body}, leaves}`). Queued texts are
-  sealed under `PANEL_DATA_KEY` per chat and dropped once sent or dead; no parse mode, link
-  previews off.
+```text
+feed (2 s)        GET <service>/api/conductor/notifications?after=<cursor>&limit=500 (Conductor), each
+                  service under its own cursor → one write transaction, taken only from where the
+                  cursor stands: each note checked against its feed (its rule's, its GMBs and photo
+                  as its rule says, its buttons callable), claimed (rule, event) and queued for its
+                  audience, the cursor moved to the page's `next`; a note that fails fails the page,
+                  the cursor stays (loud, never skipped); 404: a service not cut over, said once,
+                  asked again every 60 s
+own (2 s)         sources silent ≥ 24 h (sites' last receipt per key, else the key's creation; once
+                  per full day of it), access requests (once a day per user and need)
+audience          a destination: the rule on there, its user's access confirmed within the hour;
+                  a permission rule: their permissions open it; a GMB rule: they own a GMB the note
+                  names, the GMB on, it and its gmail not removed, the destination's gmail theirs if
+                  it is scoped to one
+delivery (0.5 s)  lead messages noted > 1 h ago dead ("stale"); > 20 of one rule waiting for one
+                  destination folded into one summary without PII; claim in one write transaction
+                  (nothing while the outbox is paused): ≤ 25 tries started in any second, one per
+                  private chat per second, one per channel or group per 3 s, none to a chat with a
+                  send in flight; leased 60 s → the user's access checked again → sendMessage, or
+                  sendPhoto with the photo fetched from the note's service (Conductor) → sent |
+                  retry | dead
+```
+
+- **Destinations.** A user's own private chat (one), and channels, groups and forum topics they
+  add. Each has its rules (a rule without a row is at its default) and may be scoped to one of
+  the user's gmails for the GMB rules.
+- **Private chat.** `POST /api/v1/alerts/telegram/link` (GetMe asked afresh; 256 random bits,
+  base64url; SHA-256 stored with the caller's permissions, 10 min) → `t.me/<bot>?start=<token>`;
+  `/start <token>`, in a private chat, not forwarded: the token redeemed once, the chat the user's
+  private destination (a chat linked before is let go, the rules kept); a chat that is another
+  account's is refused ("/stop first"), the token kept. `/stop` removes it.
+- **Channels, groups, topics.** A paste (`@channel`, `-100<id>`, `<group>/<topic>`) is taken
+  only after `getChat` sees it, `getChatMember` says the user's own Telegram account (their
+  private chat's id; linked first) administers it, and a test went out there: a refusal stores
+  nothing. They get the note's non-PII text, never buttons, never the conductor's access
+  requests. One destination per chat and topic.
+- **A note is its service's rendering**: its text and Telegram entities, a PII text sent only to
+  private chats of holders of `sa:sites:work:pii:see`, the user who is not told (`skip_user`), its
+  buttons (`{id, label, pressed, call: {method, path under /api/v1/, body}, leaves}`, sites'),
+  the GMBs it names, a photo path (`review_gone`'s capture, ≤ 1024 UTF-16 of caption, no
+  buttons). Queued texts are sealed under `PANEL_DATA_KEY` per chat and topic and dropped once
+  sent or dead; no parse mode, link previews off.
 - **Updates by long polling.** One process polls, under a lease in `telegram_poller` (60 s,
   renewed every poll); the offset is stored there after each update, and every update is
   idempotent, so one handled twice across a takeover does nothing twice.
-- **Retries.** 429 pauses the whole outbox for `retry_after` and costs the message no try; 5xx
-  and timeouts back off from 10 s, doubling, to 15 min; 10 tries, then dead. 403 and 400 "chat
-  not found" / "user is deactivated" mark the chat dead until the user links again. Any other
-  4xx is dead at once; so is a queued message that no longer opens.
-- **Quiet.** The bot answers commands only; its unsolicited replies go at most once per chat
-  per 10 min.
-- **Who gets a message: permissions concierge confirmed within the hour.** Each link keeps the
+- **Retries.** 429 pauses the whole outbox for `retry_after` and costs the message no try; 5xx,
+  timeouts and a photo not fetched back off from 10 s, doubling, to 15 min; 10 tries, then dead.
+  403 and 400 "chat not found" / "user is deactivated" mark every destination in the chat dead
+  until a send there succeeds again (a link, a test). Any other 4xx is dead at once; so is a
+  queued message that no longer opens.
+- **Quiet.** The bot answers commands in private chats only; its unsolicited replies go at most
+  once per chat per 10 min.
+- **Who gets a message: access concierge confirmed within the hour.** The hub keeps per user the
   set last confirmed and when: the `/api/v1` gate records every `GetMe` answer, and every 15 min
-  the bot asks again for a link not confirmed since, through the user's newest session used
-  within 7 days. The set is checked again when a message is sent. A grant revoked at concierge,
-  or a session concierge refuses to rotate (or whose `GetMe` it refuses twice running), stops
-  messages at the next check and drops what was queued; no session used for a week, or concierge
-  unreachable, stops them after an hour.
+  the hub asks again for a user with a destination reached, not confirmed since, through their
+  newest session used within 7 days. The set is checked again when a message is sent. A grant
+  revoked at concierge, or a session concierge refuses to rotate (or whose `GetMe` it refuses
+  twice running), stops messages at the next check and drops what was queued; no session used
+  for a week, or concierge unreachable, stops them after an hour.
 - **Buttons.** The callback data is `<button id>.<outbox id>.<HMAC-SHA256, 80 bits>` under a key
   derived from `PANEL_DATA_KEY`, bound to the chat; a message sent with one-letter buttons
-  (`t`, `n`) presses as `take`, `no_answer`. The message must be that chat's, the chat linked to
-  the message's user, and the user's access is asked of concierge at the press — with no live
-  session to ask with, the answer is "open the panel". The button's call goes to sites as that
-  user (a User assertion, the sites slice) with `Idempotency-Key: tg/<outbox id>/<button id>`,
-  so a press repeated, or its update redelivered, records nothing twice. 201: the message gains
-  "{pressed}: {name}" and keeps the buttons the press `leaves`; 200, 400, 409 "already
-  recorded"; 404 "not found"; 403 "no access"; anything else "try again".
+  (`t`, `n`) presses as `take`, `no_answer`. The message must be that chat's, the chat the
+  private chat of the message's user, and the user's access is asked of concierge at the press —
+  with no live session to ask with, the answer is "open the panel". The button's call goes to
+  sites as that user (a User assertion, the sites slice) with `Idempotency-Key: tg/<outbox
+  id>/<button id>`, so a press repeated, or its update redelivered, records nothing twice. 201:
+  the message gains "{pressed}: {name}" and keeps the buttons the press `leaves`; 200, 400, 409
+  "already recorded"; 404 "not found"; 403 "no access"; anything else "try again".
 - Language of the conductor's own texts: `TELEGRAM_LOCALE` (`ru` default, `en`).
 
 ## Invariants
@@ -461,6 +497,8 @@ delivery (0.5 s)            lead messages noted > 1 h ago dead ("stale"); > 20 w
 - **Secrets never sit in the clear.** Sources' HMAC secrets, sessions' tokens and queued Telegram
   texts are sealed (XChaCha20-Poly1305, what they belong to as associated data) under
   `PANEL_DATA_KEY`, whose fingerprint is stored beside each.
+- **Alerts are the conductor's.** A service publishes notes and never reaches a person itself;
+  who is told, where and how is decided here.
 - **A note is in the outbox before the cursor passes it**: the page and the cursor move in one
   transaction. **So is a charge in the ledger**, and a page is taken only from where the cursor
   stands.

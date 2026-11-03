@@ -236,6 +236,18 @@ pub async fn revive(conn: &mut SqliteConnection, destination: i64) -> eyre::Resu
 	Ok(())
 }
 
+/// What a channel's or group's destination is, as Telegram says now.
+pub async fn describe(conn: &mut SqliteConnection, destination: i64, kind: Kind, title: Option<&str>) -> eyre::Result<()> {
+	sqlx::query("UPDATE telegram_destinations SET kind = $2, title = $3 WHERE destination_id = $1 AND kind <> 'private'")
+		.bind(destination)
+		.bind(kind.as_ref())
+		.bind(title)
+		.execute(&mut *conn)
+		.await
+		.wrap_err("describing a chat")?;
+	Ok(())
+}
+
 /// A destination's chat and topic as they stand, and whether it is reached.
 pub async fn reach(conn: &mut SqliteConnection, destination: i64) -> eyre::Result<Option<(i64, Option<i64>, bool)>> {
 	sqlx::query_as("SELECT chat_id, topic_id, dead_at IS NULL FROM telegram_destinations WHERE destination_id = $1")
