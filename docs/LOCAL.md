@@ -48,6 +48,25 @@ front end from `next dev` on this checkout's `frontend/`, which proxies `/api`, 
 bundles and `/grafana` to the conductor and is the origin to open (the sign-in returns there, the
 live socket comes from there). The landings are `next dev` either way.
 
+### `nix run .#dev`
+
+```sh
+nix run .#dev                  # the conductor, sites_panel and review_archive under --watch, no landings
+nix run .#dev -- --port <n>    # the conductor on n and its next dev on n+1, beside the usual one
+```
+
+Each part already answering `/health` on its port is used as it is; the rest are started under
+`--watch`, and Ctrl-C stops only those. The peers are the services whose bundles the front end
+mounts — `devPeers` in flake.nix — each from `../<name>` beside the main checkout; one not there
+is skipped with a warning. `devUsers` in flake.nix gives a user (`id -un`) another `path` for a
+peer (relative to the main checkout, or absolute), or a `command`, run as is in the peer's
+checkout in place of the stack's own serve, which must answer on the port its dev shell sets and
+watch by itself. `SITES_DIR` and `REVIEW_ARCHIVE_DIR` still win. `--port` takes two ports of
+`SA_PORT_RANGE` (docs/port_range.md) and a state of its own, `.local-port-<n>/`: two conductors
+never share a `panel.db`. Next runs one `next dev` per `frontend/`: `--port` beside a dev stack of
+the same checkout fails to start its front end; run it from another checkout (a worktree). The concierge and banking bundles come from the platform's origin, so
+they are nobody's peer here.
+
 The first run builds the conductor, sites_panel and their front ends with Nix (minutes), and
 each landing's `nix run .#dev` installs its `node_modules` (minutes again). Later runs start in
 seconds.
@@ -81,7 +100,7 @@ What it does (`scripts/local-stack.sh`, which the flake app runs as is):
    | `POSTHOG_KEY` | unset: analytics off |
 
 5. Prints the URLs, prefixes every log line with whose it is, and stops everything on Ctrl-C
-   (or when the conductor or sites_panel stops). Started from a non-interactive shell (an agent's, in the
+   (or when the conductor, sites_panel or review_archive stops). Started from a non-interactive shell (an agent's, in the
    background), SIGINT does not reach it: stop it with `kill <pid>` (SIGTERM), which does the
    same. Each part runs in a process group of its own, so the caller's shell is never hit.
 

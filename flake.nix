@@ -321,6 +321,28 @@
           runtimeInputs = with pkgs; [ coreutils curl gawk git gnused util-linux nodejs_22 watchexec litestream sops yq-go openssh gnutar ];
           text = lib.concatStrings (lib.mapAttrsToList (k: v: "export ${k}=${v}\n") localEnv) + builtins.readFile ./scripts/local-stack.sh;
         };
+
+        # `nix run .#dev`'s peers, from ../<name> unless their user's entry names a `path` or `command` (docs/LOCAL.md)
+        devPeers = [ "sites_panel" "review_archive" ];
+        devUsers = {
+          v.sites_panel.path = "../sites/panel";
+        };
+        devPrelude = lib.concatStrings (lib.mapAttrsToList
+          (user: peers:
+            "if [ \"$(id -un)\" = ${lib.escapeShellArg user} ]; then\n"
+            + lib.concatStrings (lib.mapAttrsToList
+              (peer: o:
+                assert lib.assertMsg (builtins.elem peer devPeers) "devUsers.${user}.${peer}: not one of devPeers";
+                assert lib.assertMsg (lib.subtractLists [ "path" "command" ] (lib.attrNames o) == [ ]) "devUsers.${user}.${peer}: only path and command";
+                lib.concatStrings (lib.mapAttrsToList (k: v: "export DEV_${lib.toUpper k}_${peer}=${lib.escapeShellArg v}\n") o))
+              peers)
+            + "fi\n")
+          devUsers);
+        dev = pkgs.writeShellApplication {
+          name = "dev";
+          runtimeInputs = [ pkgs.coreutils ];
+          text = devPrelude + ''exec ${lib.getExe localStack} --dev "$@"'';
+        };
       in
       {
         apps = {
@@ -331,6 +353,7 @@
           };
           publish = v_flakes.utils.publish pkgs;
           gen = { type = "app"; program = lib.getExe gen; meta.description = "the front end's mirror of the Rust types (pre-commit runs it too)"; };
+          dev = { type = "app"; program = lib.getExe dev; meta.description = "the conductor and its peers under watch, each started unless it already serves (docs/LOCAL.md)"; };
           local-stack = { type = "app"; program = lib.getExe localStack; meta.description = "the conductor, its Grafana, sites_panel, review_archive and both landings, wired together on this machine (docs/LOCAL.md)"; };
         };
 

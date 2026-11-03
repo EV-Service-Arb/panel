@@ -11,6 +11,8 @@
 #   nix run .#local-stack -- --watch       every part rebuilt and restarted as its checkout is edited
 #   nix run .#local-stack -- --port-offset 1000   every port moved by 1000: a second stack, e.g. a worktree's
 #   nix run .#local-stack -- --reset --from-prod   prod's databases, from their litestream replicas
+#   nix run .#dev [-- --port <n>]          the conductor, sites_panel and review_archive under --watch,
+#                                          each started unless it already serves; the conductor on n
 #
 # The conductor and its front end come from `nix build .#bin` / `.#frontend` of this checkout,
 # unless PANEL_BIN / PANEL_WEB_DIR name others (PANEL_BIN=target/debug/panel for a cargo build);
@@ -37,6 +39,8 @@ VIFNET_PLACES=(vifnet)
 reset=0
 sites=1
 watch=0
+dev=0
+own_port=""
 from_prod=0
 role="admin"
 while [ $# -gt 0 ]; do
@@ -45,6 +49,15 @@ while [ $# -gt 0 ]; do
 	--no-sites) sites=0 ;;
 	--watch) watch=1 ;;
 	--from-prod) from_prod=1 ;;
+	--dev) dev=1 ;;
+	--port)
+		own_port="${2:-}"
+		[[ "$own_port" =~ ^[0-9]+$ ]] || {
+			echo "--port takes a number, not '$own_port'" >&2
+			exit 2
+		}
+		shift
+		;;
 	--port-offset)
 		offset="${2:-}"
 		[[ "$offset" =~ ^[0-9]+$ ]] || {
@@ -60,6 +73,7 @@ while [ $# -gt 0 ]; do
 	-h | --help)
 		cat <<'EOF'
 local-stack [--reset] [--no-sites] [--watch] [--role admin|operator] [--port-offset <n>] [--from-prod]
+dev [--port <n>] [--reset] [--role admin|operator] [--from-prod]
 
   The conductor (dev sign-in, its Grafana at /grafana/), sites_panel, review_archive, aquafix and
   vifnet, wired together, each on the port its dev shell sets. State in .local/ (--reset wipes
@@ -71,6 +85,9 @@ local-stack [--reset] [--no-sites] [--watch] [--role admin|operator] [--port-off
   (the keys from ../devops's sops), and review_archive's blobs over ssh (PROD_SSH), into a state
   with none of them: with --reset.
   Dev sign-in is one user whatever --role (DEV_EMAIL, at the top of the script): prod's, when copied.
+  dev (--dev): --watch without the landings, each of the conductor, sites_panel and review_archive
+  started unless it already answers on its port, a peer without a checkout skipped with a warning.
+  --port <n>: the conductor on n and its next dev on n+1, in SA_PORT_RANGE, with a state of its own.
 EOF
 		exit 0
 		;;
@@ -88,12 +105,21 @@ admin | operator) ;;
 	exit 2
 	;;
 esac
+if [ "$dev" = 1 ]; then
+	watch=1
+	sites=0
+fi
+[ -z "$own_port" ] || [ "$dev" = 1 ] || {
+	echo "--port is dev's: local-stack moves every port with --port-offset" >&2
+	exit 2
+}
 
 say() { printf '\033[1m▶ %s\033[0m\n' "$*" >&2; }
 die() {
 	printf '\033[31m✗ %s\033[0m\n' "$*" >&2
 	exit 1
 }
+warn() { printf '\033[33m! %s\033[0m\n' "$*" >&2; }
 
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run this from inside the conductor's checkout"
 [ -f "$root/crates/panel_server/Cargo.toml" ] || die "$root is not the conductor's checkout"
@@ -101,6 +127,16 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run this from inside
 # sites/{panel,aquafix,vifnet}}), also when this is one of its worktrees.
 main_checkout="$(dirname "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)")"
 service_arb="$(dirname "$main_checkout")"
+if [ "$dev" = 1 ]; then
+	# DEV_PATH_<peer>: its user's path, flake.nix devUsers
+	dev_dir() {
+		local p="${1:-../$2}"
+		[[ "$p" = /* ]] || p="$main_checkout/$p"
+		realpath -m "$p"
+	}
+	SITES_DIR="${SITES_DIR:-$(dev_dir "${DEV_PATH_sites_panel:-}" sites_panel)}"
+	REVIEW_ARCHIVE_DIR="${REVIEW_ARCHIVE_DIR:-$(dev_dir "${DEV_PATH_review_archive:-}" review_archive)}"
+fi
 SITES_DIR="${SITES_DIR:-$service_arb/sites/panel}"
 REVIEW_ARCHIVE_DIR="${REVIEW_ARCHIVE_DIR:-$service_arb/review_archive}"
 AQUAFIX_DIR="${AQUAFIX_DIR:-$service_arb/sites/aquafix}"
@@ -109,6 +145,8 @@ VIFNET_DIR="${VIFNET_DIR:-$service_arb/sites/vifnet}"
 # a stack on other ports is another stack: its own databases, and its own review_archive serve.lock
 state="${LOCAL_STACK_DIR:-$root/.local}"
 [ "$offset" = 0 ] || state="${LOCAL_STACK_DIR:-$root/.local-$offset}"
+# a conductor on a port of its own beside the usual one: never two on one panel.db
+[ -z "$own_port" ] || state="${LOCAL_STACK_DIR:-$root/.local-port-$own_port}"
 if [ "$reset" = 1 ] && [ -d "$state" ]; then
 	say "--reset: wiping $state"
 	rm -rf "$state"
@@ -128,21 +166,64 @@ shell_port() {
 	v="$(nix eval --raw "$1#devShells.$system.default.$2")" || die "$1's dev shell sets no $2"
 	echo $((${v##*:} + offset))
 }
-PANEL_PORT=$((PANEL_PORT + offset))
-WEB_DEV_PORT=$((WEB_DEV_PORT + offset))
+if [ -n "$own_port" ]; then
+	range="${SA_PORT_RANGE:?$need}"
+	[ "$own_port" -ge "${range%-*}" ] && [ "$((own_port + 1))" -le "${range#*-}" ] ||
+		die "--port $own_port: the conductor and its next dev take $own_port and $((own_port + 1)), both in SA_PORT_RANGE $range (docs/port_range.md)"
+	PANEL_PORT="$own_port"
+	WEB_DEV_PORT=$((own_port + 1))
+else
+	PANEL_PORT=$((PANEL_PORT + offset))
+	WEB_DEV_PORT=$((WEB_DEV_PORT + offset))
+fi
 SITES_PORT="$(shell_port "$SITES_DIR" PANEL_BIND)"
 REVIEW_ARCHIVE_PORT="$(shell_port "$REVIEW_ARCHIVE_DIR" REVIEW_ARCHIVE_SERVER_BIND)"
-AQUAFIX_PORT="$(shell_port "$AQUAFIX_DIR" PORT)"
-VIFNET_PORT="$(shell_port "$VIFNET_DIR" PORT)"
+AQUAFIX_PORT=""
+VIFNET_PORT=""
+if [ "$sites" = 1 ] || [ "$dev" = 0 ]; then
+	AQUAFIX_PORT="$(shell_port "$AQUAFIX_DIR" PORT)"
+	VIFNET_PORT="$(shell_port "$VIFNET_DIR" PORT)"
+fi
 
 busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
-if curl -fsS -o /dev/null --max-time 5 "http://127.0.0.1:$PANEL_PORT/health" 2>/dev/null; then
+answers() { curl -fsS -o /dev/null --max-time 5 "http://127.0.0.1:$1/health" 2>/dev/null; }
+# What this run starts: under dev, each part not already answering on its port; else all of them.
+run_panel=1
+run_sites=1
+run_review_archive=1
+if [ "$dev" = 1 ]; then
+	if answers "$PANEL_PORT"; then
+		say "the conductor already serves http://127.0.0.1:$PANEL_PORT: using it"
+		run_panel=0
+	fi
+	if [ -z "$SITES_PORT" ]; then
+		warn "skipping sites_panel: no checkout at $SITES_DIR (flake.nix devUsers, or SITES_DIR, names another)"
+		run_sites=0
+	elif answers "$SITES_PORT"; then
+		say "sites_panel already serves http://127.0.0.1:$SITES_PORT: using it"
+		run_sites=0
+	fi
+	if [ -z "$REVIEW_ARCHIVE_PORT" ]; then
+		warn "skipping review_archive: no checkout at $REVIEW_ARCHIVE_DIR (flake.nix devUsers, or REVIEW_ARCHIVE_DIR, names another)"
+		run_review_archive=0
+	elif answers "$REVIEW_ARCHIVE_PORT"; then
+		say "review_archive already serves http://127.0.0.1:$REVIEW_ARCHIVE_PORT: using it"
+		run_review_archive=0
+	fi
+	if [ "$run_panel$run_sites$run_review_archive" = 000 ]; then
+		if busy "$WEB_DEV_PORT"; then say "open http://localhost:$WEB_DEV_PORT"; else say "open http://127.0.0.1:$PANEL_PORT"; fi
+		exit 0
+	fi
+elif answers "$PANEL_PORT"; then
 	echo "a stack already serves http://127.0.0.1:$PANEL_PORT (and http://localhost:$WEB_DEV_PORT under --watch): use it, or --port-offset <n> for another" >&2
 	exit 0
 fi
-ports=("$PANEL_PORT" "$SITES_PORT" "$REVIEW_ARCHIVE_PORT")
+ports=()
+[ "$run_panel" = 1 ] && ports+=("$PANEL_PORT")
+[ "$run_sites" = 1 ] && ports+=("$SITES_PORT")
+[ "$run_review_archive" = 1 ] && ports+=("$REVIEW_ARCHIVE_PORT")
 [ "$sites" = 1 ] && ports+=("$AQUAFIX_PORT" "$VIFNET_PORT")
-[ "$watch" = 1 ] && ports+=("$WEB_DEV_PORT")
+[ "$watch" = 1 ] && [ "$run_panel" = 1 ] && ports+=("$WEB_DEV_PORT")
 for port in "${ports[@]}"; do
 	[ -n "$port" ] || continue # a checkout absent, skipped below
 	busy "$port" && die "port $port is taken — another local stack, or \`lsof -nP -iTCP:$port -sTCP:LISTEN\` says who"
@@ -196,19 +277,26 @@ if [ "$watch" = 1 ]; then
 	for v in PANEL_BIN PANEL_WEB_DIR SITES_BIN SITES_MFE_DIR REVIEW_ARCHIVE_BIN REVIEW_ARCHIVE_MFE_DIR; do
 		[ -z "${!v:-}" ] || die "--watch builds every part from its checkout: unset $v"
 	done
-	[ -f "$SITES_DIR/flake.nix" ] || die "no sites_panel checkout at $SITES_DIR: SITES_DIR names it"
-	[ -f "$REVIEW_ARCHIVE_DIR/flake.nix" ] || die "no review_archive checkout at $REVIEW_ARCHIVE_DIR: REVIEW_ARCHIVE_DIR names it"
-	say "building the conductor, sites_panel, review_archive and the bundles from their checkouts"
+	# also when another conductor serves: `panel gen-data-key` makes the state's key
+	say "building the conductor from $root"
 	in_shell "$root" cargo b -q -p panel_server
-	in_shell "$SITES_DIR" cargo b -q -p panel_server
-	in_shell "$REVIEW_ARCHIVE_DIR" cargo b -q -p review_archive_server
-	(cd "$REVIEW_ARCHIVE_DIR" && nix run .#build-mfe -- "$state/watch/review_archive-mfe")
-	(cd "$SITES_DIR/frontend" && { [ -d node_modules ] || npm ci; } && npm run -s build)
 	PANEL_BIN="$root/target/debug/panel"
-	SITES_BIN="$SITES_DIR/target/debug/sites_panel"
-	SITES_MFE_DIR="$SITES_DIR/frontend/dist"
-	REVIEW_ARCHIVE_BIN="$REVIEW_ARCHIVE_DIR/target/debug/review_archive"
-	REVIEW_ARCHIVE_MFE_DIR="$state/watch/review_archive-mfe"
+	if [ "$run_sites" = 1 ] && [ -z "${DEV_COMMAND_sites_panel:-}" ]; then
+		[ -f "$SITES_DIR/flake.nix" ] || die "no sites_panel checkout at $SITES_DIR: SITES_DIR names it"
+		say "building sites_panel and its bundle from $SITES_DIR"
+		in_shell "$SITES_DIR" cargo b -q -p panel_server
+		(cd "$SITES_DIR/frontend" && { [ -d node_modules ] || npm ci; } && npm run -s build)
+		SITES_BIN="$SITES_DIR/target/debug/sites_panel"
+		SITES_MFE_DIR="$SITES_DIR/frontend/dist"
+	fi
+	if [ "$run_review_archive" = 1 ] && [ -z "${DEV_COMMAND_review_archive:-}" ]; then
+		[ -f "$REVIEW_ARCHIVE_DIR/flake.nix" ] || die "no review_archive checkout at $REVIEW_ARCHIVE_DIR: REVIEW_ARCHIVE_DIR names it"
+		say "building review_archive and its bundle from $REVIEW_ARCHIVE_DIR"
+		in_shell "$REVIEW_ARCHIVE_DIR" cargo b -q -p review_archive_server
+		(cd "$REVIEW_ARCHIVE_DIR" && nix run .#build-mfe -- "$state/watch/review_archive-mfe")
+		REVIEW_ARCHIVE_BIN="$REVIEW_ARCHIVE_DIR/target/debug/review_archive"
+		REVIEW_ARCHIVE_MFE_DIR="$state/watch/review_archive-mfe"
+	fi
 fi
 if [ -z "${PANEL_BIN:-}" ]; then
 	say "building the conductor (nix build .#bin)"
@@ -223,25 +311,24 @@ elif [ -z "${PANEL_WEB_DIR:-}" ]; then
 	PANEL_WEB_DIR="$state/build/frontend"
 fi
 [ -x "$PANEL_BIN" ] || die "PANEL_BIN $PANEL_BIN is not an executable"
-if [ -z "${SITES_BIN:-}" ]; then
+if [ "$run_sites" = 1 ] && [ "$watch" = 0 ] && [ -z "${SITES_BIN:-}" ]; then
 	[ -f "$SITES_DIR/flake.nix" ] || die "no sites_panel checkout at $SITES_DIR: SITES_DIR names it"
 	say "building sites_panel ($SITES_DIR#bin)"
 	nix build "$SITES_DIR#bin" --out-link "$state/build/sites"
 	SITES_BIN="$state/build/sites/bin/sites_panel"
 fi
-if [ -z "${SITES_MFE_DIR:-}" ]; then
+if [ "$run_sites" = 1 ] && [ "$watch" = 0 ] && [ -z "${SITES_MFE_DIR:-}" ]; then
 	say "building the sites' bundle ($SITES_DIR#frontend)"
 	nix build "$SITES_DIR#frontend" --out-link "$state/build/sites-mfe"
 	SITES_MFE_DIR="$state/build/sites-mfe"
 fi
-[ -x "$SITES_BIN" ] || die "SITES_BIN $SITES_BIN is not an executable"
-if [ -z "${PANEL_GRAFANA_SERVER:-}" ]; then
+[ "$run_sites" = 0 ] || [ -n "${DEV_COMMAND_sites_panel:-}" ] || [ -x "$SITES_BIN" ] || die "SITES_BIN $SITES_BIN is not an executable"
+if [ "$run_panel" = 1 ] && [ -z "${PANEL_GRAFANA_SERVER:-}" ]; then
 	say "building Grafana (nix build .#grafana-server)"
 	nix build "$root#grafana-server" --out-link "$state/build/grafana-server"
 	PANEL_GRAFANA_SERVER="$state/build/grafana-server"
 fi
-review_archive=1
-if [ -z "${REVIEW_ARCHIVE_BIN:-}" ] || [ -z "${REVIEW_ARCHIVE_MFE_DIR:-}" ]; then
+if [ "$run_review_archive" = 1 ] && [ "$watch" = 0 ] && { [ -z "${REVIEW_ARCHIVE_BIN:-}" ] || [ -z "${REVIEW_ARCHIVE_MFE_DIR:-}" ]; }; then
 	if [ -f "$REVIEW_ARCHIVE_DIR/flake.nix" ]; then
 		if [ -z "${REVIEW_ARCHIVE_BIN:-}" ]; then
 			say "building review_archive ($REVIEW_ARCHIVE_DIR#bin)"
@@ -255,7 +342,7 @@ if [ -z "${REVIEW_ARCHIVE_BIN:-}" ] || [ -z "${REVIEW_ARCHIVE_MFE_DIR:-}" ]; the
 		fi
 	else
 		echo "skipping review_archive: no checkout at $REVIEW_ARCHIVE_DIR (REVIEW_ARCHIVE_DIR names it); /api/review_archive answers 502" >&2
-		review_archive=0
+		run_review_archive=0
 	fi
 fi
 
@@ -265,7 +352,9 @@ fi
 origin="http://127.0.0.1:$PANEL_PORT"
 # The browser's origin: the sign-in sends it back there, and the live socket must come from it.
 public_origin="$origin"
-[ "$watch" = 1 ] && public_origin="http://localhost:$WEB_DEV_PORT"
+if [ "$watch" = 1 ] && { [ "$run_panel" = 1 ] || busy "$WEB_DEV_PORT"; }; then
+	public_origin="http://localhost:$WEB_DEV_PORT"
+fi
 sites_origin="http://127.0.0.1:$SITES_PORT"
 review_archive_origin="http://127.0.0.1:$REVIEW_ARCHIVE_PORT"
 # A key for this machine alone: the 32 bytes 0..31, and its public half for sites_panel.
@@ -322,38 +411,44 @@ EOF
 
 # ── seed: idempotent, so every run may do it ─────────────────────────────────────────────
 
-say "seeding $state/panel.db and $state/sites_panel.db"
-fresh=0
-[ -e "$state/panel.db" ] || fresh=1
-panel migrate
-sites_panel migrate
-# Tokens and GMBs open with the import from review_archive: here, of nothing, into a new panel.db
-# (one copied in has its own).
-if [ "$fresh" = 1 ]; then
-	echo '{"people": [], "gmails": [], "gmbs": [], "ledger": [], "kickbacks": []}' >"$state/review-archive-export.json"
-	panel import review-archive "$state/review-archive-export.json"
-fi
-# The stack's own keys, `<brand>-local`: a copy of prod has prod's `<brand>-site`, whose secrets
-# are not here. A secret is shown once: kept in .local/secrets/<key id> for the next run. Its origin
-# is the landing's; the same origin again is no change, another one is refused.
-source_key() {
-	local key_id="$1" brand="$2" origin="$3" file="$state/secrets/$1"
-	if panel source list | awk -v k="$key_id" '$1 == k && $NF == "active" { found = 1 } END { exit !found }'; then
-		[ -s "$file" ] || die "source $key_id exists but its secret is not in $file — start over with --reset"
-		panel source set-origin "$key_id" "$origin" || die "source $key_id has another origin than $origin — start over with --reset"
-	else
-		panel source add "$key_id" --kind site --brand "$brand" --origin "$origin" | awk '$1 == "secret:" { print $2 }' >"$file"
-		[ -s "$file" ] || die "panel source add $key_id printed no secret"
+# a conductor or sites_panel already serving has its own state, seeded by the run that started it
+if [ "$run_panel" = 1 ]; then
+	say "seeding $state/panel.db"
+	fresh=0
+	[ -e "$state/panel.db" ] || fresh=1
+	panel migrate
+	# Tokens and GMBs open with the import from review_archive: here, of nothing, into a new panel.db
+	# (one copied in has its own).
+	if [ "$fresh" = 1 ]; then
+		echo '{"people": [], "gmails": [], "gmbs": [], "ledger": [], "kickbacks": []}' >"$state/review-archive-export.json"
+		panel import review-archive "$state/review-archive-export.json"
 	fi
-}
-# a landing with no checkout has no port, and no source either
-[ -z "$AQUAFIX_PORT" ] || source_key aquafix-local aquafix "http://localhost:$AQUAFIX_PORT"
-[ -z "$VIFNET_PORT" ] || source_key vifnet-local vifnet "http://localhost:$VIFNET_PORT"
-register() {
-	sites_panel place register "$1" "$2" >/dev/null 2>>"$state/logs/seed.log" || die "registering $1/$2 failed: see $state/logs/seed.log"
-}
-for slug in "${AQUAFIX_PLACES[@]}"; do register aquafix "$slug"; done
-for slug in "${VIFNET_PLACES[@]}"; do register vifnet "$slug"; done
+	# The stack's own keys, `<brand>-local`: a copy of prod has prod's `<brand>-site`, whose secrets
+	# are not here. A secret is shown once: kept in .local/secrets/<key id> for the next run. Its origin
+	# is the landing's; the same origin again is no change, another one is refused.
+	source_key() {
+		local key_id="$1" brand="$2" origin="$3" file="$state/secrets/$1"
+		if panel source list | awk -v k="$key_id" '$1 == k && $NF == "active" { found = 1 } END { exit !found }'; then
+			[ -s "$file" ] || die "source $key_id exists but its secret is not in $file — start over with --reset"
+			panel source set-origin "$key_id" "$origin" || die "source $key_id has another origin than $origin — start over with --reset"
+		else
+			panel source add "$key_id" --kind site --brand "$brand" --origin "$origin" | awk '$1 == "secret:" { print $2 }' >"$file"
+			[ -s "$file" ] || die "panel source add $key_id printed no secret"
+		fi
+	}
+	# a landing with no checkout has no port, and no source either
+	[ -z "$AQUAFIX_PORT" ] || source_key aquafix-local aquafix "http://localhost:$AQUAFIX_PORT"
+	[ -z "$VIFNET_PORT" ] || source_key vifnet-local vifnet "http://localhost:$VIFNET_PORT"
+fi
+if [ "$run_sites" = 1 ] && [ -z "${DEV_COMMAND_sites_panel:-}" ]; then
+	say "seeding $state/sites_panel.db"
+	sites_panel migrate
+	register() {
+		sites_panel place register "$1" "$2" >/dev/null 2>>"$state/logs/seed.log" || die "registering $1/$2 failed: see $state/logs/seed.log"
+	}
+	for slug in "${AQUAFIX_PLACES[@]}"; do register aquafix "$slug"; done
+	for slug in "${VIFNET_PLACES[@]}"; do register vifnet "$slug"; done
+fi
 
 # ── run ──────────────────────────────────────────────────────────────────────────────────
 
@@ -405,7 +500,8 @@ wait_for() {
 # included) in that checkout's dev shell, stopped and run again as the files watched change
 export -f panel sites_panel review_archive
 export state public_origin role DEV_EMAIL PANEL_WEB_DIR assertion_key assertion_public sites_origin review_archive_origin \
-	PANEL_GRAFANA_SERVER PANEL_BIN SITES_BIN SITES_MFE_DIR REVIEW_ARCHIVE_BIN REVIEW_ARCHIVE_MFE_DIR REVIEW_ARCHIVE_DATA_DIR REVIEW_ARCHIVE_PORT
+	PANEL_GRAFANA_SERVER PANEL_BIN SITES_BIN SITES_MFE_DIR REVIEW_ARCHIVE_BIN REVIEW_ARCHIVE_MFE_DIR REVIEW_ARCHIVE_DATA_DIR REVIEW_ARCHIVE_PORT \
+	PANEL_PORT SITES_PORT
 watched() {
 	local dir="$1"
 	shift
@@ -422,36 +518,64 @@ serving() {
 	fi
 }
 
-say "starting sites_panel on $sites_origin"
-serving sites "$SITES_DIR" "cargo b -q -p panel_server" "sites_panel serve --bind 127.0.0.1:$SITES_PORT" -e rs,toml,sql,lock &
-sites_pid=$!
-groups+=("$sites_pid")
-wait_for sites "$sites_origin/health" 30 "$sites_pid" || die "sites_panel did not start"
-
-if [ "$review_archive" = 1 ]; then
-	say "starting review_archive on $review_archive_origin"
-	mkdir -p "$REVIEW_ARCHIVE_DATA_DIR"
-	flock "$REVIEW_ARCHIVE_DATA_DIR/serve.lock" sleep infinity &
+# The parts whose stop stops the rest.
+essential=()
+# `custom <name> <checkout> <command>`: a peer served by its user's DEV_COMMAND_<peer> (flake.nix
+# devUsers) in place of the stack's own, in its checkout, on the port its dev shell sets
+custom() {
+	say "starting $1 from $2 with \`$3\`"
+	(cd "$2" && prefixed "$1" bash -c "$3") &
 	groups+=("$!")
-	serving review_archive "$REVIEW_ARCHIVE_DIR" "cargo b -q -p review_archive_server" "review_archive serve --no-login-check" \
-		-w grafana -i 'crates/review_archive_web/**' -e rs,toml,sql,json,lock &
-	review_archive_pid=$!
-	groups+=("$review_archive_pid")
-	wait_for review_archive "$review_archive_origin/health" 60 "$review_archive_pid" || die "review_archive did not start"
+	essential+=("$!")
+}
+
+if [ "$run_sites" = 1 ]; then
+	if [ -n "${DEV_COMMAND_sites_panel:-}" ]; then
+		custom sites "$SITES_DIR" "$DEV_COMMAND_sites_panel"
+		wait_for sites "$sites_origin/health" 600 "$!" || die "sites_panel did not start"
+	else
+		say "starting sites_panel on $sites_origin"
+		serving sites "$SITES_DIR" "cargo b -q -p panel_server" "sites_panel serve --bind 127.0.0.1:$SITES_PORT" -e rs,toml,sql,lock &
+		groups+=("$!")
+		essential+=("$!")
+		wait_for sites "$sites_origin/health" 30 "$!" || die "sites_panel did not start"
+		if [ "$watch" = 1 ]; then
+			prefixed sites-mfe watched "$SITES_DIR" --postpone -w frontend/src -w frontend/messages -- "cd frontend && npm run -s build" &
+			groups+=("$!")
+		fi
+	fi
 fi
 
-say "starting the conductor on $origin (dev sign-in: $role)"
-serving panel "$root" "cargo b -q -p panel_server" "panel serve --bind 127.0.0.1:$PANEL_PORT" -i 'crates/panel_gen/**' -e rs,toml,sql,lock &
-panel_pid=$!
-groups+=("$panel_pid")
-wait_for panel "$origin/health" 30 "$panel_pid" || die "the conductor did not start"
+if [ "$run_review_archive" = 1 ]; then
+	if [ -n "${DEV_COMMAND_review_archive:-}" ]; then
+		custom review_archive "$REVIEW_ARCHIVE_DIR" "$DEV_COMMAND_review_archive"
+		wait_for review_archive "$review_archive_origin/health" 600 "$!" || die "review_archive did not start"
+	else
+		say "starting review_archive on $review_archive_origin"
+		mkdir -p "$REVIEW_ARCHIVE_DATA_DIR"
+		flock "$REVIEW_ARCHIVE_DATA_DIR/serve.lock" sleep infinity &
+		groups+=("$!")
+		serving review_archive "$REVIEW_ARCHIVE_DIR" "cargo b -q -p review_archive_server" "review_archive serve --no-login-check" \
+			-w grafana -i 'crates/review_archive_web/**' -e rs,toml,sql,json,lock &
+		groups+=("$!")
+		essential+=("$!")
+		wait_for review_archive "$review_archive_origin/health" 60 "$!" || die "review_archive did not start"
+		if [ "$watch" = 1 ]; then
+			prefixed review_archive-mfe watched "$REVIEW_ARCHIVE_DIR" --postpone -w crates/review_archive_web -w crates/review_archive_client -w crates/review_archive_core -e rs,css,html,toml -- "$REVIEW_ARCHIVE_WEB_BUILD" &
+			groups+=("$!")
+		fi
+	fi
+fi
 
-if [ "$watch" = 1 ]; then
-	say "watching the bundles of review_archive and sites"
-	prefixed review_archive-mfe watched "$REVIEW_ARCHIVE_DIR" --postpone -w crates/review_archive_web -w crates/review_archive_client -w crates/review_archive_core -e rs,css,html,toml -- "$REVIEW_ARCHIVE_WEB_BUILD" &
+if [ "$run_panel" = 1 ]; then
+	say "starting the conductor on $origin (dev sign-in: $role)"
+	serving panel "$root" "cargo b -q -p panel_server" "panel serve --bind 127.0.0.1:$PANEL_PORT" -i 'crates/panel_gen/**' -e rs,toml,sql,lock &
 	groups+=("$!")
-	prefixed sites-mfe watched "$SITES_DIR" --postpone -w frontend/src -w frontend/messages -- "cd frontend && npm run -s build" &
-	groups+=("$!")
+	essential+=("$!")
+	wait_for panel "$origin/health" 30 "$!" || die "the conductor did not start"
+fi
+
+if [ "$watch" = 1 ] && [ "$run_panel" = 1 ]; then
 	say "starting the front end's next dev on $public_origin"
 	(
 		cd "$root/frontend"
@@ -504,8 +628,8 @@ fi
 	echo "────────────────────────────────────────────────────────────────────────"
 	echo " panel    $public_origin   (opens signed in: dev sign-in, $role)"
 	echo "          leads $public_origin/sites/leads   places $public_origin/sites/places   connected sites $public_origin/sources"
-	[ "$review_archive" = 1 ] && echo "          review_archive $public_origin/review_archive?grafana=true   Grafana $public_origin/grafana/"
-	echo " sites    $sites_origin   (behind the conductor: its /api/internal for the landings)"
+	answers "$REVIEW_ARCHIVE_PORT" && echo "          review_archive $public_origin/review_archive?grafana=true   Grafana $public_origin/grafana/"
+	answers "$SITES_PORT" && echo " sites    $sites_origin   (behind the conductor: its /api/internal for the landings)"
 	for s in ${started[@]+"${started[@]}"}; do
 		case "${s%%:*}" in
 		aquafix)
@@ -517,11 +641,15 @@ fi
 	echo
 	echo " state    $state   (--reset wipes it)   logs $state/logs/"
 	[ "$watch" = 1 ] && echo " watch    every part is rebuilt and restarted as its checkout is edited"
-	echo " stop     Ctrl-C stops everything"
+	echo " stop     Ctrl-C stops what this run started"
 	echo "────────────────────────────────────────────────────────────────────────"
 } >&2
 
-# Until Ctrl-C, or until the conductor or sites_panel stops (then everything does). Polled rather
-# than `wait -n`, which macOS's bash 3.2 lacks.
-while kill -0 "$panel_pid" 2>/dev/null && kill -0 "$sites_pid" 2>/dev/null; do sleep 1; done
-say "the conductor or sites_panel stopped — see $state/logs/"
+# Until Ctrl-C, or until one of the essential stops (then everything does). Polled rather than
+# `wait -n`, which macOS's bash 3.2 lacks.
+running() {
+	local pid
+	for pid in "${essential[@]}"; do kill -0 "$pid" 2>/dev/null || return 1; done
+}
+while running; do sleep 1; done
+say "a part stopped — see $state/logs/"
