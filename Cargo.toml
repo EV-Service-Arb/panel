@@ -32,7 +32,7 @@ sa_places = { path = "crates/sa_places", version = "0.1.0" }
 axum = "0.8"
 base64 = "0.22"
 chacha20poly1305 = "0.10"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 color-eyre = "0.6"
 concierge_iam = "0.1.0"
 dioxus = { version = "0.7", default-features = false }

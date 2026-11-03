@@ -12,7 +12,8 @@ import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
  */
 export default function config(phase: string): NextConfig {
   if (phase === PHASE_DEVELOPMENT_SERVER) {
-    const backend = process.env.PANEL_DEV_BACKEND ?? "http://127.0.0.1:3121";
+    const backend = process.env.PANEL_DEV_BACKEND;
+    if (!backend) throw new Error("PANEL_DEV_BACKEND: the origin `next dev` proxies to, `panel serve`'s or `npm run dev:stub`'s");
     return {
       // Next writes AGENTS.md and CLAUDE.md into the project on `next dev` otherwise.
       agentRules: false,
@@ -25,6 +26,9 @@ export default function config(phase: string): NextConfig {
           { source: "/sites/mfe/:path*", destination: `${backend}/sites/mfe/:path*` },
           { source: "/review_archive/mfe/:path*", destination: `${backend}/review_archive/mfe/:path*` },
           { source: "/grafana/:path*", destination: `${backend}/grafana/:path*` },
+          // an element's views are its page, as `panel serve` answers them (web.rs, ELEMENT_PAGES)
+          { source: "/review_archive/:view+", destination: "/review_archive" },
+          { source: "/sites/:view+", destination: "/sites" },
         ];
       },
     };

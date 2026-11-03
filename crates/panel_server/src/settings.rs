@@ -322,7 +322,7 @@ impl Settings {
 		.collect();
 		eyre::ensure!(concierge.is_empty(), "PANEL_DEV_SIGN_IN replaces the concierge sign-in: unset {}", concierge.join(", "));
 		let (permissions, name) = dev_permissions(&who)?;
-		let origin = set(&self.panel_public_origin).ok_or_else(|| eyre::eyre!("PANEL_DEV_SIGN_IN needs PANEL_PUBLIC_ORIGIN, e.g. http://127.0.0.1:59120"))?;
+		let origin = set(&self.panel_public_origin).ok_or_else(|| eyre::eyre!("PANEL_DEV_SIGN_IN needs PANEL_PUBLIC_ORIGIN, e.g. http://$PANEL_BIND"))?;
 		loopback_http_origin(&origin)?;
 		let email = set(&self.panel_dev_sign_in_email).unwrap_or_else(|| format!("dev-{name}@localhost"));
 		Ok(Some(DevSignIn {

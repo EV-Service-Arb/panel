@@ -27,9 +27,6 @@ pub mod web;
 /// What the contract's `provides` names, as the router mounts it (`--print-provided-paths`).
 pub const PROVIDED_PATHS: [&str; 1] = [ingest::EVENTS];
 
-/// Where `serve` listens unless told otherwise; the image binds the same port on 0.0.0.0.
-pub const DEFAULT_BIND: &str = "127.0.0.1:59120";
-
 /// Reports an error to Sentry and logs it — as a warning: the tracing layer would send an
 /// error-level event to Sentry a second time.
 pub fn report(e: &eyre::Report, what: &str) {

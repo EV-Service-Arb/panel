@@ -8,7 +8,7 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "dev": "next dev --port 3120",
+    "dev": "next dev --port ${PANEL_WEB_PORT:?the dev shell sets it}",
     "dev:stub": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/dev-stub.ts",
     "build": "next build",
     "typecheck": "next typegen && tsc --noEmit",

@@ -180,6 +180,11 @@ reserved paths (`web.rs`) are derived from it.
   route, and a file below a view (`/sites/<view>/index.txt`, `…/__next.*.txt`) is the page's
   own, so Next's client-side navigation to a view stays soft. The bundles run on this origin,
   under `script-src 'self'`: their builds are trusted as the conductor's own code is.
+- **The elements route by the location.** Next moves it with `pushState`, which fires nothing:
+  after each of its moves the shell dispatches a stateless `popstate`, as back and forward do
+  (Next's own handler ignores it). An element is created once per tag, attributes and language
+  and re-inserted after: a Dioxus one (ev_lib's `mfe`) cannot be torn down, so it keeps running
+  while its page is not shown, and holds its last route while the location is not under its base.
 - **The platform's elements are not forwarded.** The account chip, the sign-in element and the
   wallet load straight from `https://evinvest.ltd`, admitted by the CSP's directories (Deploy
   requirements). `/cabinet` stays reserved: a JSON 404, never the front end's page.
@@ -535,7 +540,7 @@ delivery (0.5 s)  lead messages noted > 1 h ago dead ("stale"); > 20 of one rule
   element's Turnstile), to `style-src` the wallet's directory, to `connect-src` the origin
   `https://evinvest.ltd`, and a `frame-src` of `'self'` and Turnstile's origin. Directories, not
   the origin: only the elements the platform publishes for hosts run in the session.
-- **The contract** (`nix eval .#containers.<system>.panel.contract`) names the port (59120),
+- **The contract** (`nix eval .#containers.<system>.panel.contract`) names the port (the flake's `port`),
   `/health`, `APP_ENV=production`, the variables required, secret and optional,
   `PANEL_DB_PATH`, the volume (`/data`) and the SQLite file on it to replicate, what the ingress
   must not publish or must rate-limit, and the egress. `checks.contract-env` fails the flake

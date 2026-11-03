@@ -26,13 +26,15 @@ tests/               vitest, in Node: the rules the screens obey live in plain m
 
 ```sh
 npm ci
-npm run dev:stub     # :3121 — /api/v1 (me, sources, access) and /auth; STUB_ROLE=admin, STUB_ME=401|403|503,
+npm run dev:stub     # on STUB_PORT — /api/v1 (me, sources, access) and /auth; STUB_ROLE=admin, STUB_ME=401|403|503,
                      # STUB_LIVE=off for no socket, STUB_LIVE_EVERY=5 for busier live activity
-npm run dev          # :3120 — proxies /api, /auth and /sites/mfe to PANEL_DEV_BACKEND (default the stub)
+PANEL_DEV_BACKEND=http://127.0.0.1:$STUB_PORT npm run dev
+                     # on PANEL_WEB_PORT — proxies /api, /auth and /sites/mfe to PANEL_DEV_BACKEND
 ```
 
-Against the real backend, point `PANEL_DEV_BACKEND` at `panel serve` with sign-in
-configured and `PANEL_PUBLIC_ORIGIN=http://localhost:3120`, so the callback lands here.
+The ports are the dev shell's (`nix develop`). Against the real backend, point `PANEL_DEV_BACKEND`
+at `panel serve` with sign-in configured and `PANEL_PUBLIC_ORIGIN` this server's origin, so the
+callback lands here.
 
 The top bar's account chip, the sign-in dialog and the account element on `/account`
 load from the platform origin (`evinvest.ltd`), named by its published registry. If the

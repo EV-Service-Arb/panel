@@ -8,6 +8,10 @@ import { useEffect, useRef, type ReactNode } from "react";
 
 import { useRemoteBundle } from "./use-remote-bundle";
 
+// An element is created once per configuration and re-inserted after: a remote that cannot be torn down
+// (a Dioxus one, ev_lib's `mfe`) reuses its running app on a re-insert, and mounting it anew would stack a second.
+const created = new Map<string, HTMLElement>();
+
 export interface RemoteElementProps {
   tag: string;
   scriptUrl: string;
@@ -30,10 +34,16 @@ export function RemoteElement({ tag, scriptUrl, attributes, className, fallback 
   useEffect(() => {
     const host = hostRef.current;
     if (!host || !ready) return;
-    const element = document.createElement(tag);
-    // Before appendChild: the upgrade runs connectedCallback synchronously, where a remote
-    // reads its configuration.
-    for (const [name, value] of Object.entries(attributesRef.current)) element.setAttribute(name, value);
+    // the language is the remote's configuration too: it reads it off the DOM it mounts into
+    const key = JSON.stringify([tag, attributesRef.current, host.closest("[lang]")?.getAttribute("lang") ?? null]);
+    let element = created.get(key);
+    if (element === undefined) {
+      element = document.createElement(tag);
+      // Before appendChild: the upgrade runs connectedCallback synchronously, where a remote
+      // reads its configuration.
+      for (const [name, value] of Object.entries(attributesRef.current)) element.setAttribute(name, value);
+      created.set(key, element);
+    }
     host.appendChild(element);
     return () => element.remove();
   }, [ready, tag]);

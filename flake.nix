@@ -10,6 +10,8 @@
 
   outputs = { self, v_flakes }:
     let
+      # docs/port_range.md; this repository's ten are its first
+      SA_PORT_RANGE = { from = 52800; to = 52900; };
       inherit (v_flakes) flake-utils pre-commit-hooks;
       manifest = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package;
       # The binary (crates/panel_server, `[[bin]] name`), the image and the release all go
@@ -26,9 +28,16 @@
         # would break every target on a mac, not just the ones that link.
         stdenv = if pkgs.stdenv.hostPlatform.isDarwin then pkgs.stdenv else pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv;
 
-        # Single source for the container's exposed port and the prod bind. The binary's
-        # own default (`panel_server::DEFAULT_BIND`) is the same port on 127.0.0.1.
+        # Single source for the container's exposed port and the prod bind.
         port = 59120;
+
+        local = n: toString (SA_PORT_RANGE.from + n);
+        localEnv = {
+          SA_PORT_RANGE = "${toString SA_PORT_RANGE.from}-${toString SA_PORT_RANGE.to}";
+          PANEL_BIND = "127.0.0.1:${local 0}";
+          PANEL_WEB_PORT = local 1; # the front end's `npm run dev`
+          STUB_PORT = local 2; # its `npm run dev:stub`
+        };
 
         # `nix run .#gen`: the front end's mirror of the Rust (crates/panel_gen), committed.
         gen = pkgs.writeShellApplication {
@@ -309,8 +318,8 @@
         # app does not depend on them, so naming a cargo build skips the Nix one.
         localStack = pkgs.writeShellApplication {
           name = "local-stack";
-          runtimeInputs = with pkgs; [ coreutils curl gawk git gnused util-linux ];
-          text = builtins.readFile ./scripts/local-stack.sh;
+          runtimeInputs = with pkgs; [ coreutils curl gawk git gnused util-linux nodejs_22 watchexec ];
+          text = lib.concatStrings (lib.mapAttrsToList (k: v: "export ${k}=${v}\n") localEnv) + builtins.readFile ./scripts/local-stack.sh;
         };
       in
       {
@@ -355,7 +364,7 @@
               rust
             ] ++ pre-commit-check.enabledPackages ++ combined.enabledPackages;
 
-            env = {
+            env = localEnv // {
               RUST_BACKTRACE = 1;
               RUST_LIB_BACKTRACE = 0;
             };

@@ -1,7 +1,8 @@
 "use client";
 
 import { Toaster } from "@evinvest/uikit";
-import { type ReactNode, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { type ReactNode, Suspense, useEffect, useState } from "react";
 
 import { MeProvider, fetchMe } from "@/entities/session";
 import { useResource } from "@/shared/lib/use-resource";
@@ -23,8 +24,22 @@ export function PanelShell({ children }: { children: ReactNode }) {
     <>
       <PanelBody>{children}</PanelBody>
       <SignInOverlay />
+      <Suspense>
+        <RoutedElements />
+      </Suspense>
     </>
   );
+}
+
+/** The host's router moves the location by `pushState`, which elements routing by it never hear: each move is
+ * announced as back and forward are (Next ignores a `popstate` without its state). */
+function RoutedElements() {
+  const pathname = usePathname();
+  const search = useSearchParams().toString();
+  useEffect(() => {
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, [pathname, search]);
+  return null;
 }
 
 function PanelBody({ children }: { children: ReactNode }) {

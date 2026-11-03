@@ -17,13 +17,13 @@ Grafana, and the conductor's GMBs and tokens reach review_archive. No concierge,
     site_conductor/  this repository (its worktrees work too: the others are found beside the main checkout)
     sites/panel/     sites_panel
     review_archive/  review_archive (skipped, with a message, when missing)
-    aquafix/         Service-Arb/aquafix, up to date — the Next.js (kitstart) site
-    vifnet/          Service-Arb/vifnet, likewise
+    sites/aquafix/   Service-Arb/aquafix, up to date — the Next.js (kitstart) site
+    sites/vifnet/    Service-Arb/vifnet, likewise
   ```
 
   Elsewhere: `SITES_DIR=… REVIEW_ARCHIVE_DIR=… AQUAFIX_DIR=… VIFNET_DIR=… nix run .#local-stack`. A landing checkout
   without `package.json` (the old Rust sites) is skipped with a message: `git pull` it.
-- Ports 59120 (conductor), 59121 (sites_panel), 59110 (review_archive), 59081 (aquafix) and 59082 (vifnet) free.
+- Each part's port free: the one its own dev shell sets (docs/port_range.md).
 
 ## The command
 
@@ -32,13 +32,20 @@ nix run .#local-stack                  # build, seed, start all four; Ctrl-C sto
 nix run .#local-stack -- --reset       # wipe .local/ first: databases, keys, the landings' leads
 nix run .#local-stack -- --no-sites    # the conductor and sites_panel, no landings
 nix run .#local-stack -- --role operator
-nix run .#local-stack -- --watch       the front end from `next dev`: open http://localhost:3120
+nix run .#local-stack -- --watch       # every part rebuilt and restarted as its checkout is edited
+nix run .#local-stack -- --port-offset <n>   # every port moved by n: a second stack, in .local-<n>/
 ```
 
-`--watch` builds no front end: `next dev` serves this checkout's `frontend/` on
-<http://localhost:3120>, reloading as it is edited, and proxies `/api`, `/auth`, the bundles and
-`/grafana` to the conductor, whose public origin it becomes (the sign-in returns there, the live
-socket comes from there).
+A stack already up on the ports is reported, and the command exits: use it. The URLs to open
+are what it prints; below, `<conductor>`, `<sites_panel>`, `<aquafix>` and `<vifnet>` stand for
+those origins.
+
+`--watch` builds every part from its checkout instead of with Nix: the conductor, sites_panel
+and review_archive with cargo, each restarted when its crates change; review_archive's and the
+sites' bundles rebuilt in place as their sources change (a reload shows them); the conductor's
+front end from `next dev` on this checkout's `frontend/`, which proxies `/api`, `/auth`, the
+bundles and `/grafana` to the conductor and is the origin to open (the sign-in returns there, the
+live socket comes from there). The landings are `next dev` either way.
 
 The first run builds the conductor, sites_panel and their front ends with Nix (minutes), and
 each landing's `nix run .#dev` installs its `node_modules` (minutes again). Later runs start in
@@ -52,24 +59,23 @@ What it does (`scripts/local-stack.sh`, which the flake app runs as is):
    `logs/`. It persists between runs; `--reset` wipes it. A fresh `panel.db` imports an empty
    document from review_archive, which opens tokens and GMBs.
 2. Seeds, idempotently: the sources `aquafix-site` (brand `aquafix`, origin
-   `http://localhost:59081`) and `vifnet-site` (brand `vifnet`, origin `http://localhost:59082`)
+   `<aquafix>`) and `vifnet-site` (brand `vifnet`, origin `<vifnet>`)
    in the conductor, each secret kept in `.local/secrets/` and reused, a key from an older run
    given its origin; the
    places `aquafix/{royat, clermont-ferrand, desgenettes, lyon-est, la-mouche, lyon-nord}` and
    `vifnet/vifnet` in sites_panel, registered with nothing set (`sites_panel place register`).
-3. Starts `sites_panel serve` on `127.0.0.1:59121` (its bundle from `PANEL_MFE_DIR`, the
-   conductor's public key in `PANEL_ASSERTION_KEYS`), `review_archive serve` on `127.0.0.1:59122`
-   likewise (a headless Chromium on a signed-out profile: its Maps walks fail and say so), then
-   `panel serve` on `127.0.0.1:59120`
-   in development, with dev sign-in, a signing key for this machine alone, `PANEL_SITES_URL`
+3. Starts `sites_panel serve` (its bundle from `PANEL_MFE_DIR`, the conductor's public key in
+   `PANEL_ASSERTION_KEYS`), `review_archive serve` likewise (a headless Chromium on a signed-out
+   profile: its Maps walks fail and say so), then `panel serve` in development, with dev sign-in, a signing key for this machine alone, `PANEL_SITES_URL`
    at sites_panel, and the front end's static export served on the same origin.
 4. Starts each landing with its own `nix run .#dev` (kitstart's `next dev`), with:
 
    | Variable | Value |
    | --- | --- |
-   | `LEAD_WEBHOOK_URL` | `http://127.0.0.1:59120/api/ingest/v1/events` |
+   | `PORT` | its dev shell's |
+   | `LEAD_WEBHOOK_URL` | `<conductor>/api/ingest/v1/events` |
    | `LEAD_WEBHOOK_KEY_ID` / `LEAD_WEBHOOK_SECRET` | the seeded source's |
-   | `SITES_PANEL_INTERNAL_URL` | `http://127.0.0.1:59121/api/internal` |
+   | `SITES_PANEL_INTERNAL_URL` | `<sites_panel>/api/internal` |
    | `LEADS_DB_PATH` | `.local/<site>-leads.db` |
    | `POSTHOG_KEY` | unset: analytics off |
 
@@ -94,15 +100,15 @@ pulling review_archive's dashboards into it.
 
 | What | URL |
 | --- | --- |
-| Conductor | <http://127.0.0.1:59120> — opens signed in |
-| Leads, locations | <http://127.0.0.1:59120/sites/leads>, <http://127.0.0.1:59120/sites/places> |
-| Sources, connected sites | <http://127.0.0.1:59120/sources> (with `--role admin`) |
-| sites_panel | <http://127.0.0.1:59121> — `/api/internal` only without an assertion |
-| review_archive, drawn by Grafana | <http://127.0.0.1:59120/review_archive?grafana=true> |
-| Grafana | <http://127.0.0.1:59120/grafana/> |
-| aquafix, a point | `http://<slug>.localhost:59081/fr`, e.g. <http://royat.localhost:59081/fr> |
-| aquafix, the brand page | <http://localhost:59081/fr> |
-| vifnet | <http://localhost:59082/fr> |
+| Conductor | `<conductor>` — opens signed in |
+| Leads, locations | `<conductor>/sites/leads`, `<conductor>/sites/places` |
+| Sources, connected sites | `<conductor>/sources` (with `--role admin`) |
+| sites_panel | `<sites_panel>` — `/api/internal` only without an assertion |
+| review_archive, drawn by Grafana | `<conductor>/review_archive?grafana=true` |
+| Grafana | `<conductor>/grafana/` |
+| aquafix, a point | `<aquafix>` with the point's slug before `localhost`, e.g. `http://royat.localhost:<port>/fr` |
+| aquafix, the brand page | `<aquafix>/fr` |
+| vifnet | `<vifnet>/fr` |
 
 `*.localhost` resolves to this machine in every current browser and in curl; nothing to add
 to `/etc/hosts`.
@@ -122,31 +128,32 @@ beside any concierge variable, and unless `PANEL_PUBLIC_ORIGIN` is `http://local
 or `http://127.0.0.1[:port]` — so it cannot be switched on in the image, which sets
 `APP_ENV=production`. `cargo test -p panel_server --test dev_sign_in` holds the binary to it.
 
-Without the script, the conductor alone (no forward, so no ingest and no sites):
+Without the script, the conductor alone (no forward, so no ingest and no sites), in the dev shell,
+which sets `PANEL_BIND`:
 
 ```sh
 APP_ENV=development PANEL_DB_PATH=./panel.db PANEL_DATA_KEY="$(panel gen-data-key)" \
-PANEL_PUBLIC_ORIGIN=http://127.0.0.1:59120 PANEL_DEV_SIGN_IN=sa:admin \
+PANEL_PUBLIC_ORIGIN="http://$PANEL_BIND" PANEL_DEV_SIGN_IN=sa:admin \
 PANEL_WEB_DIR="$(nix build .#frontend --print-out-paths)" panel serve
 ```
 
-The front end's dev server instead of the export: start the stack, then
-`cd frontend && PANEL_DEV_BACKEND=http://127.0.0.1:59120 npm run dev` serves on `:3120`. The
-sign-in's redirect goes to `PANEL_PUBLIC_ORIGIN`, so for cookies on `:3120` run the conductor by
-hand as above with `PANEL_PUBLIC_ORIGIN=http://localhost:3120`. `npm run dev:stub` in
+The front end's dev server instead of the export is `--watch`. By hand:
+`cd frontend && PANEL_DEV_BACKEND=<conductor> npm run dev` serves on the dev shell's
+`PANEL_WEB_PORT`; the sign-in's redirect goes to `PANEL_PUBLIC_ORIGIN`, so run the conductor as
+above with `PANEL_PUBLIC_ORIGIN=http://localhost:$PANEL_WEB_PORT`. `npm run dev:stub` in
 `frontend/` stands in for the backend instead.
 
 A session in curl (what a browser does):
 
 ```sh
 jar=$(mktemp)
-curl -s -c "$jar" -b "$jar" -L -o /dev/null http://127.0.0.1:59120/auth/login
-curl -s -b "$jar" http://127.0.0.1:59120/api/v1/me
+curl -s -c "$jar" -b "$jar" -L -o /dev/null <conductor>/auth/login
+curl -s -b "$jar" <conductor>/api/v1/me
 # sites' API through the forward; a write needs the CSRF cookie echoed in x-sa-csrf, and
 # expected_updated_at is the place's current updated_at (GET …/settings), null for one never set
 csrf=$(awk '$6 == "sa_csrf" { print $7 }' "$jar")
 curl -s -b "$jar" -H "x-sa-csrf: $csrf" -H 'content-type: application/json' \
-  -X PUT http://127.0.0.1:59120/api/sites/places/aquafix/royat/settings \
+  -X PUT <conductor>/api/sites/places/aquafix/royat/settings \
   -d '{"settings": {"phone": "+33499887766"}, "expected_updated_at": null}'
 ```
 
@@ -159,7 +166,7 @@ With the stack up:
 
 **A lead, landing → sites**
 
-1. Open <http://royat.localhost:59081/fr> and submit the quote form (any valid French mobile,
+1. Open royat's point (`http://royat.localhost:<aquafix's port>/fr`) and submit the quote form (any valid French mobile,
    e.g. `0612345678`, and a postcode such as `63130`). The site answers with its thanks page.
 2. The site keeps the lead in `.local/aquafix-leads.db` and its outbox posts it, signed, to
    the conductor within about 10 s (kitstart's `WEBHOOK_TICK_MS`), which forwards it to
@@ -167,41 +174,41 @@ With the stack up:
    side is the row in
    `sqlite3 .local/aquafix-leads.db 'select id, state, attempts, last_error from webhook_outbox'`
    (`delivered`).
-3. Open <http://127.0.0.1:59120/sites/leads>: the lead is there, stage *created*, brand aquafix,
+3. Open `<conductor>/sites/leads`: the lead is there, stage *created*, brand aquafix,
    location royat, with what you typed — it came in live.
 
-The same for vifnet at <http://localhost:59082/fr>. Without a browser, the form's no-JS path:
+The same for vifnet at `<vifnet>/fr`. Without a browser, the form's no-JS path:
 
 ```sh
 t=$(( $(date +%s) * 1000 - 5000 ))   # rendered five seconds ago, as a person would have
-curl -si http://royat.localhost:59081/quote --data-urlencode locale=fr --data-urlencode form_id=quote \
+curl -si http://royat.localhost:<aquafix's port>/quote --data-urlencode locale=fr --data-urlencode form_id=quote \
   --data-urlencode t=$t --data-urlencode location=royat --data-urlencode job=blocked_drain \
   --data-urlencode zip=63130 --data-urlencode mobile=0612345678 | head -1      # 303 → /fr/thanks
 t=$(( $(date +%s) * 1000 - 5000 ))
-curl -si http://localhost:59082/quote --data-urlencode locale=fr --data-urlencode form_id=quote \
+curl -si <vifnet>/quote --data-urlencode locale=fr --data-urlencode form_id=quote \
   --data-urlencode t=$t --data-urlencode location=vifnet --data-urlencode subject=deep \
   --data-urlencode locality=83702 --data-urlencode mobile=2085550192 \
   --data-urlencode 'name=Smoke Test' --data-urlencode bedrooms=3 | head -1
 ```
 
-**A board, review_archive → Grafana**: `node examples/with_grafana.cjs` in review_archive's
+**A board, review_archive → Grafana**: `SA_CONDUCTOR_ORIGIN=<conductor> node examples/with_grafana.cjs` in review_archive's
 checkout drives a headless browser through the overview and a place's board (its header says
 what it checks).
 
 **A place, sites → landing**
 
-1. Open <http://127.0.0.1:59120/sites/places>, pick aquafix / royat, set a phone (e.g.
+1. Open `<conductor>/sites/places`, pick aquafix / royat, set a phone (e.g.
    `+33 4 23 50 06 40`) and save.
-2. `curl -s http://127.0.0.1:59121/api/internal/brands/aquafix/locations/royat` answers the
+2. `curl -s <sites_panel>/api/internal/brands/aquafix/locations/royat` answers the
    new phone at once: that is what the site reads.
-3. Reload <http://royat.localhost:59081/fr>: the new number shows — see the cache note below.
+3. Reload royat's point: the new number shows — see the cache note below.
 
 **Connected sites, landing → conductor**
 
-1. `curl -s http://localhost:59081/.well-known/sa-site` answers aquafix's own report: the state of
+1. `curl -s <aquafix>/.well-known/sa-site` answers aquafix's own report: the state of
    each place, of pricing and of experiments as it reads them from sites_panel (`live`, `empty`,
    `withdrawn`; `down` with why, `unset` without `SITES_PANEL_INTERNAL_URL`).
-2. Open <http://127.0.0.1:59120/sources>: the Connected sites table shows both keys with that
+2. Open `<conductor>/sources`: the Connected sites table shows both keys with that
    report, kitstart's version, the last event sites took from each key and the last time each
    brand's data was read from sites' `/api/internal`.
 
@@ -213,15 +220,15 @@ the same way (in memory, 600 s): a plain reload keeps the old number. To see a c
 
 - a **hard reload** (Cmd-Shift-R / Ctrl-Shift-R): the browser sends `Cache-Control: no-cache`,
   and `next dev` then fetches afresh — later plain reloads get the new value too. In curl:
-  `curl -H 'cache-control: no-cache' http://royat.localhost:59081/fr`;
+  `curl -H 'cache-control: no-cache' http://royat.localhost:<aquafix's port>/fr`;
 - or restart the stack (the cache is in memory).
 
 Production has no such bypass: there, wait out the 600 s.
 
 ## Troubleshooting
 
-- **`port 59120 is taken`**: another stack, or something else —
-  `lsof -nP -iTCP:59120 -sTCP:LISTEN` names it. The same for 59121/59110/59081/59082.
+- **`port … is taken`**: another stack's part, or something else —
+  `lsof -nP -iTCP:<port> -sTCP:LISTEN` names it.
 - **A site is skipped**: its checkout is missing or predates the Next site; `git pull` it, or
   point `AQUAFIX_DIR` / `VIFNET_DIR` at another one.
 - **`source … exists but its secret is not in .local/secrets`**: the secret is shown once and

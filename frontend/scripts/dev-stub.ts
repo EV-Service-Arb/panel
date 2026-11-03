@@ -4,7 +4,7 @@
  * the live socket. Same shapes, same gate (401 without a session, CSRF on writes). The sites'
  * API and bundle are sites_panel's: run it for `/sites`.
  *
- *   npm run dev:stub                  # :3121, signed in as an operator
+ *   npm run dev:stub                  # on STUB_PORT (the dev shell's), signed in as an operator
  *   STUB_ROLE=admin npm run dev:stub  # as an admin
  *   STUB_ME=403 npm run dev:stub      # the gate refusing: 401 | 403 | 503
  *   STUB_LIVE=off npm run dev:stub     # no /api/v1/live socket (4401 | 4403: close at once)
@@ -22,7 +22,8 @@ import type { Duplex } from "node:stream";
 import { ALIASES } from "../src/entities/session/model/generated.ts";
 import { changed, every, liveUpgrade } from "./stub-live.ts";
 
-const PORT = Number(process.env.STUB_PORT ?? 3121);
+if (!process.env.STUB_PORT) throw new Error("STUB_PORT: the port to serve on; the dev shell sets it");
+const PORT = Number(process.env.STUB_PORT);
 const ROLE = process.env.STUB_ROLE === "admin" ? "admin" : "operator";
 const ME_FAILURE = process.env.STUB_ME;
 const CSRF = "stub-csrf";

@@ -15,7 +15,6 @@ use jiff::Timestamp;
 use panel::{Panel, alerts::Hub, seal::DataKey, store::Store, tokens::Change};
 use panel_core::ids::{BrandId, SiteOrigin};
 use panel_server::{
-	DEFAULT_BIND,
 	alerts::{self, Telegram},
 	concierge::{Concierge, DevIdentity},
 	forward::{Forward, Services},
@@ -48,7 +47,8 @@ enum Cmd {
 	Migrate,
 	/// The HTTP API.
 	Serve {
-		#[arg(long, default_value = DEFAULT_BIND)]
+		/// The dev shell sets PANEL_BIND to this machine's port.
+		#[arg(long, env = "PANEL_BIND")]
 		bind: SocketAddr,
 	},
 	/// The sources that may write events, and their keys.
