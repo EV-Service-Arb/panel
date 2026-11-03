@@ -17,10 +17,10 @@ playbook. Ingest is authenticated here and forwarded to sites with the key's gra
 may write is sites' to judge.
 
 Two hubs run here too: live updates (one WebSocket per screen, fed by sites' change feed and the
-conductor's own changes, each told only to who may read it) and a Telegram bot (each user's
-private chat, linked from their profile; sites' notes and the conductor's own — a source gone
-silent, an access request — through an outbox paced to Telegram's limits; buttons that call
-sites as the user who pressed).
+conductor's own changes, each told only to who may read it) and alerts (sites' and
+review_archive's notes and the conductor's own — a lead, a review gone, a source silent, an
+access request — to each user's Telegram, and the channels and groups they run, through an
+outbox paced to Telegram's limits; buttons that call sites as the user who pressed).
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for where things live.
 <!-- markdownlint-disable -->
