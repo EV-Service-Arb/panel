@@ -376,11 +376,11 @@ impl Setup {
 	}
 
 	/// A note `service` made at `now`; its event id.
-	fn note_of(&self, service: &FakeService, rule: &str, now: Timestamp, text: Value, text_pii: Value, skip_user: Option<Uuid>, buttons: Value, extra: Value) -> Uuid {
+	fn note_of(&self, service: &FakeService, rule: &str, now: Timestamp, text: Value, text_pii: Value, extra: Value) -> Uuid {
 		let event = Uuid::now_v7();
 		service.with(|s| {
 			let seq = s.notes.len() as i64 + 1;
-			let mut note = json!({"seq": seq, "rule": rule, "event_id": event, "created_at": now, "text": text, "text_pii": text_pii, "skip_user": skip_user, "buttons": buttons});
+			let mut note = json!({"seq": seq, "rule": rule, "event_id": event, "created_at": now, "text": text, "text_pii": text_pii, "skip_user": null, "buttons": []});
 			for (k, v) in extra.as_object().unwrap() {
 				note[k] = v.clone();
 			}
@@ -391,7 +391,7 @@ impl Setup {
 
 	/// A note sites made at `now`; its event id.
 	fn note(&self, rule: &str, now: Timestamp, text: Value, text_pii: Value, skip_user: Option<Uuid>, buttons: Value) -> Uuid {
-		self.note_of(&self.sites, rule, now, text, text_pii, skip_user, buttons, json!({}))
+		self.note_of(&self.sites, rule, now, text, text_pii, json!({"skip_user": skip_user, "buttons": buttons}))
 	}
 
 	/// A note review_archive made at `now` about `gmbs`.
@@ -400,7 +400,7 @@ impl Setup {
 		if let Some(photo) = photo {
 			extra["photo"] = json!(photo);
 		}
-		self.note_of(&self.archive, rule, now, text(&format!("{rule} · Plombier Royat")), Value::Null, None, json!([]), extra);
+		self.note_of(&self.archive, rule, now, text(&format!("{rule} · Plombier Royat")), Value::Null, extra);
 	}
 
 	/// A new lead `lead` noted at `now`: its brand and place for everyone, its need and phone for

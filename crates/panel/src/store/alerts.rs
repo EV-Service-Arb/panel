@@ -235,10 +235,12 @@ pub struct Recipient {
 	pub private: bool,
 }
 
+type RecipientRow = (i64, Uuid, Json<PermissionSet>, i64, Option<i64>, String);
+
 /// `gmbs`: for a GMB rule, the GMBs its note names; only destinations of their owners (the GMB
 /// and its gmail not removed, the GMB on), scoped to none or to one of those gmails.
 pub async fn recipients(conn: &mut SqliteConnection, rule: Rule, confirmed_since: Timestamp, gmbs: Option<&[i64]>) -> eyre::Result<Vec<Recipient>> {
-	let rows: Vec<(i64, Uuid, Json<PermissionSet>, i64, Option<i64>, String)> = sqlx::query_as(
+	let rows: Vec<RecipientRow> = sqlx::query_as(
 		"SELECT d.id, d.user_id, a.permissions, t.chat_id, t.topic_id, t.kind FROM alert_destinations d \
 		 JOIN telegram_destinations t ON t.destination_id = d.id \
 		 JOIN alert_access a ON a.user_id = d.user_id \
