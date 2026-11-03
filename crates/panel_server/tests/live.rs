@@ -16,13 +16,14 @@ use panel::{
 	live::{Audience, Bus, Change, Signal},
 	testing::{TestDb, admin, operator, panel},
 };
-use panel_core::{ids::BrandId, notify::Rule};
+use panel_core::ids::BrandId;
 use panel_server::{
 	concierge::{DEV_CODE, DevIdentity},
 	http::Limits,
 	live::{self, CLOSE_SESSION_ENDED, LiveLimits},
 	testing::{app_with, services, upstream},
 };
+use sa_alerts::Rule;
 use sa_auth::{PermissionSet, SourceKind};
 use serde_json::{Value, json};
 use tokio::{
@@ -283,7 +284,7 @@ async fn refused_before_the_upgrade_and_open_to_anyone_signed_in() {
 	hello["at"].as_str().unwrap().parse::<Timestamp>().expect("RFC 3339");
 }
 
-/// The conductor's own topics: the keys to whoever manages them, a Telegram link to its user.
+/// The conductor's own topics: the keys to whoever manages them, a user's alerts to that user.
 #[tokio::test]
 async fn the_conductors_own_changes_go_to_who_may_read_them() {
 	let db = TestDb::create().await;
@@ -303,13 +304,26 @@ async fn the_conductors_own_changes_go_to_who_may_read_them() {
 		.await
 		.unwrap()
 		.unwrap();
-	panel.telegram_set_rules(user_id(&admin()), &admin(), &[(Rule::PaymentReceived, true)]).await.unwrap().unwrap();
-	panel.telegram_set_rules(user_id(&operator()), &operator(), &[(Rule::NewLead, false)]).await.unwrap().unwrap();
+	for (permissions, chat, rule) in [(admin(), 1, Rule::PaymentReceived), (operator(), 2, Rule::NewLead)] {
+		let user = user_id(&permissions);
+		let destination: i64 = sqlx::query_scalar("INSERT INTO alert_destinations (user_id, method, created_at) VALUES ($1, 'telegram', 0) RETURNING id")
+			.bind(user)
+			.fetch_one(panel.store().pool())
+			.await
+			.unwrap();
+		sqlx::query("INSERT INTO telegram_destinations (destination_id, kind, chat_id) VALUES ($1, 'private', $2)")
+			.bind(destination)
+			.bind(chat)
+			.execute(panel.store().pool())
+			.await
+			.unwrap();
+		panel.alerts_set_rules(user, &permissions, destination, &[(rule, true)]).await.unwrap().unwrap();
+	}
 
 	let admin_saw: Vec<String> = [admin_ws.text().await, admin_ws.text().await].iter().map(|f| f["topic"].as_str().unwrap().to_owned()).collect();
-	assert_eq!(admin_saw, ["sources", "telegram"]);
+	assert_eq!(admin_saw, ["sources", "alerts"]);
 	// Frames keep their order: had the operator been told of the keys, they would come first.
-	assert_eq!(op.text().await["topic"], "telegram");
+	assert_eq!(op.text().await["topic"], "alerts");
 }
 
 /// sites' feed: each change to whoever holds the permission it names, `resync` to everyone, and

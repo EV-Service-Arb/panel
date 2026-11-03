@@ -1,11 +1,12 @@
 //! The conductor: the HTTP surface over the engine's [`panel::Panel`] — the sign-in through
 //! concierge, its own API (people's GMBs and tokens among it), ingest and the forward to the
-//! services behind it — and the hubs (live updates, the Telegram bot, review_archive's charges
+//! services behind it — and the hubs (live updates, alerts, review_archive's charges
 //! and snapshot). The binary (`panel`) adds the CLI and the process bootstrap.
 //!
 //! A library target too, so tests can serve the real router in-process.
 
 pub mod access;
+pub mod alerts;
 pub mod api;
 pub mod concierge;
 mod connected;

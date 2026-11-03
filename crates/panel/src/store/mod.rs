@@ -9,6 +9,7 @@
 //! outside a transaction is atomic by itself and waits on `busy_timeout` the same way.
 
 pub mod access;
+pub mod alerts;
 pub mod gmbs;
 pub mod sessions;
 pub mod sources;

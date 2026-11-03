@@ -236,21 +236,28 @@ impl Services {
 
 	/// `GET path?query` of sites as the conductor, its JSON answer.
 	pub(crate) async fn conductor_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> eyre::Result<T> {
-		let call = self.send(Service::Sites, Method::GET, path, HeaderMap::new(), Some(Principal::Conductor), Body::empty());
+		let (status, body) = self.conductor_fetch(Service::Sites, path).await?;
+		eyre::ensure!(status == StatusCode::OK, "sites answered {path} with {status}");
+		serde_json::from_slice(&body).map_err(|e| eyre::eyre!("sites' answer to {path}: {e}"))
+	}
+
+	/// `GET path?query` of `service` as the conductor: its status and body.
+	pub(crate) async fn conductor_fetch(&self, service: Service, path: &str) -> eyre::Result<(StatusCode, axum::body::Bytes)> {
+		let call = self.send(service, Method::GET, path, HeaderMap::new(), Some(Principal::Conductor), Body::empty());
 		let res = tokio::time::timeout(SITES_TIMEOUT, call)
 			.await
-			.map_err(|_| eyre::eyre!("sites did not answer {path} in time"))??;
-		eyre::ensure!(res.status() == StatusCode::OK, "sites answered {path} with {}", res.status());
-		let body = to_bytes(res.into_body(), SITES_ANSWER).await.map_err(|e| eyre::eyre!("reading sites' answer to {path}: {e}"))?;
-		serde_json::from_slice(&body).map_err(|e| eyre::eyre!("sites' answer to {path}: {e}"))
+			.map_err(|_| eyre::eyre!("{service:?} did not answer {path} in time"))??;
+		let status = res.status();
+		let body = to_bytes(res.into_body(), ANSWER).await.map_err(|e| eyre::eyre!("reading {service:?}'s answer to {path}: {e}"))?;
+		Ok((status, body))
 	}
 }
 
-/// How long a call of the conductor's own to sites may take.
+/// How long a call of the conductor's own to a service may take.
 pub(crate) const SITES_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The most of sites' answer the conductor reads: a page of notes, with room.
-const SITES_ANSWER: usize = 16 * 1024 * 1024;
+/// The most of a service's answer the conductor reads: a page of notes or a photo, with room.
+const ANSWER: usize = 16 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct Forward {

@@ -80,7 +80,7 @@ pub async fn to_tell(conn: &mut SqliteConnection, since: Timestamp, limit: i64) 
 		"SELECT ",
 		columns!(),
 		" FROM access_requests a WHERE requested_at >= $1 \
-		 AND NOT EXISTS (SELECT 1 FROM telegram_fanout t WHERE t.rule = 'access_requested' AND t.event_id = a.event_id) \
+		 AND NOT EXISTS (SELECT 1 FROM alert_fanout t WHERE t.rule = 'access_requested' AND t.event_id = a.event_id) \
 		 ORDER BY requested_at LIMIT $2"
 	))
 	.bind(to_db(since))

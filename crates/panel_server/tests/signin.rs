@@ -13,6 +13,7 @@ use axum::{
 };
 use jiff::{SignedDuration, Timestamp};
 use panel::{
+	alerts::Hub,
 	session::pkce_challenge,
 	testing::{TestDb, admin, operator, panel},
 };
@@ -21,11 +22,13 @@ use panel_contracts::concierge::v1::{
 	auth_service_server::{AuthService, AuthServiceServer},
 	user_directory_server::{UserDirectory, UserDirectoryServer},
 };
+use panel_core::notify::Locale;
 use panel_server::{
+	alerts::Telegram,
 	concierge::{CLIENT_ID, Concierge},
 	http,
 	signin::{SignIn, SignInConfig},
-	telegram,
+	telegram::{BotApi, BotName},
 };
 use sa_auth::{PermissionSet, SA_ADMIN, SA_OPERATOR};
 use serde_json::{Value, json};
@@ -355,7 +358,7 @@ async fn setup_with(db: &TestDb, limits: http::Limits) -> (Router, FakeConcierge
 		None,
 		None,
 		limits,
-		telegram::BotName::off(),
+		None,
 	);
 	(app, fake, panel)
 }
@@ -532,7 +535,7 @@ async fn concierge_down_is_a_503_not_a_sign_out() {
 		None,
 		None,
 		http::Limits::default(),
-		telegram::BotName::off(),
+		None,
 	);
 	let now = Timestamp::now();
 	let tokens = panel::session::Tokens {
@@ -710,83 +713,119 @@ async fn a_getme_timeout_is_asked_once_more() {
 	assert_eq!(me.headers["x-content-type-options"], "nosniff");
 }
 
-// ── Telegram in the profile ──────────────────────────────────────────────────────────────
+// ── the Alerts page ──────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn the_profile_links_telegram_and_chooses_rules() {
+async fn the_alerts_page_links_telegram_and_chooses_rules() {
 	let db = TestDb::create().await;
 	let fake = FakeConcierge::default();
 	let addr = serve_fake(fake.clone()).await;
 	let panel = panel(&db).await;
+	let concierge = Concierge::new(&addr, SECRET).unwrap();
 	let sign_in = SignIn::new(
 		panel.clone(),
-		Concierge::new(&addr, SECRET).unwrap(),
+		concierge.clone(),
 		SignInConfig {
 			panel_origin: PANEL.to_owned(),
 			concierge_origin: "http://concierge.test".to_owned(),
 		},
 	);
-	let app = http::app(sign_in.clone(), None, None, http::Limits::default(), telegram::BotName::on(Some("@evinvest_sa_bot".into())));
-	let off = http::app(sign_in, None, None, http::Limits::default(), telegram::BotName::off());
+	let telegram = Telegram {
+		hub: Hub {
+			panel: panel.clone(),
+			bot: BotApi::new("http://127.0.0.1:9", "1:unused").unwrap(),
+			concierge,
+			feeds: panel_server::testing::services("http://127.0.0.1:9"),
+			locale: Locale::Ru,
+			cabinet: "http://concierge.test".parse().unwrap(),
+		},
+		name: BotName::new(Some("@evinvest_sa_bot".into())),
+	};
+	let app = http::app(sign_in.clone(), None, None, http::Limits::default(), Some(telegram));
+	let off = http::app(sign_in, None, None, http::Limits::default(), None);
 	user(&fake, OPERATOR, "investor", SA_OPERATOR.members);
-	// A link whose access was last confirmed long ago, and denied: the gate's GetMe renews it.
+	// A private chat whose user's access was last confirmed long ago, and denied: the gate's GetMe
+	// renews it.
 	let pool = db.pool().await;
-	sqlx::query("INSERT INTO telegram_links (user_id, chat_id, linked_at, permissions, permissions_checked_at, display_name) VALUES ($1, 7, $2, NULL, $3, 'x')")
-		.bind(uuid::Uuid::parse_str(OPERATOR).unwrap())
-		.bind(jiff::Timestamp::now().as_microsecond())
+	let operator_id = uuid::Uuid::parse_str(OPERATOR).unwrap();
+	sqlx::query("INSERT INTO alert_access (user_id, permissions, confirmed_at, display_name) VALUES ($1, NULL, $2, 'x')")
+		.bind(operator_id)
 		.bind("2026-01-01T00:00:00Z".parse::<jiff::Timestamp>().unwrap().as_microsecond())
 		.execute(&pool)
 		.await
 		.unwrap();
+	let destination: i64 = sqlx::query_scalar("INSERT INTO alert_destinations (user_id, method, created_at) VALUES ($1, 'telegram', 0) RETURNING id")
+		.bind(operator_id)
+		.fetch_one(&pool)
+		.await
+		.unwrap();
+	sqlx::query("INSERT INTO telegram_destinations (destination_id, kind, chat_id) VALUES ($1, 'private', 7)")
+		.bind(destination)
+		.execute(&pool)
+		.await
+		.unwrap();
 	let mut b = Browser::default();
-	assert_eq!(b.get(&app, "/api/v1/telegram").await.status, StatusCode::UNAUTHORIZED);
+	assert_eq!(b.get(&app, "/api/v1/alerts").await.status, StatusCode::UNAUTHORIZED);
 	b.sign_in(&app, &fake, None).await;
 
-	let got = b.get(&app, "/api/v1/telegram").await;
+	let got = b.get(&app, "/api/v1/alerts").await;
 	assert_eq!(got.status, StatusCode::OK, "{}", got.body);
+	let defaults = json!({"new_lead": true, "contact_overdue": true, "booked": true});
 	assert_eq!(
 		got.body,
-		json!({"enabled": true, "linked": true, "blocked": false, "account": null, "rules": {"new_lead": true, "contact_overdue": true, "booked": true}}),
-		"an operator's rules, at their defaults"
+		json!({"enabled": true, "bot": "@evinvest_sa_bot", "rules": ["new_lead", "contact_overdue", "booked"],
+			"destinations": [{"id": destination, "kind": "private", "title": null, "topic_id": null, "gmail_id": null, "dead": null, "rules": defaults}]}),
+		"an operator's rules, at their defaults; no GMB, no review rules"
 	);
-	let (permissions, name): (Option<String>, String) = sqlx::query_as("SELECT permissions, display_name FROM telegram_links").fetch_one(&pool).await.unwrap();
+	let (permissions, name): (Option<String>, String) = sqlx::query_as("SELECT permissions, display_name FROM alert_access").fetch_one(&pool).await.unwrap();
 	let permissions: PermissionSet = serde_json::from_str(&permissions.unwrap()).unwrap();
-	assert_eq!((permissions, name.as_str()), (operator(), "Ann"), "the gate's GetMe confirmed the link");
+	assert_eq!((permissions, name.as_str()), (operator(), "Ann"), "the gate's GetMe confirmed the access");
 
-	assert_eq!(b.send(&app, Method::POST, "/api/v1/telegram/link", None, false).await.status, StatusCode::FORBIDDEN, "CSRF");
+	assert_eq!(
+		b.send(&app, Method::POST, "/api/v1/alerts/telegram/link", None, false).await.status,
+		StatusCode::FORBIDDEN,
+		"CSRF"
+	);
 	let seen: Option<i64> = sqlx::query_scalar("SELECT last_seen_at FROM sessions").fetch_one(&pool).await.unwrap();
 	assert!(seen.is_some(), "the gate marks the session used");
 	let asked = fake.with(|f| f.me_calls);
-	let link = b.send(&app, Method::POST, "/api/v1/telegram/link", None, true).await;
+	let link = b.send(&app, Method::POST, "/api/v1/alerts/telegram/link", None, true).await;
 	assert_eq!(fake.with(|f| f.me_calls), asked + 1, "a link token asks concierge afresh");
 	assert_eq!(link.status, StatusCode::CREATED, "{}", link.body);
 	let url = link.body["url"].as_str().unwrap();
 	let token = url.strip_prefix("https://t.me/evinvest_sa_bot?start=").unwrap();
 	assert!(token.len() == 43 && token.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'), "{url}");
 
-	let muted = b.send(&app, Method::PUT, "/api/v1/telegram/rules", Some(json!({"rules": {"new_lead": false}})), true).await;
+	let rules = format!("/api/v1/alerts/destinations/{destination}/rules");
+	let muted = b.send(&app, Method::PUT, &rules, Some(json!({"rules": {"new_lead": false}})), true).await;
 	assert_eq!(muted.status, StatusCode::OK, "{}", muted.body);
-	assert_eq!(muted.body["rules"], json!({"new_lead": false, "contact_overdue": true, "booked": true}));
-	let admins = b
-		.send(&app, Method::PUT, "/api/v1/telegram/rules", Some(json!({"rules": {"payment_received": true}})), true)
-		.await;
+	assert_eq!(muted.body["destinations"][0]["rules"], json!({"new_lead": false, "contact_overdue": true, "booked": true}));
+	let admins = b.send(&app, Method::PUT, &rules, Some(json!({"rules": {"payment_received": true}})), true).await;
 	assert_eq!(admins.status, StatusCode::BAD_REQUEST, "payments are the admins'");
-	let unknown = b.send(&app, Method::PUT, "/api/v1/telegram/rules", Some(json!({"rules": {"review_low": true}})), true).await;
-	assert_eq!(unknown.status, StatusCode::BAD_REQUEST, "not a rule yet");
+	let unknown = b.send(&app, Method::PUT, &rules, Some(json!({"rules": {"review_low": true}})), true).await;
+	assert_eq!(unknown.status, StatusCode::BAD_REQUEST, "not a rule");
+	let gmail = b
+		.send(&app, Method::PUT, &format!("/api/v1/alerts/destinations/{destination}/gmail"), Some(json!({"gmail_id": 5})), true)
+		.await;
+	assert_eq!(gmail.status, StatusCode::NOT_FOUND, "not the caller's gmail");
 
-	assert_eq!(b.send(&app, Method::DELETE, "/api/v1/telegram/link", None, true).await.status, StatusCode::NO_CONTENT);
-	assert_eq!(b.send(&app, Method::DELETE, "/api/v1/telegram/link", None, true).await.status, StatusCode::NOT_FOUND);
-	assert_eq!(b.get(&app, "/api/v1/telegram").await.body["linked"], false);
+	let one = format!("/api/v1/alerts/destinations/{destination}");
+	assert_eq!(b.send(&app, Method::DELETE, &one, None, true).await.status, StatusCode::NO_CONTENT);
+	assert_eq!(b.send(&app, Method::DELETE, &one, None, true).await.status, StatusCode::NOT_FOUND);
+	assert_eq!(b.get(&app, "/api/v1/alerts").await.body["destinations"], json!([]));
 
-	// Without a bot the profile says so, and there is nothing to link.
-	assert_eq!(b.get(&off, "/api/v1/telegram").await.body["enabled"], false);
-	assert_eq!(b.send(&off, Method::POST, "/api/v1/telegram/link", None, true).await.status, StatusCode::SERVICE_UNAVAILABLE);
+	// Without a bot the page says so, and there is nothing to link.
+	assert_eq!(b.get(&off, "/api/v1/alerts").await.body["enabled"], false);
+	assert_eq!(
+		b.send(&off, Method::POST, "/api/v1/alerts/telegram/link", None, true).await.status,
+		StatusCode::SERVICE_UNAVAILABLE
+	);
 }
 
 // ── permissions ──────────────────────────────────────────────────────────────────────────
 
 /// A signed-in caller holding nothing in `sa` is shown nothing: every `/api/v1` route but `/me`,
-/// the access requests and the profile's Telegram ones answers 403; with every permission, none
+/// the access requests and the alerts answers 403; with every permission, none
 /// of them does. The live socket opens for both: what it tells is judged per message.
 #[tokio::test]
 async fn no_permission_opens_no_section() {
@@ -801,13 +840,7 @@ async fn no_permission_opens_no_section() {
 			panel_origin: PANEL.to_owned(),
 			concierge_origin: PANEL.to_owned(),
 		};
-		http::app(
-			SignIn::new(panel.clone(), Concierge::dev(who), config),
-			None,
-			None,
-			http::Limits::default(),
-			telegram::BotName::off(),
-		)
+		http::app(SignIn::new(panel.clone(), Concierge::dev(who), config), None, None, http::Limits::default(), None)
 	};
 	let routes = http::api_routes();
 	let open: Vec<&str> = routes.iter().filter(|r| r.section.is_none()).map(|r| r.path).collect();
@@ -817,6 +850,13 @@ async fn no_permission_opens_no_section() {
 			"/me",
 			"/access/requests",
 			"/access/requests/mine",
+			"/alerts",
+			"/alerts/telegram/link",
+			"/alerts/telegram/chats",
+			"/alerts/destinations/{id}/rules",
+			"/alerts/destinations/{id}/gmail",
+			"/alerts/destinations/{id}/test",
+			"/alerts/destinations/{id}",
 			"/gmails",
 			"/gmails",
 			"/gmails/{id}",
@@ -848,7 +888,7 @@ async fn no_permission_opens_no_section() {
 				(Some(_), true) => assert!(!forbidden, "{} {uri}: {}", r.method, got.body),
 			}
 		}
-		assert_eq!(b.get(&app, "/api/v1/telegram").await.status, StatusCode::OK, "the profile is everyone's");
+		assert_eq!(b.get(&app, "/api/v1/alerts").await.status, StatusCode::OK, "alerts are everyone's");
 		let cookie: Vec<String> = b.jar.iter().map(|(k, v)| format!("{k}={v}")).collect();
 		let live = Request::get("/api/v1/live")
 			.header(header::ORIGIN, PANEL)

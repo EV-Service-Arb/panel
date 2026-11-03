@@ -175,13 +175,7 @@ async fn dev_app(db: &TestDb, permissions: PermissionSet, email: &str) -> Router
 		panel_origin: ORIGIN.to_owned(),
 		concierge_origin: ORIGIN.to_owned(),
 	};
-	http::app(
-		SignIn::new(panel(db).await, Concierge::dev(who), config),
-		None,
-		None,
-		Default::default(),
-		panel_server::telegram::BotName::off(),
-	)
+	http::app(SignIn::new(panel(db).await, Concierge::dev(who), config), None, None, Default::default(), None)
 }
 
 #[tokio::test]

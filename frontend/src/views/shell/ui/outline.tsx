@@ -41,7 +41,6 @@ function ArchiveViews({ pathname, onNavigate }: { pathname: string; onNavigate?:
   const t = useT();
   const views = [
     { href: ROUTES.reviewArchive, label: t("reviewArchive.places") },
-    { href: ROUTES.reviewArchiveTelegram, label: t("reviewArchive.telegram") },
     { href: ROUTES.reviewArchiveSettings, label: t("reviewArchive.settings") },
   ];
   return (

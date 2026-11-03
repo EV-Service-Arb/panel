@@ -1,96 +1,17 @@
-//! Telegram notifications without the I/O: which rules there are and who may get each, what the
-//! conductor's own messages say, what a button's data carries, and how a failed delivery is
-//! retried. The lead rules' messages are rendered by sites.
+//! Alerts without the I/O: what the conductor's own messages say, what a button's data carries,
+//! and how a failed Telegram delivery is retried. The rules are `sa_alerts`'; the services render
+//! their own notes.
 
-use std::{fmt, str::FromStr};
+use std::str::FromStr;
 
 use hmac::{Hmac, KeyInit, Mac};
 use jiff::{SignedDuration, Timestamp};
-use sa_auth::{Leads, PermissionSet, SA_ADMIN, Sources};
+use sa_alerts::{Rule, is_button_id};
 use serde_json::{Value, json};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
 use crate::Invalid;
-
-/// What a user may be notified of. Each is on or off per user; [`Rule::on_by_default`] is
-/// what a user who never chose gets. The lead rules come from sites' notes; `source_silent` and
-/// `access_requested` are the conductor's own.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum Rule {
-	/// A lead came in: brand, location, what is needed and the phone, with buttons.
-	NewLead,
-	/// A lead has waited past its contact SLA: once.
-	ContactOverdue,
-	/// A payment was recorded.
-	PaymentReceived,
-	/// A source sent nothing for [`SOURCE_SILENCE`]: at most once a day.
-	SourceSilent,
-	/// A slot was booked, moved or canceled — by the customer through a provider, or by an
-	/// operator.
-	Booked,
-	/// A signed-in user asked for a permission: at most once a day per user and need.
-	AccessRequested,
-}
-
-impl Rule {
-	pub const ALL: [Self; 6] = [
-		Self::NewLead,
-		Self::ContactOverdue,
-		Self::PaymentReceived,
-		Self::SourceSilent,
-		Self::Booked,
-		Self::AccessRequested,
-	];
-
-	pub fn as_str(self) -> &'static str {
-		match self {
-			Self::NewLead => "new_lead",
-			Self::ContactOverdue => "contact_overdue",
-			Self::PaymentReceived => "payment_received",
-			Self::SourceSilent => "source_silent",
-			Self::Booked => "booked",
-			Self::AccessRequested => "access_requested",
-		}
-	}
-
-	/// On for a user who never chose.
-	pub fn on_by_default(self) -> bool {
-		match self {
-			Self::NewLead | Self::ContactOverdue | Self::Booked | Self::AccessRequested => true,
-			Self::PaymentReceived | Self::SourceSilent => false,
-		}
-	}
-
-	/// Whether someone holding `permissions` gets this rule's messages at all: leads are
-	/// whoever works them; money and the sources are whoever manages the sources; access
-	/// requests are whoever holds all of `sa:admin`.
-	pub fn open_to(self, permissions: &PermissionSet) -> bool {
-		match self {
-			Self::NewLead | Self::ContactOverdue | Self::Booked => permissions.may(Leads::Edit),
-			Self::PaymentReceived | Self::SourceSilent => permissions.may(Sources::Manage),
-			Self::AccessRequested => SA_ADMIN.members.iter().all(|m| permissions.iter().any(|p| p == *m)),
-		}
-	}
-}
-
-impl fmt::Display for Rule {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		f.write_str(self.as_str())
-	}
-}
-
-impl FromStr for Rule {
-	type Err = Invalid;
-
-	fn from_str(s: &str) -> Result<Self, Invalid> {
-		Self::ALL.into_iter().find(|r| r.as_str() == s).ok_or_else(|| {
-			Invalid::new(format!(
-				"{s:?} is not one of new_lead, contact_overdue, payment_received, source_silent, booked, access_requested"
-			))
-		})
-	}
-}
 
 /// How long a source may send nothing before the admins hear of it.
 pub const SOURCE_SILENCE: SignedDuration = SignedDuration::from_hours(24);
@@ -118,12 +39,6 @@ impl FromStr for Locale {
 /// Bytes of HMAC in a button's data: 80 bits, far past guessing within Telegram's rate of
 /// callbacks, and short enough for its 64-byte limit.
 const CALLBACK_MAC_LEN: usize = 10;
-
-/// What a button is called in its data: 2–16 of `[a-z0-9_]`, so the data stays within Telegram's
-/// 64 bytes and never reads as a one-letter code of [`parse_callback`].
-pub fn is_button_id(s: &str) -> bool {
-	(2..=16).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-}
 
 fn callback_mac(key: &[u8; 32], chat_id: i64, message: i64, button: &str) -> [u8; CALLBACK_MAC_LEN] {
 	// HMAC takes a key of any length, so this cannot fail.
@@ -177,9 +92,11 @@ pub enum Note {
 		kind: String,
 		last: Option<Timestamp>,
 	},
-	/// Too many leads queued for one chat to send each: how many, and nothing about them.
+	/// Too many of one rule's messages queued for one destination to send each: how many, and
+	/// nothing about them.
 	Backlog {
-		count: i64,
+		rule: Rule,
+		count: u64,
 	},
 	/// A signed-in user asked for `need`, a permission or an alias of the `sa` catalog.
 	AccessRequested {
@@ -193,7 +110,7 @@ pub enum Note {
 impl Note {
 	pub fn rule(&self) -> Rule {
 		match self {
-			Self::Backlog { .. } => Rule::NewLead,
+			Self::Backlog { rule, .. } => *rule,
 			Self::SourceSilent { .. } => Rule::SourceSilent,
 			Self::AccessRequested { .. } => Rule::AccessRequested,
 		}
@@ -261,13 +178,57 @@ impl Note {
 					out.code(&name);
 				}
 			}
-			Self::Backlog { count } => out.push(&if ru {
+			Self::Backlog {
+				rule: Rule::NewLead | Rule::ContactOverdue,
+				count,
+			} => out.push(&if ru {
 				format!("{count} новых заявок ждут звонка. Откройте панель.")
 			} else {
 				format!("{count} new leads are waiting for a call. Open the panel.")
 			}),
+			Self::Backlog { rule, count } => out.push(&if ru {
+				format!("Ещё {count} уведомлений «{}» не отправлены. Откройте панель.", rule_name(*rule, locale))
+			} else {
+				format!("{count} more \"{}\" alerts were not sent. Open the panel.", rule_name(*rule, locale))
+			}),
 		}
 		out
+	}
+}
+
+fn rule_name(rule: Rule, locale: Locale) -> &'static str {
+	let ru = locale == Locale::Ru;
+	match rule {
+		Rule::NewLead if ru => "новая заявка",
+		Rule::NewLead => "new lead",
+		Rule::ContactOverdue if ru => "заявка ждёт звонка",
+		Rule::ContactOverdue => "contact overdue",
+		Rule::PaymentReceived if ru => "оплата получена",
+		Rule::PaymentReceived => "payment received",
+		Rule::SourceSilent if ru => "источник молчит",
+		Rule::SourceSilent => "source silent",
+		Rule::Booked if ru => "запись",
+		Rule::Booked => "booking",
+		Rule::AccessRequested if ru => "запрос доступа",
+		Rule::AccessRequested => "access request",
+		Rule::ReviewNew if ru => "новый отзыв",
+		Rule::ReviewNew => "new review",
+		Rule::ReviewChanged if ru => "отзыв изменён",
+		Rule::ReviewChanged => "review changed",
+		Rule::ReviewGone if ru => "отзыв пропал",
+		Rule::ReviewGone => "review gone",
+		Rule::ReviewReappeared if ru => "отзыв вернулся",
+		Rule::ReviewReappeared => "review reappeared",
+		Rule::ScanFailed if ru => "проверка не удалась",
+		Rule::ScanFailed => "scan failed",
+	}
+}
+
+/// What a destination is sent when it is added or tested.
+pub fn test_text(locale: Locale) -> &'static str {
+	match locale {
+		Locale::Ru => "Сюда будут приходить оповещения панели Service-Arb.",
+		Locale::En => "Alerts of the Service-Arb panel will arrive here.",
 	}
 }
 
@@ -325,8 +286,8 @@ fn minute(at: Timestamp) -> String {
 pub fn linked_text(locale: Locale, account: &str) -> String {
 	let account = one_line(account, MAX_NAME);
 	match locale {
-		Locale::Ru => format!("Telegram подключён к панели Service-Arb, аккаунт: {account}. Уведомления настраиваются в профиле панели. Не вы? Отправьте /stop."),
-		Locale::En => format!("Telegram is linked to the Service-Arb panel, account: {account}. Choose notifications in your panel profile. Not you? Send /stop."),
+		Locale::Ru => format!("Telegram подключён к панели Service-Arb, аккаунт: {account}. Оповещения настраиваются на странице «Оповещения» панели. Не вы? Отправьте /stop."),
+		Locale::En => format!("Telegram is linked to the Service-Arb panel, account: {account}. Choose your alerts on the panel's Alerts page. Not you? Send /stop."),
 	}
 }
 
@@ -360,12 +321,12 @@ impl Reply {
 		match self {
 			Self::ChatTaken if ru => "Этот чат привязан к другому аккаунту панели. Сначала отправьте /stop.",
 			Self::ChatTaken => "This chat is linked to another panel account. Send /stop first.",
-			Self::LinkInvalid if ru => "Ссылка недействительна или устарела. Откройте профиль в панели и подключите Telegram заново.",
-			Self::LinkInvalid => "This link is invalid or has expired. Open your panel profile and link Telegram again.",
-			Self::Help if ru => "Это бот панели Service-Arb. Подключение — кнопкой «Подключить Telegram» в профиле панели. /stop отключает уведомления.",
-			Self::Help => "This is the Service-Arb panel's bot. Link it with \"Connect Telegram\" in your panel profile. /stop turns notifications off.",
-			Self::Unlinked if ru => "Уведомления отключены. Подключить снова можно в профиле панели.",
-			Self::Unlinked => "Notifications are off. You can link again from your panel profile.",
+			Self::LinkInvalid if ru => "Ссылка недействительна или устарела. Откройте «Оповещения» в панели и подключите Telegram заново.",
+			Self::LinkInvalid => "This link is invalid or has expired. Open Alerts in the panel and link Telegram again.",
+			Self::Help if ru => "Это бот панели Service-Arb. Подключение — кнопкой «Подключить Telegram» на странице «Оповещения» панели. /stop отключает этот чат.",
+			Self::Help => "This is the Service-Arb panel's bot. Link it with \"Connect Telegram\" on the panel's Alerts page. /stop unlinks this chat.",
+			Self::Unlinked if ru => "Этот чат отключён. Подключить снова можно на странице «Оповещения» панели.",
+			Self::Unlinked => "This chat is unlinked. You can link it again on the panel's Alerts page.",
 			Self::NotLinked if ru => "Этот чат не подключён к панели.",
 			Self::NotLinked => "This chat is not linked to the panel.",
 			Self::BadButton if ru => "Кнопка недействительна.",
@@ -388,8 +349,11 @@ impl Reply {
 
 // ── delivery ────────────────────────────────────────────────────────────────────────────
 
-/// At most one message a second to a chat (Telegram's limit for a private chat).
+/// At most one message a second to a private chat (Telegram's limit for one).
 pub const PER_CHAT_GAP: SignedDuration = SignedDuration::from_secs(1);
+
+/// At most twenty a minute to a channel or a group (Telegram's limit for one).
+pub const PER_GROUP_GAP: SignedDuration = SignedDuration::from_secs(3);
 
 /// At most this many messages in any second, across every chat and every replica (under the
 /// Bot API's 30).
@@ -406,7 +370,8 @@ pub enum Failure {
 	RetryAfter(SignedDuration),
 	/// 5xx, a timeout, no connection: tried again later.
 	Transient(String),
-	/// 403: the user blocked the bot. The chat is dead until they link again.
+	/// 403: the user blocked the bot, or it is no longer in the channel or group. The chat is dead
+	/// until a send there succeeds again.
 	Blocked,
 	/// Any other refusal (400: chat not found, text too long): trying again changes nothing.
 	Refused(String),
@@ -455,22 +420,6 @@ mod tests {
 	const KEY: [u8; 32] = [7; 32];
 
 	#[test]
-	fn rules_round_trip_and_are_scoped() {
-		for r in Rule::ALL {
-			assert_eq!(r.as_str().parse::<Rule>().unwrap(), r);
-		}
-		assert!("review_low".parse::<Rule>().is_err(), "not yet");
-		assert_eq!(Rule::ALL.iter().filter(|r| r.on_by_default()).count(), 4);
-		let operator: PermissionSet = sa_auth::SA_OPERATOR.members.iter().copied().collect();
-		let admin: PermissionSet = sa_auth::SA_ADMIN.members.iter().copied().collect();
-		assert!(Rule::Booked.on_by_default() && Rule::Booked.open_to(&operator));
-		assert!(Rule::NewLead.open_to(&operator) && Rule::ContactOverdue.open_to(&operator));
-		assert!(!Rule::PaymentReceived.open_to(&operator) && !Rule::SourceSilent.open_to(&operator) && !Rule::AccessRequested.open_to(&operator));
-		assert!(Rule::ALL.iter().all(|r| r.open_to(&admin)));
-		assert!(Rule::ALL.iter().all(|r| !r.open_to(&std::iter::empty::<&str>().collect())), "no permission, no rule");
-	}
-
-	#[test]
 	fn access_request_links_to_the_sa_scope_grant_form() {
 		let origin: url::Url = "https://evinvest.ltd/".parse().unwrap();
 		let note = Note::AccessRequested {
@@ -481,7 +430,7 @@ mod tests {
 		let (label, url) = note.link(Locale::En, &origin).unwrap();
 		assert_eq!(label, "Grant access");
 		assert_eq!(url, "https://evinvest.ltd/admin/scopes/sa?email=a%2Bb%40x.io&target=sa%3Aoperator");
-		assert_eq!(Note::Backlog { count: 1 }.link(Locale::En, &origin), None);
+		assert_eq!(Note::Backlog { rule: Rule::NewLead, count: 1 }.link(Locale::En, &origin), None);
 	}
 
 	#[test]

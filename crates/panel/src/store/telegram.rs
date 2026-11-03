@@ -1,16 +1,16 @@
-//! Telegram: link tokens, links, the users' rules, the fan-out marks, the outbox, the poller's
-//! lease and the cursor into sites' notes. Every timestamp is the caller's `now`, never the database's clock, so the
-//! pacing can be driven by a test's virtual time.
+//! Telegram: link tokens, the chats destinations are reached at, the outbox, the poller's lease
+//! and the bot's replies. Every timestamp is the caller's `now`, never the database's clock, so
+//! the pacing can be driven by a test's virtual time.
 
 use eyre::WrapErr;
 use jiff::{SignedDuration, Timestamp};
-use panel_core::notify::{GLOBAL_PER_SECOND, PER_CHAT_GAP, Rule};
+use panel_core::notify::{GLOBAL_PER_SECOND, PER_CHAT_GAP, PER_GROUP_GAP};
+use sa_alerts::{Button, Rule};
 use sa_auth::PermissionSet;
 use sqlx::{SqliteConnection, types::Json};
 use uuid::Uuid;
 
-use super::{begin_write, from_db, to_db};
-use crate::telegram::Button;
+use super::{alerts, begin_write, from_db, to_db};
 
 // ── link tokens ─────────────────────────────────────────────────────────────────────────
 
@@ -70,41 +70,24 @@ pub async fn redeem_link_token(conn: &mut SqliteConnection, hash: &[u8], now: Ti
 	}))
 }
 
-// ── links ───────────────────────────────────────────────────────────────────────────────
+// ── chats ───────────────────────────────────────────────────────────────────────────────
 
-/// A user's chat with the bot.
-#[derive(Clone, Debug)]
-pub struct LinkRow {
-	pub user_id: Uuid,
-	pub chat_id: i64,
-	/// `None`: their access is known lost.
-	pub permissions: Option<PermissionSet>,
-	pub permissions_checked_at: Timestamp,
-	pub display_name: String,
-	pub dead: bool,
-	/// The Telegram account: `@username`, else its first name.
-	pub account: Option<String>,
+/// What a destination's chat is.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::AsRefStr, strum::EnumString)]
+#[strum(serialize_all = "snake_case")]
+pub enum Kind {
+	/// The user's own chat with the bot: the only one PII and buttons go to.
+	Private,
+	Channel,
+	/// A group, or one topic of a forum.
+	Group,
 }
 
-type LinkDb = (Uuid, i64, Option<Json<PermissionSet>>, i64, String, Option<i64>, Option<String>, Option<String>);
-
-fn link_row((user_id, chat_id, permissions, checked, display_name, dead_at, username, first_name): LinkDb) -> eyre::Result<LinkRow> {
-	Ok(LinkRow {
-		user_id,
-		chat_id,
-		permissions: permissions.map(|Json(p)| p),
-		permissions_checked_at: from_db(checked)?,
-		display_name,
-		dead: dead_at.is_some(),
-		account: username.map(|u| format!("@{u}")).or(first_name),
-	})
-}
-
-// A macro, not a const, so every query stays a literal (`concat!`) that sqlx takes as audited.
-macro_rules! link_select {
-	() => {
-		"SELECT user_id, chat_id, permissions, permissions_checked_at, display_name, dead_at, tg_username, tg_first_name FROM telegram_links "
-	};
+/// The Telegram account behind a chat, as its `/start` said.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Account {
+	pub username: Option<String>,
+	pub first_name: Option<String>,
 }
 
 // A macro, not a const, so every query stays a literal (`concat!`) that sqlx takes as audited.
@@ -115,15 +98,8 @@ macro_rules! drop_pending {
 	};
 }
 
-/// The Telegram account behind a chat, as its `/start` said.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Account {
-	pub username: Option<String>,
-	pub first_name: Option<String>,
-}
-
 /// Gives up what the outbox still owed a user, and why.
-async fn drop_pending_of_user(conn: &mut SqliteConnection, user: Uuid, why: &str) -> eyre::Result<()> {
+pub(super) async fn drop_pending_of_user(conn: &mut SqliteConnection, user: Uuid, why: &str) -> eyre::Result<()> {
 	sqlx::query(concat!(drop_pending!(), "user_id = $2"))
 		.bind(why)
 		.bind(user)
@@ -133,249 +109,186 @@ async fn drop_pending_of_user(conn: &mut SqliteConnection, user: Uuid, why: &str
 	Ok(())
 }
 
-/// Gives up what the outbox still owed a chat, and why.
-async fn drop_pending_of_chat(conn: &mut SqliteConnection, chat: i64, why: &str) -> eyre::Result<()> {
+/// The user's private chat: its destination and chat id.
+pub async fn private_of_user(conn: &mut SqliteConnection, user: Uuid) -> eyre::Result<Option<(i64, i64)>> {
+	sqlx::query_as(
+		"SELECT t.destination_id, t.chat_id FROM telegram_destinations t JOIN alert_destinations d ON d.id = t.destination_id \
+		 WHERE d.user_id = $1 AND t.kind = 'private'",
+	)
+	.bind(user)
+	.fetch_optional(&mut *conn)
+	.await
+	.wrap_err("reading a user's private chat")
+}
+
+/// Whose private chat `chat` is.
+pub async fn owner_of_private(conn: &mut SqliteConnection, chat: i64) -> eyre::Result<Option<Uuid>> {
+	sqlx::query_scalar(
+		"SELECT d.user_id FROM telegram_destinations t JOIN alert_destinations d ON d.id = t.destination_id \
+		 WHERE t.chat_id = $1 AND t.kind = 'private'",
+	)
+	.bind(chat)
+	.fetch_optional(&mut *conn)
+	.await
+	.wrap_err("reading a chat's link")
+}
+
+/// Links `chat` to the token's user as their private chat, their permissions confirmed as of the
+/// token's issue. A chat they had before is let go, with what the outbox still owed it; the rules
+/// they chose stay. The caller has made sure the chat is no one else's.
+pub async fn link(conn: &mut SqliteConnection, t: &Redeemed, chat: i64, account: &Account, now: Timestamp) -> eyre::Result<()> {
+	let title = account.username.as_ref().map(|u| format!("@{u}")).or_else(|| account.first_name.clone());
+	match private_of_user(conn, t.user_id).await? {
+		Some((destination, _)) => {
+			sqlx::query(concat!(drop_pending!(), "destination_id = $2 AND chat_id <> $3"))
+				.bind("relinked")
+				.bind(destination)
+				.bind(chat)
+				.execute(&mut *conn)
+				.await
+				.wrap_err("dropping what a relinked chat was owed")?;
+			sqlx::query("UPDATE telegram_destinations SET chat_id = $2, title = $3, dead_at = NULL, dead_reason = NULL WHERE destination_id = $1")
+				.bind(destination)
+				.bind(chat)
+				.bind(title)
+				.execute(&mut *conn)
+				.await
+				.wrap_err("relinking a chat")?;
+		}
+		None => {
+			let destination = alerts::add(conn, t.user_id, None, now).await?;
+			insert(conn, destination, Kind::Private, chat, None, title.as_deref()).await?;
+		}
+	}
+	alerts::access_seen(conn, t.user_id, &t.permissions, &t.display_name, t.issued_at).await
+}
+
+/// A destination's chat.
+pub async fn insert(conn: &mut SqliteConnection, destination: i64, kind: Kind, chat: i64, topic: Option<i64>, title: Option<&str>) -> eyre::Result<()> {
+	sqlx::query("INSERT INTO telegram_destinations (destination_id, kind, chat_id, topic_id, title) VALUES ($1, $2, $3, $4, $5)")
+		.bind(destination)
+		.bind(kind.as_ref())
+		.bind(chat)
+		.bind(topic)
+		.bind(title)
+		.execute(&mut *conn)
+		.await
+		.wrap_err("adding a chat")?;
+	Ok(())
+}
+
+/// Whether a destination stands for `chat` (and `topic`) already.
+pub async fn chat_taken(conn: &mut SqliteConnection, chat: i64, topic: Option<i64>) -> eyre::Result<bool> {
+	sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM telegram_destinations WHERE chat_id = $1 AND ifnull(topic_id, 0) = ifnull($2, 0))")
+		.bind(chat)
+		.bind(topic)
+		.fetch_one(&mut *conn)
+		.await
+		.wrap_err("looking a chat up")
+}
+
+/// Unlinks a private chat (`/stop`): the user it was linked to, `None` when it was not.
+pub async fn unlink_private(conn: &mut SqliteConnection, chat: i64) -> eyre::Result<Option<Uuid>> {
+	sqlx::query_scalar(
+		"DELETE FROM alert_destinations WHERE id = (SELECT destination_id FROM telegram_destinations WHERE chat_id = $1 AND kind = 'private') \
+		 RETURNING user_id",
+	)
+	.bind(chat)
+	.fetch_optional(&mut *conn)
+	.await
+	.wrap_err("unlinking a chat")
+}
+
+/// Nothing reaches `chat` (the bot is blocked there, or gone from it): nothing more goes there
+/// until a send succeeds again. The users whose destinations it held.
+pub async fn chat_dead(conn: &mut SqliteConnection, chat: i64, why: &str, now: Timestamp) -> eyre::Result<Vec<Uuid>> {
 	sqlx::query(concat!(drop_pending!(), "chat_id = $2"))
 		.bind(why)
 		.bind(chat)
 		.execute(&mut *conn)
 		.await
-		.wrap_err_with(|| format!("dropping what a chat was owed ({why})"))?;
-	Ok(())
-}
-
-/// Links `chat` to the token's user, their permissions confirmed as of the token's issue. The user's
-/// previous chat is let go, with what the outbox still owed it. The caller has made sure the
-/// chat is no one else's.
-pub async fn link(conn: &mut SqliteConnection, t: &Redeemed, chat: i64, account: &Account, now: Timestamp) -> eyre::Result<()> {
-	sqlx::query(concat!(drop_pending!(), "user_id = $2 AND chat_id <> $3"))
-		.bind("relinked")
-		.bind(t.user_id)
-		.bind(chat)
-		.execute(&mut *conn)
-		.await
-		.wrap_err("dropping what a relinked chat was owed")?;
-	sqlx::query(
-		"INSERT INTO telegram_links (user_id, chat_id, linked_at, permissions, permissions_checked_at, display_name, tg_username, tg_first_name) \
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-		 ON CONFLICT (user_id) DO UPDATE SET chat_id = $2, linked_at = $3, permissions = $4, permissions_checked_at = $5, access_tried_at = NULL, \
-		 display_name = $6, dead_at = NULL, tg_username = $7, tg_first_name = $8",
+		.wrap_err("dropping what a dead chat was owed")?;
+	let users = sqlx::query_scalar(
+		"SELECT DISTINCT d.user_id FROM telegram_destinations t JOIN alert_destinations d ON d.id = t.destination_id \
+		 WHERE t.chat_id = $1 AND t.dead_at IS NULL",
 	)
-	.bind(t.user_id)
 	.bind(chat)
-	.bind(to_db(now))
-	.bind(Json(&t.permissions))
-	.bind(to_db(t.issued_at))
-	.bind(&t.display_name)
-	.bind(&account.username)
-	.bind(&account.first_name)
-	.execute(&mut *conn)
+	.fetch_all(&mut *conn)
 	.await
-	.wrap_err("linking a chat")?;
-	Ok(())
-}
-
-/// Unlinks a user's chat; `false` when there was none.
-pub async fn unlink_user(conn: &mut SqliteConnection, user: Uuid) -> eyre::Result<bool> {
-	drop_pending_of_user(conn, user, "unlinked").await?;
-	let gone = sqlx::query("DELETE FROM telegram_links WHERE user_id = $1")
-		.bind(user)
-		.execute(&mut *conn)
-		.await
-		.wrap_err("unlinking a user")?
-		.rows_affected();
-	Ok(gone == 1)
-}
-
-/// Unlinks a chat (`/stop`): the user it was linked to, `None` when it was not.
-pub async fn unlink_chat(conn: &mut SqliteConnection, chat: i64) -> eyre::Result<Option<Uuid>> {
-	drop_pending_of_chat(conn, chat, "unlinked").await?;
-	sqlx::query_scalar("DELETE FROM telegram_links WHERE chat_id = $1 RETURNING user_id")
-		.bind(chat)
-		.fetch_optional(&mut *conn)
-		.await
-		.wrap_err("unlinking a chat")
-}
-
-/// The bot was blocked in `chat`: nothing more goes there until the user links again.
-pub async fn chat_dead(conn: &mut SqliteConnection, chat: i64, now: Timestamp) -> eyre::Result<()> {
-	drop_pending_of_chat(conn, chat, "the bot is blocked").await?;
-	sqlx::query("UPDATE telegram_links SET dead_at = $2 WHERE chat_id = $1 AND dead_at IS NULL")
+	.wrap_err("reading a dead chat's users")?;
+	sqlx::query("UPDATE telegram_destinations SET dead_at = $2, dead_reason = $3 WHERE chat_id = $1 AND dead_at IS NULL")
 		.bind(chat)
 		.bind(to_db(now))
+		.bind(why)
 		.execute(&mut *conn)
 		.await
 		.wrap_err("marking a chat dead")?;
+	Ok(users)
+}
+
+/// A send to the destination succeeded: it is reached again.
+pub async fn revive(conn: &mut SqliteConnection, destination: i64) -> eyre::Result<()> {
+	sqlx::query("UPDATE telegram_destinations SET dead_at = NULL, dead_reason = NULL WHERE destination_id = $1")
+		.bind(destination)
+		.execute(&mut *conn)
+		.await
+		.wrap_err("reviving a destination")?;
 	Ok(())
 }
 
-pub async fn link_of_user(conn: &mut SqliteConnection, user: Uuid) -> eyre::Result<Option<LinkRow>> {
-	let row: Option<LinkDb> = sqlx::query_as(concat!(link_select!(), "WHERE user_id = $1"))
-		.bind(user)
+/// What a channel's or group's destination is, as Telegram says now.
+pub async fn describe(conn: &mut SqliteConnection, destination: i64, kind: Kind, title: Option<&str>) -> eyre::Result<()> {
+	sqlx::query("UPDATE telegram_destinations SET kind = $2, title = $3 WHERE destination_id = $1 AND kind <> 'private'")
+		.bind(destination)
+		.bind(kind.as_ref())
+		.bind(title)
+		.execute(&mut *conn)
+		.await
+		.wrap_err("describing a chat")?;
+	Ok(())
+}
+
+/// A destination's chat and topic as they stand, and whether it is reached.
+pub async fn reach(conn: &mut SqliteConnection, destination: i64) -> eyre::Result<Option<(i64, Option<i64>, bool)>> {
+	sqlx::query_as("SELECT chat_id, topic_id, dead_at IS NULL FROM telegram_destinations WHERE destination_id = $1")
+		.bind(destination)
 		.fetch_optional(&mut *conn)
 		.await
-		.wrap_err("reading a user's link")?;
-	row.map(link_row).transpose()
+		.wrap_err("reading a destination's chat")
 }
 
-pub async fn link_of_chat(conn: &mut SqliteConnection, chat: i64) -> eyre::Result<Option<LinkRow>> {
-	let row: Option<LinkDb> = sqlx::query_as(concat!(link_select!(), "WHERE chat_id = $1"))
-		.bind(chat)
-		.fetch_optional(&mut *conn)
-		.await
-		.wrap_err("reading a chat's link")?;
-	row.map(link_row).transpose()
-}
-
-/// What concierge just said of a linked user: their permissions and name.
-pub async fn access_seen(conn: &mut SqliteConnection, user: Uuid, permissions: &PermissionSet, display: &str, now: Timestamp) -> eyre::Result<()> {
-	sqlx::query("UPDATE telegram_links SET permissions = $2, display_name = $3, permissions_checked_at = $4, access_tried_at = $4 WHERE user_id = $1")
-		.bind(user)
-		.bind(Json(permissions))
-		.bind(display)
-		.bind(to_db(now))
-		.execute(&mut *conn)
-		.await
-		.wrap_err("recording a user's access")?;
-	Ok(())
-}
-
-/// A try to confirm a user's access that got no answer.
-pub async fn access_tried(conn: &mut SqliteConnection, user: Uuid, now: Timestamp) -> eyre::Result<()> {
-	sqlx::query("UPDATE telegram_links SET access_tried_at = $2 WHERE user_id = $1")
-		.bind(user)
-		.bind(to_db(now))
-		.execute(&mut *conn)
-		.await
-		.wrap_err("recording an access check")?;
-	Ok(())
-}
-
-/// A user's access is known to be gone: nothing more is sent to them, queued or not.
-pub async fn access_lost(conn: &mut SqliteConnection, user: Uuid, now: Timestamp) -> eyre::Result<()> {
-	drop_pending_of_user(conn, user, "access lost").await?;
-	sqlx::query("UPDATE telegram_links SET permissions = NULL, permissions_checked_at = $2, access_tried_at = $2 WHERE user_id = $1")
-		.bind(user)
-		.bind(to_db(now))
-		.execute(&mut *conn)
-		.await
-		.wrap_err("recording a user's lost access")?;
-	Ok(())
-}
-
-/// Linked users whose access was last confirmed or tried before `before`, oldest first.
-pub async fn stale_access(conn: &mut SqliteConnection, before: Timestamp, limit: i64) -> eyre::Result<Vec<Uuid>> {
-	sqlx::query_scalar(
-		"SELECT user_id FROM telegram_links WHERE dead_at IS NULL AND permissions_checked_at < $1 AND (access_tried_at IS NULL OR access_tried_at < $1) \
-		 ORDER BY COALESCE(access_tried_at, permissions_checked_at) LIMIT $2",
-	)
-	.bind(to_db(before))
-	.bind(limit)
-	.fetch_all(&mut *conn)
-	.await
-	.wrap_err("listing links to confirm")
-}
-
-// ── rules ───────────────────────────────────────────────────────────────────────────────
-
-/// The rules a user chose; the others are at their default.
-pub async fn rules(conn: &mut SqliteConnection, user: Uuid) -> eyre::Result<Vec<(Rule, bool)>> {
-	let rows: Vec<(String, bool)> = sqlx::query_as("SELECT rule, enabled FROM telegram_rules WHERE user_id = $1")
-		.bind(user)
-		.fetch_all(&mut *conn)
-		.await
-		.wrap_err("reading a user's rules")?;
-	rows.into_iter().map(|(r, on)| Ok((r.parse::<Rule>().wrap_err("a stored rule")?, on))).collect()
-}
-
-pub async fn set_rule(conn: &mut SqliteConnection, user: Uuid, rule: Rule, enabled: bool) -> eyre::Result<()> {
-	sqlx::query("INSERT INTO telegram_rules (user_id, rule, enabled) VALUES ($1, $2, $3) ON CONFLICT (user_id, rule) DO UPDATE SET enabled = $3")
-		.bind(user)
-		.bind(rule.as_str())
-		.bind(enabled)
-		.execute(&mut *conn)
-		.await
-		.wrap_err("setting a rule")?;
-	Ok(())
-}
-
-/// Who may get a rule's message now: linked, the chat alive, the rule on, and permissions
-/// concierge confirmed at or after `confirmed_since`. Whether they open the rule is the
-/// caller's to ask.
-#[derive(Clone, Debug)]
-pub struct Recipient {
-	pub user_id: Uuid,
-	pub chat_id: i64,
-	pub permissions: PermissionSet,
-}
-
-pub async fn recipients(conn: &mut SqliteConnection, rule: Rule, confirmed_since: Timestamp) -> eyre::Result<Vec<Recipient>> {
-	let rows: Vec<(Uuid, i64, Json<PermissionSet>)> = sqlx::query_as(
-		"SELECT l.user_id, l.chat_id, l.permissions FROM telegram_links l \
-		 LEFT JOIN telegram_rules r ON r.user_id = l.user_id AND r.rule = $1 \
-		 WHERE l.dead_at IS NULL AND l.permissions IS NOT NULL AND l.permissions_checked_at >= $2 AND COALESCE(r.enabled, $3) \
-		 ORDER BY l.user_id",
-	)
-	.bind(rule.as_str())
-	.bind(to_db(confirmed_since))
-	.bind(rule.on_by_default())
-	.fetch_all(&mut *conn)
-	.await
-	.wrap_err("listing a rule's recipients")?;
-	Ok(rows
-		.into_iter()
-		.map(|(user_id, chat_id, Json(permissions))| Recipient { user_id, chat_id, permissions })
-		.collect())
-}
-
-// ── fan-out ─────────────────────────────────────────────────────────────────────────────
-
-/// An active source: its key id, kind and when it was added.
-pub async fn active_sources(conn: &mut SqliteConnection) -> eyre::Result<Vec<(String, String, Timestamp)>> {
-	let rows: Vec<(String, String, i64)> = sqlx::query_as("SELECT key_id, kind, created_at FROM sources WHERE revoked_at IS NULL ORDER BY key_id")
-		.fetch_all(&mut *conn)
-		.await
-		.wrap_err("listing the active sources")?;
-	rows.into_iter().map(|(key_id, kind, created_at)| Ok((key_id, kind, from_db(created_at)?))).collect()
-}
-
-/// Marks `(rule, event_id)` as fanned out; `false` when it already was (by another replica).
-pub async fn claim_fanout(conn: &mut SqliteConnection, rule: Rule, event_id: Uuid, now: Timestamp) -> eyre::Result<bool> {
-	let done = sqlx::query("INSERT INTO telegram_fanout (rule, event_id, fanned_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
-		.bind(rule.as_str())
-		.bind(event_id)
-		.bind(to_db(now))
-		.execute(&mut *conn)
-		.await
-		.wrap_err("marking a fan-out")?
-		.rows_affected();
-	Ok(done == 1)
-}
+// ── the outbox ──────────────────────────────────────────────────────────────────────────
 
 /// A message to queue.
 pub struct NewMessage<'a> {
+	pub destination_id: i64,
 	pub user_id: Uuid,
 	pub chat_id: i64,
+	pub topic_id: Option<i64>,
 	pub rule: Rule,
 	pub event_id: Uuid,
 	pub buttons: &'a [Button],
+	pub photo: Option<&'a str>,
 	pub text_sealed: &'a [u8],
 	pub data_key_fp: [u8; 32],
 	/// When what it tells of was noted: the stale rule counts from it.
 	pub created_at: Timestamp,
 }
 
-/// Queues a message; `false` when `(rule, event, chat)` is queued already.
+/// Queues a message; `false` when `(rule, event, destination)` is queued already.
 pub async fn enqueue(conn: &mut SqliteConnection, m: &NewMessage<'_>, now: Timestamp) -> eyre::Result<bool> {
 	let done = sqlx::query(
-		"INSERT INTO telegram_outbox (user_id, chat_id, rule, event_id, buttons, text_sealed, data_key_fp, next_attempt_at, created_at) \
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (rule, event_id, chat_id) DO NOTHING",
+		"INSERT INTO telegram_outbox (destination_id, user_id, chat_id, topic_id, rule, event_id, buttons, photo, text_sealed, data_key_fp, next_attempt_at, created_at) \
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (rule, event_id, destination_id) DO NOTHING",
 	)
+	.bind(m.destination_id)
 	.bind(m.user_id)
 	.bind(m.chat_id)
+	.bind(m.topic_id)
 	.bind(m.rule.as_str())
 	.bind(m.event_id)
 	.bind(Json(m.buttons))
+	.bind(m.photo)
 	.bind(m.text_sealed)
 	.bind(m.data_key_fp.as_slice())
 	.bind(to_db(now))
@@ -387,33 +300,28 @@ pub async fn enqueue(conn: &mut SqliteConnection, m: &NewMessage<'_>, now: Times
 	Ok(done == 1)
 }
 
-/// Drops fan-out marks and finished messages older than `before`.
+/// Drops finished messages older than `before`.
 pub async fn prune(conn: &mut SqliteConnection, before: Timestamp) -> eyre::Result<()> {
-	let before = to_db(before);
-	sqlx::query("DELETE FROM telegram_fanout WHERE fanned_at < $1")
-		.bind(before)
-		.execute(&mut *conn)
-		.await
-		.wrap_err("pruning fan-out marks")?;
 	sqlx::query("DELETE FROM telegram_outbox WHERE state <> 'pending' AND created_at < $1")
-		.bind(before)
+		.bind(to_db(before))
 		.execute(&mut *conn)
 		.await
 		.wrap_err("pruning the outbox")?;
 	Ok(())
 }
 
-// ── delivery ────────────────────────────────────────────────────────────────────────────
-
 /// A message claimed for sending.
 #[derive(Clone, Debug)]
 pub struct Due {
 	pub id: i64,
+	pub destination_id: i64,
 	pub user_id: Uuid,
 	pub chat_id: i64,
-	pub rule: String,
+	pub topic_id: Option<i64>,
+	pub rule: Rule,
 	pub event_id: Uuid,
 	pub buttons: Vec<Button>,
+	pub photo: Option<String>,
 	pub text_sealed: Vec<u8>,
 	pub data_key_fp: Vec<u8>,
 	/// Tries so far, this one included.
@@ -421,7 +329,8 @@ pub struct Due {
 }
 
 /// Claims what may be sent at `now`, leased until `lease_until`: at most one message per chat
-/// that has had none in the last [`PER_CHAT_GAP`] and none in flight, and no more than
+/// that has had none in the last [`PER_CHAT_GAP`] (a private chat) or [`PER_GROUP_GAP`] (a
+/// channel or group, whose ids are negative) and none in flight, and no more than
 /// [`GLOBAL_PER_SECOND`] tries started in the last second — whoever else claims, since every
 /// claim reads the pace and leases inside one write transaction, one at a time. Oldest first.
 pub async fn claim_due(conn: &mut SqliteConnection, now: Timestamp, lease_until: Timestamp) -> eyre::Result<Vec<Due>> {
@@ -435,10 +344,8 @@ pub async fn claim_due(conn: &mut SqliteConnection, now: Timestamp, lease_until:
 		tx.commit().await.wrap_err("ending a claim")?;
 		return Ok(Vec::new());
 	}
-	let second_ago = to_db(now - SignedDuration::from_secs(1));
-	let gap_ago = to_db(now - PER_CHAT_GAP);
 	let started: i64 = sqlx::query_scalar("SELECT count(*) FROM telegram_outbox WHERE attempted_at > $1 AND attempted_at <= $2")
-		.bind(second_ago)
+		.bind(to_db(now - SignedDuration::from_secs(1)))
 		.bind(now_db)
 		.fetch_one(&mut *tx)
 		.await
@@ -448,12 +355,12 @@ pub async fn claim_due(conn: &mut SqliteConnection, now: Timestamp, lease_until:
 		tx.commit().await.wrap_err("ending a claim")?;
 		return Ok(Vec::new());
 	}
-	type Row = (i64, Uuid, i64, String, Uuid, Json<Vec<Button>>, Vec<u8>, Vec<u8>, i32);
+	type Row = (i64, i64, Uuid, i64, Option<i64>, String, Uuid, Json<Vec<Button>>, Option<String>, Vec<u8>, Vec<u8>, i32);
 	// `pick`: each free chat's oldest due message (the lowest id of its group).
 	let rows: Vec<Row> = sqlx::query_as(
 		"WITH busy AS ( \
 		   SELECT DISTINCT chat_id FROM telegram_outbox \
-		   WHERE (attempted_at > $2 AND attempted_at <= $1) OR (state = 'pending' AND leased_until > $1) \
+		   WHERE (attempted_at > CASE WHEN chat_id < 0 THEN $5 ELSE $2 END AND attempted_at <= $1) OR (state = 'pending' AND leased_until > $1) \
 		 ), pick AS ( \
 		   SELECT min(id) AS id FROM telegram_outbox \
 		   WHERE state = 'pending' AND next_attempt_at <= $1 AND (leased_until IS NULL OR leased_until <= $1) \
@@ -462,30 +369,38 @@ pub async fn claim_due(conn: &mut SqliteConnection, now: Timestamp, lease_until:
 		 ), chosen AS (SELECT id FROM pick ORDER BY id LIMIT $4) \
 		 UPDATE telegram_outbox SET leased_until = $3, attempted_at = $1, attempts = attempts + 1 \
 		 WHERE id IN (SELECT id FROM chosen) \
-		 RETURNING id, user_id, chat_id, rule, event_id, buttons, text_sealed, data_key_fp, attempts",
+		 RETURNING id, destination_id, user_id, chat_id, topic_id, rule, event_id, buttons, photo, text_sealed, data_key_fp, attempts",
 	)
 	.bind(now_db)
-	.bind(gap_ago)
+	.bind(to_db(now - PER_CHAT_GAP))
 	.bind(to_db(lease_until))
 	.bind(budget)
+	.bind(to_db(now - PER_GROUP_GAP))
 	.fetch_all(&mut *tx)
 	.await
 	.wrap_err("claiming due messages")?;
 	tx.commit().await.wrap_err("committing a claim")?;
-	let mut due: Vec<Due> = rows
+	let mut due = rows
 		.into_iter()
-		.map(|(id, user_id, chat_id, rule, event_id, buttons, text_sealed, data_key_fp, attempts)| Due {
-			id,
-			user_id,
-			chat_id,
-			rule,
-			event_id,
-			buttons: buttons.0,
-			text_sealed,
-			data_key_fp,
-			attempts,
-		})
-		.collect();
+		.map(
+			|(id, destination_id, user_id, chat_id, topic_id, rule, event_id, Json(buttons), photo, text_sealed, data_key_fp, attempts)| {
+				Ok(Due {
+					id,
+					destination_id,
+					user_id,
+					chat_id,
+					topic_id,
+					rule: rule.parse().wrap_err_with(|| format!("message {id}'s rule"))?,
+					event_id,
+					buttons,
+					photo,
+					text_sealed,
+					data_key_fp,
+					attempts,
+				})
+			},
+		)
+		.collect::<eyre::Result<Vec<_>>>()?;
 	due.sort_by_key(|d| d.id);
 	Ok(due)
 }
@@ -504,25 +419,15 @@ pub async fn sent(conn: &mut SqliteConnection, id: i64, tg_message_id: i64, now:
 	Ok(())
 }
 
-/// A failed try, tried again at `at`. With `whole_chat` (Telegram asked the chat to wait),
-/// nothing else pending for the chat goes before `at` either.
-pub async fn retry(conn: &mut SqliteConnection, id: i64, chat: i64, at: Timestamp, error: &str, whole_chat: bool) -> eyre::Result<()> {
-	let at = to_db(at);
+/// A failed try, tried again at `at`.
+pub async fn retry(conn: &mut SqliteConnection, id: i64, at: Timestamp, error: &str) -> eyre::Result<()> {
 	sqlx::query("UPDATE telegram_outbox SET next_attempt_at = $2, leased_until = NULL, last_error = $3 WHERE id = $1")
 		.bind(id)
-		.bind(at)
+		.bind(to_db(at))
 		.bind(error)
 		.execute(&mut *conn)
 		.await
 		.wrap_err("scheduling a retry")?;
-	if whole_chat {
-		sqlx::query("UPDATE telegram_outbox SET next_attempt_at = max(next_attempt_at, $2) WHERE chat_id = $1 AND state = 'pending'")
-			.bind(chat)
-			.bind(at)
-			.execute(&mut *conn)
-			.await
-			.wrap_err("holding a chat back")?;
-	}
 	Ok(())
 }
 
@@ -556,34 +461,53 @@ pub async fn expire_stale(conn: &mut SqliteConnection, before: Timestamp) -> eyr
 		.rows_affected())
 }
 
-/// Chats with more than `over` lead messages waiting (none of them in flight): `(chat, user,
-/// how many)`.
-pub async fn crowded(conn: &mut SqliteConnection, over: i64, now: Timestamp) -> eyre::Result<Vec<(i64, Uuid, i64)>> {
-	sqlx::query_as(
-		"SELECT chat_id, min(user_id), count(*) FROM telegram_outbox \
-		 WHERE state = 'pending' AND rule IN ('new_lead', 'contact_overdue') AND (leased_until IS NULL OR leased_until <= $2) \
-		 GROUP BY chat_id HAVING count(*) > $1",
+/// A destination with more than its share of one rule's messages waiting.
+pub struct Crowded {
+	pub destination_id: i64,
+	pub user_id: Uuid,
+	pub chat_id: i64,
+	pub topic_id: Option<i64>,
+	pub rule: Rule,
+}
+
+/// Destinations with more than `over` messages of one rule waiting (none of them in flight).
+pub async fn crowded(conn: &mut SqliteConnection, over: i64, now: Timestamp) -> eyre::Result<Vec<Crowded>> {
+	let rows: Vec<(i64, Uuid, i64, Option<i64>, String)> = sqlx::query_as(
+		"SELECT destination_id, min(user_id), min(chat_id), min(topic_id), rule FROM telegram_outbox \
+		 WHERE state = 'pending' AND (leased_until IS NULL OR leased_until <= $2) \
+		 GROUP BY destination_id, rule HAVING count(*) > $1",
 	)
 	.bind(over)
 	.bind(to_db(now))
 	.fetch_all(&mut *conn)
 	.await
-	.wrap_err("finding crowded chats")
+	.wrap_err("finding crowded destinations")?;
+	rows.into_iter()
+		.map(|(destination_id, user_id, chat_id, topic_id, rule)| {
+			Ok(Crowded {
+				destination_id,
+				user_id,
+				chat_id,
+				topic_id,
+				rule: rule.parse()?,
+			})
+		})
+		.collect()
 }
 
-/// Gives up on a chat's waiting lead messages, a summary taking their place; how many.
-pub async fn fold_into_summary(conn: &mut SqliteConnection, chat: i64, now: Timestamp) -> eyre::Result<u64> {
-	Ok(sqlx::query(concat!(
-		drop_pending!(),
-		"chat_id = $2 AND rule IN ('new_lead', 'contact_overdue') AND (leased_until IS NULL OR leased_until <= $3)"
-	))
-	.bind("summarized")
-	.bind(chat)
-	.bind(to_db(now))
-	.execute(&mut *conn)
-	.await
-	.wrap_err("folding messages into a summary")?
-	.rows_affected())
+/// Gives up on a destination's waiting messages of `rule`, a summary taking their place; how many.
+pub async fn fold_into_summary(conn: &mut SqliteConnection, destination: i64, rule: Rule, now: Timestamp) -> eyre::Result<u64> {
+	Ok(
+		sqlx::query(concat!(drop_pending!(), "destination_id = $2 AND rule = $3 AND (leased_until IS NULL OR leased_until <= $4)"))
+			.bind("summarized")
+			.bind(destination)
+			.bind(rule.as_str())
+			.bind(to_db(now))
+			.execute(&mut *conn)
+			.await
+			.wrap_err("folding messages into a summary")?
+			.rows_affected(),
+	)
 }
 
 /// Whether the bot may send an unsolicited reply to `chat` now: at most one per `every`.
@@ -628,25 +552,6 @@ pub async fn message(conn: &mut SqliteConnection, id: i64) -> eyre::Result<Optio
 		.await
 		.wrap_err("reading a sent message")?;
 	Ok(row.map(|(user_id, chat_id, Json(buttons))| SentMessage { user_id, chat_id, buttons }))
-}
-
-// ── sites' notes ────────────────────────────────────────────────────────────────────────
-
-/// The last of sites' notes already in the outbox.
-pub async fn notes_after(conn: &mut SqliteConnection) -> eyre::Result<i64> {
-	sqlx::query_scalar("SELECT notes_after FROM telegram_poller")
-		.fetch_one(&mut *conn)
-		.await
-		.wrap_err("reading the notes' cursor")
-}
-
-pub async fn set_notes_after(conn: &mut SqliteConnection, after: i64) -> eyre::Result<()> {
-	sqlx::query("UPDATE telegram_poller SET notes_after = max(notes_after, $1)")
-		.bind(after)
-		.execute(&mut *conn)
-		.await
-		.wrap_err("moving the notes' cursor")?;
-	Ok(())
 }
 
 // ── the poller ──────────────────────────────────────────────────────────────────────────

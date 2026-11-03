@@ -12,10 +12,11 @@ use clap::{Parser, Subcommand};
 use ev_lib::error_monitoring;
 use eyre::WrapErr;
 use jiff::Timestamp;
-use panel::{Panel, seal::DataKey, store::Store, telegram::Notifier, tokens::Change};
+use panel::{Panel, alerts::Hub, seal::DataKey, store::Store, tokens::Change};
 use panel_core::ids::{BrandId, SiteOrigin};
 use panel_server::{
 	DEFAULT_BIND,
+	alerts::{self, Telegram},
 	concierge::{Concierge, DevIdentity},
 	forward::{Forward, Services},
 	grafana::Grafana,
@@ -232,7 +233,7 @@ async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSign
 			let telegram = settings.telegram()?;
 			eyre::ensure!(
 				telegram.is_none() || forward.is_some(),
-				"TELEGRAM_BOT_TOKEN needs the forward (PANEL_ASSERTION_KEY and the services' URLs): the bot sends sites' notes"
+				"TELEGRAM_BOT_TOKEN needs the forward (PANEL_ASSERTION_KEY and the services' URLs): the hub reads the services' feeds"
 			);
 			let grafana = settings.grafana()?;
 			eyre::ensure!(
@@ -362,25 +363,26 @@ async fn serve(
 	let bus = panel.bus().clone();
 	let bot = match (telegram, &services) {
 		(Some(tg), Some(services)) => {
-			let name = BotName::on(tg.username);
-			let notifier = Notifier {
+			let hub = Hub {
 				panel: panel.clone(),
 				bot: BotApi::new(telegram::API_BASE, &tg.token)?,
 				concierge: concierge.clone(),
-				sites: services.clone(),
+				feeds: services.clone(),
 				locale: tg.locale,
 				cabinet: config.concierge_origin.parse().wrap_err("the concierge origin is not a URL")?,
 			};
-			tracing::info!("telegram notifications on");
-			Some((notifier, name))
+			tracing::info!("alerts on, by Telegram");
+			Some(Telegram {
+				hub,
+				name: BotName::new(tg.username),
+			})
 		}
 		(Some(_), None) => unreachable!("refused before serve"),
 		(None, _) => {
-			tracing::warn!("TELEGRAM_BOT_TOKEN unset: Telegram notifications off");
+			tracing::warn!("TELEGRAM_BOT_TOKEN unset: alerts off");
 			None
 		}
 	};
-	let bot_name = bot.as_ref().map_or_else(BotName::off, |(_, name)| name.clone());
 	let engine = panel.clone();
 	let grafana_root = format!("{}/grafana/", config.panel_origin.trim_end_matches('/'));
 	let sign_in = SignIn::new(panel, concierge, config);
@@ -402,7 +404,7 @@ async fn serve(
 			None
 		}
 	};
-	let app = http::app(sign_in, forward, grafana.as_ref().map(|(g, _)| g), http::Limits::default(), bot_name);
+	let app = http::app(sign_in, forward, grafana.as_ref().map(|(g, _)| g), http::Limits::default(), bot.clone());
 	let app = match files {
 		Some(files) => web::serve(app, files),
 		None => {
@@ -424,8 +426,8 @@ async fn serve(
 	};
 	let hubs = async {
 		let bot = async {
-			if let Some((notifier, name)) = bot {
-				telegram::run(notifier, name, stopped.clone()).await;
+			if let Some(t) = bot {
+				alerts::run(t, stopped.clone()).await;
 			}
 		};
 		let feed = async {

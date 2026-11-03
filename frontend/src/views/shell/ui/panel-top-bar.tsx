@@ -8,6 +8,7 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
+  NavDot,
   NavigationMenu,
   NavigationMenuItem,
   NavigationMenuLink,
@@ -22,16 +23,17 @@ import {
   navigationMenuTriggerStyle,
 } from "@evinvest/uikit";
 import { CONCIERGE_ORIGIN } from "@evinvest/concierge";
-import { Check, ChevronDown, Globe, Menu, Wallet } from "lucide-react";
+import { Bell, Check, ChevronDown, Globe, Menu, Wallet } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { unreached, useAlerts } from "@/entities/alerts";
 import { DevSignInBadge, ownScreens, seesSites, useMe } from "@/entities/session";
 import { useTokens } from "@/entities/tokens";
 import { AccountChip } from "@/features/account-chip";
 import { useSignOut } from "@/features/sign-out";
-import { NotificationsMenu } from "@/features/telegram-notifications";
+
 import { safeLocalPath } from "@/shared/api";
 import { ROUTES } from "@/shared/config/routes";
 import { WALLET_PAGE_ENABLED } from "@/shared/config/wallet-page";
@@ -118,7 +120,7 @@ export function PanelTopBar() {
       end={
         <div className="flex items-center gap-1">
           <OwnScreens bar className="hidden md:flex" />
-          <NotificationsMenu />
+          <AlertsLink />
           <LanguageMenu />
           <AccountChip me={me} onSignOut={signOut} className="ml-1" />
           <ScreensMenu />
@@ -152,6 +154,20 @@ function AppSwitcher() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/** The bell: the Alerts page, with a dot while nothing reaches the caller. */
+function AlertsLink() {
+  const t = useT();
+  const alerts = useAlerts();
+  return (
+    <Button asChild variant="ghost" size="sm" icon className="relative">
+      <Link href={ROUTES.alerts} aria-label={t("nav.alerts")}>
+        <Bell aria-hidden />
+        {alerts.status === "ok" && unreached(alerts.data) && <NavDot corner tone="warn" label={t("alerts.connect")} />}
+      </Link>
+    </Button>
   );
 }
 

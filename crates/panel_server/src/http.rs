@@ -1,6 +1,6 @@
 //! The HTTP surface: `/health`, the sign-in (`/auth/*`, [`crate::signin`]), the conductor's own
 //! `/api/v1` ([`crate::api`], [`crate::access`], [`crate::gmbs`], [`crate::tokens`],
-//! [`crate::telegram`]) and its live socket
+//! [`crate::alerts`]) and its live socket
 //! (`/api/v1/live`, [`crate::live`]); with the forward configured, ingest (`ingest.rs`) and
 //! the services behind the origin ([`crate::forward`]).
 
@@ -23,14 +23,15 @@ use tower::{BoxError, ServiceBuilder, limit::GlobalConcurrencyLimitLayer};
 use tower_http::timeout::TimeoutLayer;
 
 use crate::{
-	access, api, connected,
+	access,
+	alerts::{self, Telegram},
+	api, connected,
 	forward::{Forward, Services},
 	gmbs,
 	grafana::Grafana,
 	ingest,
 	live::{self, Live, LiveLimits},
 	signin::{self, Freshness, Gate, SignIn},
-	telegram::{self, BotName, TelegramState},
 	tokens,
 };
 
@@ -60,6 +61,8 @@ pub(crate) struct ApiState {
 	pub(crate) sites: Option<Services>,
 	/// What the Connected sites page asks the landings with.
 	pub(crate) probe: reqwest::Client,
+	/// With `TELEGRAM_BOT_TOKEN`.
+	pub(crate) telegram: Option<Telegram>,
 }
 
 impl FromRef<ApiState> for Panel {
@@ -92,10 +95,12 @@ impl ApiRoute {
 	}
 }
 
-/// Every `/api/v1` route on `ApiState`; the profile's Telegram routes, open to every
-/// signed-in user, are [`crate::telegram`]'s.
+/// Every `/api/v1` route on `ApiState`.
 pub fn api_routes() -> Vec<ApiRoute> {
-	[api::routes(), access::routes(), gmbs::routes(), tokens::routes()].into_iter().flatten().collect()
+	[api::routes(), access::routes(), alerts::routes(), gmbs::routes(), tokens::routes()]
+		.into_iter()
+		.flatten()
+		.collect()
 }
 
 /// What a request may cost.
@@ -136,7 +141,7 @@ impl Default for Limits {
 
 /// Everything the conductor answers but the front end's files; ingest and the forward only with
 /// `forward`, `/grafana/` only with `grafana`.
-pub fn app(sign_in: SignIn, forward: Option<Forward>, grafana: Option<&Grafana>, limits: Limits, bot: BotName) -> Router {
+pub fn app(sign_in: SignIn, forward: Option<Forward>, grafana: Option<&Grafana>, limits: Limits, telegram: Option<Telegram>) -> Router {
 	let auth = Router::new()
 		.route("/auth/login", get(signin::login))
 		.route("/auth/callback", get(signin::callback))
@@ -153,17 +158,13 @@ pub fn app(sign_in: SignIn, forward: Option<Forward>, grafana: Option<&Grafana>,
 	let routes = api_routes().into_iter().fold(Router::new(), |routes, r| {
 		routes.merge(Router::new().route(r.path, r.handler).route_layer(gate(r.freshness, r.section)))
 	});
-	let telegram_state = TelegramState { panel: sign_in.panel.clone(), bot };
-	let telegram = telegram::routes()
-		.route_layer(gate(Freshness::Cached, None))
-		.merge(telegram::link_routes().route_layer(gate(Freshness::Fresh, None)))
-		.with_state(telegram_state);
 	let state = ApiState {
 		panel: sign_in.panel.clone(),
 		sites: forward.as_ref().map(|f| f.services().clone()),
 		probe: connected::probe_client(),
+		telegram,
 	};
-	let api = bounded(routes.with_state(state).merge(telegram), limits.api_concurrent, limits.api_timeout);
+	let api = bounded(routes.with_state(state), limits.api_concurrent, limits.api_timeout);
 	// Its own budget: the bound and the timeout cover the handshake only (the socket lives on
 	// after the 101), and a burst of reconnecting tabs must not shed the API's requests.
 	let live = Router::new().route("/api/v1/live", get(live::upgrade)).with_state(Live::new(sign_in.clone(), limits.live));
