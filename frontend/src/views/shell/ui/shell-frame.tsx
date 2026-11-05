@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 
+import { GmailsProvider } from "@/entities/gmb";
 import { goToSignIn } from "@/shared/api";
 import { useT } from "@/shared/i18n";
 import { useLiveSocket } from "@/shared/lib/live";
@@ -25,17 +26,19 @@ export function ShellFrame({ onForbidden, children }: { onForbidden: () => void;
     return () => window.removeEventListener(UNAUTHENTICATED_EVENT, goToSignIn);
   }, []);
   return (
-    <div className="flex min-h-svh flex-col">
-      <div className="sticky top-0 z-30">
-        <PanelTopBar />
+    <GmailsProvider>
+      <div className="flex min-h-svh flex-col">
+        <div className="sticky top-0 z-30">
+          <PanelTopBar />
+        </div>
+        <div className="flex min-h-0 flex-1">
+          {/* `hidden`, not unmounted, on a phone: the outline keeps `mfe-sites-nav` mounted */}
+          <aside className="sticky top-14 hidden h-[calc(100svh-3.5rem)] w-72 shrink-0 overflow-y-auto border-r border-border p-2 md:block">
+            <Outline />
+          </aside>
+          <main className="flex min-w-0 flex-1 flex-col">{children}</main>
+        </div>
       </div>
-      <div className="flex min-h-0 flex-1">
-        {/* `hidden`, not unmounted, on a phone: the outline keeps `mfe-sites-nav` mounted */}
-        <aside className="sticky top-14 hidden h-[calc(100svh-3.5rem)] w-64 shrink-0 overflow-y-auto border-r border-border p-2 md:block">
-          <Outline />
-        </aside>
-        <main className="flex min-w-0 flex-1 flex-col">{children}</main>
-      </div>
-    </div>
+    </GmailsProvider>
   );
 }
