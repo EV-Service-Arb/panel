@@ -406,7 +406,7 @@ bind = "127.0.0.1:$REVIEW_ARCHIVE_PORT"
 [browser]
 lean = []
 EOF
-	env -u SENTRY_DSN -u TELEGRAM_BOT_TOKEN -u GOOGLE_MAPS_KEY \
+	env -u SENTRY_DSN -u TELEGRAM_BOT_TOKEN -u GOOGLE_MAPS_KEY -u GOOGLE_MAPS_KEYS \
 		APP_ENV=development \
 		PANEL_ASSERTION_KEYS="$assertion_public" \
 		"$REVIEW_ARCHIVE_BIN" --config "$state/review_archive/config.toml" "$@"
