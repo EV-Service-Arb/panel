@@ -1,7 +1,7 @@
 //! A GMB's switch: its owner's to turn, and what review_archive's snapshot carries.
 
 use jiff::Timestamp;
-use panel::{
+use sa_panel::{
 	Refused,
 	import::Export,
 	testing::{TestDb, panel},
@@ -13,7 +13,7 @@ fn now() -> Timestamp {
 	"2026-11-01T12:00:00Z".parse().unwrap()
 }
 
-async fn person(p: &panel::Panel, email: &str) -> Uuid {
+async fn person(p: &sa_panel::Panel, email: &str) -> Uuid {
 	let user_id = Uuid::now_v7();
 	p.user_seen(
 		&User {
@@ -28,7 +28,7 @@ async fn person(p: &panel::Panel, email: &str) -> Uuid {
 	user_id
 }
 
-async fn snapshot_switch(p: &panel::Panel, gmb: i64) -> bool {
+async fn snapshot_switch(p: &sa_panel::Panel, gmb: i64) -> bool {
 	p.snapshot(now()).await.unwrap().unwrap().gmbs.iter().find(|m| m.id == gmb).unwrap().enabled
 }
 

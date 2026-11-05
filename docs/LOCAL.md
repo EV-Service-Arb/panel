@@ -104,7 +104,7 @@ What it does (`scripts/local-stack.sh`, which the flake app runs as is):
    background), SIGINT does not reach it: stop it with `kill <pid>` (SIGTERM), which does the
    same. Each part runs in a process group of its own, so the caller's shell is never hit.
 
-Iterating on the backend: `cargo build -p panel_server`, then
+Iterating on the backend: `cargo build -p sa_server`, then
 `PANEL_BIN=$PWD/target/debug/panel nix run .#local-stack` (the same as
 `scripts/local-stack.sh`): what you do not name is built with `nix build`. `SITES_BIN` and
 `SITES_MFE_DIR` do the same for sites_panel, `REVIEW_ARCHIVE_BIN` and `REVIEW_ARCHIVE_MFE_DIR`
@@ -148,7 +148,7 @@ An unknown permission fails the boot, named. The account menu shows the user as 
 The binary refuses it at start (exit 78, every command) in any `APP_ENV` but `development`,
 beside any concierge variable, and unless `PANEL_PUBLIC_ORIGIN` is `http://localhost[:port]`
 or `http://127.0.0.1[:port]` — so it cannot be switched on in the image, which sets
-`APP_ENV=production`. `cargo test -p panel_server --test dev_sign_in` holds the binary to it.
+`APP_ENV=production`. `cargo test -p sa_server --test dev_sign_in` holds the binary to it.
 
 Without the script, the conductor alone (no forward, so no ingest and no sites), in the dev shell,
 which sets `PANEL_BIND`:

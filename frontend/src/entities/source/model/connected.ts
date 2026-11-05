@@ -1,6 +1,6 @@
 import { type Infer, type Parser, arrayOf, nullable, object, oneOf, recordOf, str } from "@/shared/lib/parse";
 
-/** A site key's origin as `panel_core::ids::SiteOrigin` takes it; the backend has the last word. */
+/** A site key's origin as `sa_core::ids::SiteOrigin` takes it; the backend has the last word. */
 export function isOrigin(s: string): boolean {
   try {
     const u = new URL(s);

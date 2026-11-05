@@ -1,5 +1,5 @@
 //! People's tokens: a ledger whose rows are only ever added, renewed a day's worth at a time
-//! whenever a balance is read ([`panel_core::tokens`]).
+//! whenever a balance is read ([`sa_core::tokens`]).
 //!
 //! ```text
 //! review_archive GET /api/conductor/charges?after=<cursor> ─ a page ─ one write: payers renewed,
@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use eyre::WrapErr;
 use jiff::{Timestamp, civil::Date, tz::TimeZone};
-use panel_core::tokens::{Renewal, split};
+use sa_core::tokens::{Renewal, split};
 use serde::{Deserialize, Serialize};
 use sqlx::SqliteConnection;
 use uuid::Uuid;

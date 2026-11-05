@@ -7,7 +7,7 @@ use std::sync::{
 };
 
 use jiff::{SignedDuration, Timestamp};
-use panel::{
+use sa_panel::{
 	session::{PRELOGIN_TTL, RefreshError, Refresher, SessionError, SessionKey, Tokens, pkce_challenge},
 	testing::{TestDb, panel},
 };
@@ -133,7 +133,7 @@ async fn pre_logins() {
 		"too old"
 	);
 	assert!(panel.finish_sign_in("garbage", &begun.state, now()).is_none());
-	let other = panel::testing::panel(&db).await.begin_sign_in(None, now()).unwrap();
+	let other = sa_panel::testing::panel(&db).await.begin_sign_in(None, now()).unwrap();
 	assert!(panel.finish_sign_in(&other.cookie, &other.state, now()).is_none(), "sealed under another key");
 	// RFC 7636, appendix B.
 	assert_eq!(pkce_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
@@ -157,8 +157,8 @@ impl Refresher for Slow {
 #[tokio::test]
 async fn two_replicas_present_a_refresh_token_once() {
 	let db = TestDb::create().await;
-	let hex = panel::seal::DataKey::generate_hex().unwrap();
-	let replica = |store| panel::testing::panel_with(store, panel::seal::DataKey::from_hex(&hex).unwrap());
+	let hex = sa_panel::seal::DataKey::generate_hex().unwrap();
+	let replica = |store| sa_panel::testing::panel_with(store, sa_panel::seal::DataKey::from_hex(&hex).unwrap());
 	let (a, b) = (replica(db.store().await), replica(db.store().await));
 	let slow = Slow {
 		calls: AtomicUsize::new(0),
@@ -182,7 +182,7 @@ async fn a_lease_of_a_dead_replica_lapses() {
 	let later = now() + SignedDuration::from_mins(15) - SignedDuration::from_secs(10);
 	// A replica took the lease and died.
 	sqlx::query("UPDATE sessions SET rotating_until = $1")
-		.bind((later + panel::session::ROTATION_LEASE).as_microsecond())
+		.bind((later + sa_panel::session::ROTATION_LEASE).as_microsecond())
 		.execute(&db.pool().await)
 		.await
 		.unwrap();
@@ -192,9 +192,9 @@ async fn a_lease_of_a_dead_replica_lapses() {
 		matches!(panel.session(&opened.cookie, later, &fake).await, Err(SessionError::Unavailable)),
 		"held: wait, then 503"
 	);
-	assert!(before.elapsed() >= panel::session::ROTATION_WAIT.unsigned_abs());
+	assert!(before.elapsed() >= sa_panel::session::ROTATION_WAIT.unsigned_abs());
 	assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
-	let lapsed = later + panel::session::ROTATION_LEASE;
+	let lapsed = later + sa_panel::session::ROTATION_LEASE;
 	assert_eq!(
 		panel.session(&opened.cookie, lapsed, &fake).await.unwrap().access.as_str(),
 		"access-2",

@@ -1,4 +1,4 @@
-/** The double-submit token the backend sets beside the session (`panel_server::cookies`). */
+/** The double-submit token the backend sets beside the session (`sa_server::cookies`). */
 const CSRF_COOKIE = "sa_csrf";
 export const CSRF_HEADER = "x-sa-csrf";
 

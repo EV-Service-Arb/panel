@@ -14,7 +14,7 @@
       SA_PORT_RANGE = { from = 52800; to = 52900; };
       inherit (v_flakes) flake-utils pre-commit-hooks;
       manifest = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package;
-      # The binary (crates/panel_server, `[[bin]] name`), the image and the release all go
+      # The binary (crates/server, `[[bin]] name`), the image and the release all go
       # by this name; the workspace root has no package of its own.
       pname = "panel";
     in
@@ -39,13 +39,13 @@
           STUB_PORT = local 2; # its `npm run dev:stub`
         };
 
-        # `nix run .#gen`: the front end's mirror of the Rust (crates/panel_gen), committed.
+        # `nix run .#gen`: the front end's mirror of the Rust (crates/gen), committed.
         gen = pkgs.writeShellApplication {
           name = "gen";
           runtimeInputs = [ rust pkgs.git ];
           text = ''
             cd "$(git rev-parse --show-toplevel)"
-            exec cargo run -q -p panel_gen "$@"
+            exec cargo run -q -p sa_gen "$@"
           '';
         };
 
@@ -68,7 +68,7 @@
         rs = v_flakes.rs {
           inherit pkgs rust;
           build.workspace = {
-            "./crates/panel_server" = [ "git_version" "log_directives" ];
+            "./crates/server" = [ "git_version" "log_directives" ];
           };
         };
         github = v_flakes.github {
@@ -103,7 +103,7 @@
           version = manifest.version;
           src = pureSrc;
           cargoLock.lockFile = ./Cargo.lock;
-          cargoBuildFlags = [ "-p" "panel_server" ];
+          cargoBuildFlags = [ "-p" "sa_server" ];
           nativeBuildInputs = with pkgs; [ pkg-config ];
           # ev_lib's `sentry` turns on reqwest's native-tls, which is OpenSSL on Linux
           # (Security.framework on Darwin, which needs nothing here).

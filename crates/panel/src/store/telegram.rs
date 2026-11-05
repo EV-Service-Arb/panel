@@ -4,9 +4,9 @@
 
 use eyre::WrapErr;
 use jiff::{SignedDuration, Timestamp};
-use panel_core::notify::{GLOBAL_PER_SECOND, PER_CHAT_GAP, PER_GROUP_GAP};
 use sa_alerts::{Button, Rule};
 use sa_auth::PermissionSet;
+use sa_core::notify::{GLOBAL_PER_SECOND, PER_CHAT_GAP, PER_GROUP_GAP};
 use sqlx::{SqliteConnection, types::Json};
 use uuid::Uuid;
 

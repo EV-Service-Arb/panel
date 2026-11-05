@@ -28,9 +28,9 @@ use std::{collections::BTreeMap, future::Future};
 
 use eyre::WrapErr;
 use jiff::{SignedDuration, Timestamp};
-use panel_core::notify::{self, Locale, Note, Rendered};
 use sa_alerts::{Audience, Call, NotePage, Origin, Rule};
 use sa_auth::{PermissionSet, Pii};
+use sa_core::notify::{self, Locale, Note, Rendered};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 

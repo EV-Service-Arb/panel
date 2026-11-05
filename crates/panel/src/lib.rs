@@ -25,12 +25,12 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use eyre::WrapErr;
 use jiff::Timestamp;
-use panel_core::{
+use sa_auth::{SourceKind, Sources};
+use sa_core::{
 	ids::{BrandId, SiteOrigin},
 	signature::{self, SignatureError},
 	tokens::Renewal,
 };
-use sa_auth::{SourceKind, Sources};
 use zeroize::Zeroizing;
 
 pub use crate::store::sources::Grant;
@@ -147,7 +147,7 @@ impl Panel {
 	/// Registers a source that may write events of `kind` for `brands`, with a fresh
 	/// secret; a site's with its `origin`. `None` when the key id is taken.
 	pub async fn add_source(&self, key_id: &str, kind: SourceKind, brands: BTreeSet<BrandId>, origin: Option<SiteOrigin>) -> eyre::Result<Option<NewSource>> {
-		eyre::ensure!(panel_core::ids::is_slug(key_id), "a key id is a lowercase slug of 1–64 of [a-z0-9_-]");
+		eyre::ensure!(sa_core::ids::is_slug(key_id), "a key id is a lowercase slug of 1–64 of [a-z0-9_-]");
 		eyre::ensure!(!brands.is_empty(), "a source writes for at least one brand");
 		eyre::ensure!(kind.keyed(), "a key of kind {kind} is not issued: it is written without one");
 		eyre::ensure!(origin.is_some() == (kind == SourceKind::Site), "a site key has an origin, and no other kind has one");
@@ -193,7 +193,7 @@ impl Panel {
 		// Free checks first, before the database: the window, and whether the key id could
 		// be one at all. A key id that could not is not logged — it is the caller's string.
 		signature::check_window(request.timestamp, now).map_err(refuse)?;
-		if !panel_core::ids::is_slug(request.key_id) {
+		if !sa_core::ids::is_slug(request.key_id) {
 			return Err(IngestError::Unauthorized("unknown key"));
 		}
 		let Some(source) = self.store.active_source(request.key_id).await? else {

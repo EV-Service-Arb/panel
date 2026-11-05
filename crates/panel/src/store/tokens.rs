@@ -3,7 +3,7 @@
 
 use eyre::WrapErr;
 use jiff::Timestamp;
-use panel_core::tokens::{Renewal, accrue};
+use sa_core::tokens::{Renewal, accrue};
 use sqlx::SqliteConnection;
 use uuid::Uuid;
 

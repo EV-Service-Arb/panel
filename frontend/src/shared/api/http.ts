@@ -5,7 +5,7 @@ import { requestSignInOverlay } from "./signin-overlay";
 
 /**
  * Why a call failed, in the words the screens act on. The backend's gate
- * (`panel_server::signin::gate`) answers 401 for no session, 403 with
+ * (`sa_server::signin::gate`) answers 401 for no session, 403 with
  * `"no access to the panel"` for a signed-in person without a grant, 403 `"csrf"`
  * for a write without the header, and 503 while concierge is unreachable —
  * which keeps the session, so the front end must not sign anyone out on it.

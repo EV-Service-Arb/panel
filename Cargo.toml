@@ -1,16 +1,6 @@
 [workspace]
 resolver = "3"
-members = [
-    "crates/panel",
-    "crates/panel_contracts",
-    "crates/panel_core",
-    "crates/panel_gen",
-    "crates/panel_server",
-    "crates/sa_alerts",
-    "crates/sa_auth",
-    "crates/sa_places",
-    "crates/sa_ui",
-]
+members = ["crates/*"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,13 +11,13 @@ repository = "https://github.com/EV-Service-Arb/site_conductor"
 readme = "README.md"
 
 [workspace.dependencies]
-panel = { path = "crates/panel", version = "0.1.0" }
-panel_contracts = { path = "crates/panel_contracts", version = "0.1.0" }
-panel_core = { path = "crates/panel_core", version = "0.1.0" }
-panel_server = { path = "crates/panel_server", version = "0.1.0" }
-sa_alerts = { path = "crates/sa_alerts", version = "0.1.0" }
-sa_auth = { path = "crates/sa_auth", version = "0.1.0" }
-sa_places = { path = "crates/sa_places", version = "0.1.0" }
+sa_alerts = { path = "crates/alerts", version = "0.1.0" }
+sa_auth = { path = "crates/auth", version = "0.1.0" }
+sa_contracts = { path = "crates/contracts", version = "0.1.0" }
+sa_core = { path = "crates/core", version = "0.1.0" }
+sa_panel = { path = "crates/panel", version = "0.1.0" }
+sa_places = { path = "crates/places", version = "0.1.0" }
+sa_server = { path = "crates/server", version = "0.1.0" }
 
 axum = "0.8"
 base64 = "0.22"
