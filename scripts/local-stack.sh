@@ -285,7 +285,7 @@ if [ "$watch" = 1 ]; then
 		[ -f "$SITES_DIR/flake.nix" ] || die "no sites_panel checkout at $SITES_DIR: SITES_DIR names it"
 		say "building sites_panel and its bundle from $SITES_DIR"
 		in_shell "$SITES_DIR" cargo b -q -p panel_server
-		(cd "$SITES_DIR/frontend" && { [ -d node_modules ] || npm ci; } && npm run -s build)
+		(cd "$SITES_DIR/frontend" && { [ node_modules/.package-lock.json -nt package-lock.json ] || npm ci; } && npm run -s build)
 		SITES_BIN="$SITES_DIR/target/debug/sites_panel"
 		SITES_MFE_DIR="$SITES_DIR/frontend/dist"
 	fi
@@ -582,7 +582,8 @@ if [ "$watch" = 1 ] && [ "$run_panel" = 1 ]; then
 	say "starting the front end's next dev on $public_origin"
 	(
 		cd "$root/frontend"
-		[ -d node_modules ] || prefixed web npm ci
+		# npm ci stamps node_modules/.package-lock.json: a lockfile pulled since is newer
+		[ node_modules/.package-lock.json -nt package-lock.json ] || prefixed web npm ci
 		# the image's build switches (flake.nix, the frontend's env)
 		NEXT_PUBLIC_SIGNIN_OVERLAY=1 NEXT_PUBLIC_WALLET_PAGE=1 PANEL_DEV_BACKEND="$origin" \
 			prefixed web npx next dev --port "$WEB_DEV_PORT"
