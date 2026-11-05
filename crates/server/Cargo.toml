@@ -1,0 +1,70 @@
+[package]
+name = "sa_server"
+description = "The Service-Arb conductor: the `panel` binary, its CLI, the sign-in, the forward and the hubs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+# The binary keeps the name the image, the flake and the docs know it by.
+[[bin]]
+name = "panel"
+path = "src/main.rs"
+
+[features]
+# What the HTTP tests share: a stand-in service, the conductor signed in, a browser.
+testing = ["sa_panel/testing", "tower/util"]
+
+[dependencies]
+axum = { workspace = true, features = ["ws"] }
+base64.workspace = true
+clap.workspace = true
+color-eyre.workspace = true
+ev_lib = { workspace = true, features = ["settings", "error_monitoring"] }
+eyre.workspace = true
+futures.workspace = true
+getrandom.workspace = true
+http-body-util.workspace = true
+hyper-util.workspace = true
+jiff = { workspace = true, features = ["serde"] }
+reqwest = { workspace = true, features = ["multipart"] }
+rustix.workspace = true
+sa_alerts.workspace = true
+sa_auth = { workspace = true, features = ["catalog"] }
+sa_contracts.workspace = true
+sa_core.workspace = true
+sa_panel.workspace = true
+sa_places.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+tower = { workspace = true, features = ["limit", "load-shed"] }
+tower-http = { workspace = true, features = ["fs", "timeout"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+ts-rs.workspace = true
+url.workspace = true
+uuid = { workspace = true, features = ["serde"] }
+zeroize.workspace = true
+
+[dev-dependencies]
+axum = { workspace = true, features = ["multipart"] }
+hex.workspace = true
+hmac.workspace = true
+sa_panel = { workspace = true, features = ["testing"] }
+sa_server = { workspace = true, features = ["testing"] }
+sqlx.workspace = true
+tempfile.workspace = true
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

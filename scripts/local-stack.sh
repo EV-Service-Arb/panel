@@ -122,7 +122,7 @@ die() {
 warn() { printf '\033[33m! %s\033[0m\n' "$*" >&2; }
 
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run this from inside the conductor's checkout"
-[ -f "$root/crates/panel_server/Cargo.toml" ] || die "$root is not the conductor's checkout"
+[ -f "$root/crates/server/Cargo.toml" ] || die "$root is not the conductor's checkout"
 # The others sit beside the conductor's main checkout (_sa/{site_conductor,review_archive,
 # sites/{panel,aquafix,vifnet}}), also when this is one of its worktrees.
 main_checkout="$(dirname "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)")"
@@ -279,7 +279,7 @@ if [ "$watch" = 1 ]; then
 	done
 	# also when another conductor serves: `panel gen-data-key` makes the state's key
 	say "building the conductor from $root"
-	in_shell "$root" cargo b -q -p panel_server
+	in_shell "$root" cargo b -q -p sa_server
 	PANEL_BIN="$root/target/debug/panel"
 	if [ "$run_sites" = 1 ] && [ -z "${DEV_COMMAND_sites_panel:-}" ]; then
 		[ -f "$SITES_DIR/flake.nix" ] || die "no sites_panel checkout at $SITES_DIR: SITES_DIR names it"
@@ -569,7 +569,7 @@ fi
 
 if [ "$run_panel" = 1 ]; then
 	say "starting the conductor on $origin (dev sign-in: $role)"
-	serving panel "$root" "cargo b -q -p panel_server" "panel serve --bind 127.0.0.1:$PANEL_PORT" -i 'crates/panel_gen/**' -e rs,toml,sql,lock &
+	serving panel "$root" "cargo b -q -p sa_server" "panel serve --bind 127.0.0.1:$PANEL_PORT" -i 'crates/gen/**' -e rs,toml,sql,lock &
 	groups+=("$!")
 	essential+=("$!")
 	wait_for panel "$origin/health" 30 "$!" || die "the conductor did not start"

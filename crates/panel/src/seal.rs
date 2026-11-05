@@ -63,7 +63,7 @@ impl DataKey {
 	}
 
 	/// The key the Telegram buttons' callback data is signed with
-	/// (`panel_core::notify::callback_data`).
+	/// (`sa_core::notify::callback_data`).
 	pub fn telegram_callback_key(&self) -> Zeroizing<[u8; 32]> {
 		self.derive(b"sa-panel/tg-callback-key/v1")
 	}

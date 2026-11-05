@@ -4,7 +4,7 @@
 `contracts/proto/concierge/v1/` in [EV-invest/concierge](https://github.com/EV-invest/concierge)
 at the commit in [`REV`](REV). The panel is a relying party of concierge: it calls
 `AuthService.ExchangeCode` / `RefreshClientToken` and `UserDirectory.GetMe`, and
-`crates/panel_contracts` generates their tonic clients (and servers, for the tests' mock
+`crates/contracts` generates their tonic clients (and servers, for the tests' mock
 concierge) from these files.
 
 Copied rather than taken as the `evconcierge_contracts` git dependency banking uses, because that

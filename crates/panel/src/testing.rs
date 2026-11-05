@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
-use panel_core::signature;
+use sa_core::signature;
 use sqlx::sqlite::SqlitePoolOptions;
 use uuid::Uuid;
 
@@ -74,7 +74,7 @@ pub async fn panel(db: &TestDb) -> Panel {
 
 /// A panel on `store`: tokens renewing 15 a day up to 500 from 500, places resolving ids only.
 pub fn panel_with(store: Store, key: DataKey) -> Panel {
-	let renewal = panel_core::tokens::Renewal::new(15, 500, 1.).expect("a valid renewal");
+	let renewal = sa_core::tokens::Renewal::new(15, 500, 1.).expect("a valid renewal");
 	Panel::new(store, key, renewal, crate::gmbs::Places::new(None).expect("a Places client"))
 }
 

@@ -24,7 +24,7 @@ landings ───────────────────────�
 A cargo workspace; dependencies point inwards only.
 
 ```text
-crates/panel_core/       no I/O: brand ids, the HMAC of a signed request and its window, the
+crates/core/             no I/O: brand ids, the HMAC of a signed request and its window, the
                          conductor's own alert messages, the buttons' signed data, retry and
                          pacing, tokens' renewal and a charge's split
 crates/panel/            the engine: `Panel` (sources and their authentication, sessions, access
@@ -35,16 +35,16 @@ crates/panel/            the engine: `Panel` (sources and their authentication, 
                          delivery, buttons; the Bot port), `live` (the in-process bus), `gmbs`,
                          `tokens` (the ledger, review_archive's charges, the snapshot), `import`
                          (review_archive's, once)
-crates/sa_alerts/        no I/O: the alert rules, and the notes a service publishes to the
+crates/alerts/           no I/O: the alert rules, and the notes a service publishes to the
                          conductor and their check; sites and review_archive take it too
-crates/sa_auth/          the `sa` permissions (concierge_iam derives), the aliases `sa:operator` /
+crates/auth/             the `sa` permissions (concierge_iam derives), the aliases `sa:operator` /
                          `sa:admin`, and the assertion: a User, a Source or the Conductor, for one
                          request of one service
-crates/sa_places/        a Google place from what a person pastes (an id, a Maps URL, a Places
+crates/places/           a Google place from what a person pastes (an id, a Maps URL, a Places
                          API search); review_archive takes it too
-crates/sa_ui/            Dioxus components the services' front ends share
-crates/panel_contracts/  concierge's gRPC contract (tonic, from contracts/proto)
-crates/panel_server/     the `panel` binary: CLI and HTTP, thin over `Panel`
+crates/ui/               Dioxus components the services' front ends share
+crates/contracts/        concierge's gRPC contract (tonic, from contracts/proto)
+crates/server/           the `panel` binary: CLI and HTTP, thin over `Panel`
   src/signin.rs          /auth/login, /auth/callback, /auth/logout; the /api/v1 gate
   src/concierge.rs       concierge over gRPC: ExchangeCode, RefreshClientToken, GetMe,
                          PublishCatalog; its development stand-in (PANEL_DEV_SIGN_IN)
@@ -66,7 +66,7 @@ crates/panel_server/     the `panel` binary: CLI and HTTP, thin over `Panel`
   src/telegram.rs        the Bot API, its long poll
   src/web.rs             the front end's static export (PANEL_WEB_DIR), behind every other route
   src/settings.rs        the environment (ev_lib `settings!`)
-crates/panel_gen/        `nix run .#gen`: the front end's mirror of Rust types (ev_lib `ts_gen`),
+crates/gen/              `nix run .#gen`: the front end's mirror of Rust types (ev_lib `ts_gen`),
                          into frontend/src/entities/{session,source,gmb,tokens,alerts}/model/generated.ts,
                          committed;
                          the pre-commit hook re-runs it

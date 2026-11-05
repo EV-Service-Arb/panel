@@ -8,7 +8,7 @@ export const NEEDS: readonly Need[] = [...PERMISSIONS, ...(Object.keys(ALIASES) 
 
 export const PLAYBOOK_NEED: Need = "sa:playbook:mcp:use";
 
-/** The sign-in's `return_to` rule (`panel_server::signin`): a path on this origin, nothing a browser reads as another. */
+/** The sign-in's `return_to` rule (`sa_server::signin`): a path on this origin, nothing a browser reads as another. */
 export const safeContinue = safeLocalPath;
 
 export function holds(permissions: readonly Permission[], need: Need): boolean {
