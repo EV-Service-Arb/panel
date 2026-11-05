@@ -196,6 +196,7 @@ impl Google {
 			};
 			let resp = r.header("X-Goog-Api-Key", key.as_str()).header("X-Goog-FieldMask", req.mask).send().await?;
 			let status = resp.status();
+			tracing::info!(method = req.method, url = req.url, %status, "Places asked");
 			let text = resp.text().await?;
 			if status.is_success() {
 				return Ok((self.cache.write(req, &text).await?, true));

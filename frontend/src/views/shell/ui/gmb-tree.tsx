@@ -78,7 +78,7 @@ export function GmbTree({ onNavigate }: { onNavigate?: () => void }) {
   const me = useMe();
   const gmails = useGmails();
   const scope = useGmailScope();
-  const { inView, hovered } = useOnMap();
+  const { inView, hovered, peeked } = useOnMap();
   const pathname = usePathname();
   const linking = may(me, "sa:sites:work:places:edit");
   const sites = useResource("gmbs.sites", () => (linking ? fetchSiteTags() : Promise.resolve(null)), "gmbs.sites", { focus: true });
@@ -115,7 +115,7 @@ export function GmbTree({ onNavigate }: { onNavigate?: () => void }) {
       listed={l}
       showGmail={scoped === null}
       onMap={onMap}
-      lit={l.gmb.id === hovered}
+      lit={l.gmb.id === hovered || l.gmb.id === peeked}
       current={l.gmb.id === pointedAt(pathname)}
       linked={linked}
       onFlip={flip}
