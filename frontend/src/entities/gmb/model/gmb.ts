@@ -1,8 +1,10 @@
 import { type Infer, type Parser, arrayOf, bool, nullable, num, object, str } from "@/shared/lib/parse";
 
-import type { Candidates, Gmails, Gmb, Place } from "./generated";
+import type { Candidates, Gmails, Gmb, MapConfig, Place } from "./generated";
 
-export type { Gmail, Gmb, Place as Candidate } from "./generated";
+export type { Gmail, Gmb, MapConfig, Place as Candidate } from "./generated";
+
+export type LatLng = NonNullable<Gmb["location"]>;
 
 const gmbParser: Parser<Gmb> = object({
   id: num,
@@ -13,7 +15,10 @@ const gmbParser: Parser<Gmb> = object({
   gbp_location: nullable(str),
   created_at: str,
   enabled: bool,
+  location: nullable(object({ lat: num, lng: num })),
 });
+
+export const mapConfigParser: Parser<MapConfig> = object({ key: str, map_id: str });
 
 export const gmailsParser: Parser<Gmails> = object({ gmails: arrayOf(object({ id: num, gmail: str, created_at: str, gmbs: arrayOf(gmbParser) })) });
 

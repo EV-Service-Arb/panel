@@ -8,39 +8,11 @@ use std::collections::BTreeSet;
 
 use eyre::WrapErr;
 use jiff::Timestamp;
-use sa_places::Place;
+use sa_places::{Ask, Place};
 use uuid::Uuid;
-use zeroize::Zeroizing;
 
 pub use crate::store::gmbs::{Gmail, Gmb};
 use crate::{Panel, Refused, store::gmbs as db, tokens::is_open};
-
-/// The Places API, as GMBs are named and addressed: without a key, only place ids resolve.
-pub struct Places {
-	http: reqwest::Client,
-	key: Option<Zeroizing<String>>,
-}
-
-impl std::fmt::Debug for Places {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		f.debug_struct("Places").field("key", &self.key.as_ref().map(|_| "<redacted>")).finish()
-	}
-}
-
-impl Places {
-	pub fn new(key: Option<String>) -> eyre::Result<Self> {
-		let http = reqwest::Client::builder()
-			.connect_timeout(std::time::Duration::from_secs(5))
-			.timeout(std::time::Duration::from_secs(10))
-			.build()
-			.wrap_err("building the Places API client")?;
-		Ok(Self { http, key: key.map(Zeroizing::new) })
-	}
-
-	fn key(&self) -> Option<&str> {
-		self.key.as_deref().map(String::as_str)
-	}
-}
 
 fn places_error(e: sa_places::Error) -> eyre::Result<Refused> {
 	match e {
@@ -105,31 +77,19 @@ impl Panel {
 		Ok(Ok(()))
 	}
 
-	/// Every place `input` may mean (see [`sa_places::candidates`]).
-	pub async fn place_candidates(&self, input: &str) -> eyre::Result<Result<Vec<Place>, Refused>> {
-		match sa_places::candidates(&self.places.http, self.places.key(), input).await {
+	/// Every place `input` may mean (see [`sa_places::Google::candidates`]).
+	pub async fn place_candidates(&self, input: &str) -> eyre::Result<Result<Vec<(String, Option<Place>)>, Refused>> {
+		match self.google.candidates(input).await {
 			Ok(places) => Ok(Ok(places)),
 			Err(e) => Ok(Err(places_error(e)?)),
 		}
 	}
 
-	/// The place `input` names, as a GMB under `gmail_id`: named and addressed by the Places API
-	/// when there is a key. `owner` is whose the gmail must be; `None`, the operator's CLI.
+	/// The place `input` names, as a GMB under `gmail_id`: named, addressed and located by the
+	/// Places API when there is a key. `owner` is whose the gmail must be; `None`, the operator's CLI.
 	pub async fn add_gmb(&self, owner: Option<Uuid>, gmail_id: i64, input: &str, now: Timestamp) -> eyre::Result<Result<Gmb, Refused>> {
-		let (http, key) = (&self.places.http, self.places.key());
-		let place = match sa_places::resolve(http, key, input).await {
-			Ok((_, Some(place))) => place,
-			Ok((place_id, None)) => match key {
-				Some(key) => match sa_places::details(http, sa_places::PLACES, key, &place_id).await {
-					Ok(place) => place,
-					Err(e) => return Ok(Err(places_error(e)?)),
-				},
-				None => Place {
-					place_id,
-					name: None,
-					address: None,
-				},
-			},
+		let (place_id, place) = match self.google.resolve(input).await {
+			Ok(found) => found,
 			Err(e) => return Ok(Err(places_error(e)?)),
 		};
 		let mut tx = self.store.begin_write().await?;
@@ -140,12 +100,36 @@ impl Panel {
 			Some(o) if owner.is_none_or(|owner| owner == o) => {}
 			_ => return Ok(Err(Refused::NotFound)),
 		}
-		let Some(added) = db::add_gmb(&mut tx, None, gmail_id, &place, now).await? else {
-			return Ok(Err(Refused::Conflict(format!("gmail {gmail_id} has place {} already", place.place_id))));
+		if let Some(p) = &place {
+			db::set_point(&mut tx, &place_id, p.location).await?;
+		}
+		let (name, address) = place.as_ref().map_or((None, None), |p| (p.name.as_deref(), p.address.as_deref()));
+		let Some(added) = db::add_gmb(&mut tx, None, gmail_id, &place_id, name, address, now).await? else {
+			return Ok(Err(Refused::Conflict(format!("gmail {gmail_id} has place {place_id} already"))));
 		};
 		tx.commit().await.wrap_err("committing a GMB")?;
 		self.snapshot_due.notify_one();
 		Ok(Ok(added))
+	}
+
+	/// Every place a GMB is on without a point, asked of Places (its cache first) and located.
+	/// Returns how many were, and the places Places refused with why.
+	pub async fn locate(&self) -> eyre::Result<(usize, Vec<(String, String)>)> {
+		let unlocated = db::unlocated(&mut *self.store.pool().acquire().await.wrap_err("a connection for the unlocated")?).await?;
+		let (mut located, mut refused) = (0, Vec::new());
+		for place_id in unlocated {
+			match self.google.details(&place_id, Ask::Cached).await {
+				Ok(place) => {
+					let mut tx = self.store.begin_write().await?;
+					db::set_point(&mut tx, &place_id, place.location).await?;
+					tx.commit().await.wrap_err("committing a point")?;
+					located += 1;
+				}
+				Err(sa_places::Error::Invalid(why)) => refused.push((place_id, why)),
+				Err(e) => return Err(eyre::eyre!(e).wrap_err(format!("locating {place_id}"))),
+			}
+		}
+		Ok((located, refused))
 	}
 
 	/// Every one of `ids` on or off, or none: each must be the owner's, not removed.

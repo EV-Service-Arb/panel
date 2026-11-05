@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 
 use eyre::WrapErr;
 use jiff::Timestamp;
+use sa_places::LatLng;
 use sqlx::SqliteConnection;
 use uuid::Uuid;
 
@@ -18,7 +19,7 @@ pub struct Gmail {
 	pub created_at: Timestamp,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Gmb {
 	pub id: i64,
 	pub gmail_id: i64,
@@ -30,6 +31,8 @@ pub struct Gmb {
 	pub created_at: Timestamp,
 	/// Its owner's switch.
 	pub enabled: bool,
+	/// `None`: added without a Places key, and not located since.
+	pub location: Option<LatLng>,
 }
 
 /// A GMB as the services are told of it.
@@ -47,7 +50,19 @@ pub struct Managed {
 }
 
 type GmailRow = (i64, Uuid, String, i64);
-type GmbRow = (i64, i64, String, Option<String>, Option<String>, Option<String>, Option<String>, i64, bool);
+type GmbRow = (
+	i64,
+	i64,
+	String,
+	Option<String>,
+	Option<String>,
+	Option<String>,
+	Option<String>,
+	i64,
+	bool,
+	Option<f64>,
+	Option<f64>,
+);
 
 fn gmail((id, owner, gmail, created_at): GmailRow) -> eyre::Result<Gmail> {
 	Ok(Gmail {
@@ -58,7 +73,12 @@ fn gmail((id, owner, gmail, created_at): GmailRow) -> eyre::Result<Gmail> {
 	})
 }
 
-fn gmb((id, gmail_id, place_id, name, address, gbp_account, gbp_location, created_at, enabled): GmbRow) -> eyre::Result<Gmb> {
+fn gmb((id, gmail_id, place_id, name, address, gbp_account, gbp_location, created_at, enabled, lat, lng): GmbRow) -> eyre::Result<Gmb> {
+	let location = match (lat, lng) {
+		(Some(lat), Some(lng)) => Some(LatLng { lat, lng }),
+		(None, None) => None,
+		half => eyre::bail!("GMB {id}'s point is half there: {half:?}"),
+	};
 	Ok(Gmb {
 		id,
 		gmail_id,
@@ -69,6 +89,7 @@ fn gmb((id, gmail_id, place_id, name, address, gbp_account, gbp_location, create
 		gbp_location,
 		created_at: from_db(created_at)?,
 		enabled,
+		location,
 	})
 }
 
@@ -86,8 +107,8 @@ pub async fn gmails(conn: &mut SqliteConnection, owner: Uuid) -> eyre::Result<Ve
 pub async fn gmbs(conn: &mut SqliteConnection, owner: Uuid) -> eyre::Result<Vec<Gmb>> {
 	let rows: Vec<GmbRow> = sqlx::query_as(
 		"SELECT b.id, b.gmail_id, b.place_id, b.name, b.address, b.gbp_account, b.gbp_location, b.created_at, \
-		 NOT EXISTS (SELECT 1 FROM gmbs_off o WHERE o.gmb_id = b.id) \
-		 FROM gmbs b JOIN gmails g ON g.id = b.gmail_id \
+		 NOT EXISTS (SELECT 1 FROM gmbs_off o WHERE o.gmb_id = b.id), p.lat, p.lng \
+		 FROM gmbs b JOIN gmails g ON g.id = b.gmail_id LEFT JOIN place_points p ON p.place_id = b.place_id \
 		 WHERE g.owner = $1 AND g.removed_at IS NULL AND b.removed_at IS NULL ORDER BY b.id",
 	)
 	.bind(owner)
@@ -135,21 +156,45 @@ pub async fn gmail_owner(conn: &mut SqliteConnection, id: i64) -> eyre::Result<O
 }
 
 /// A GMB under `gmail`: `id` explicit only on import. `None`: the gmail has that place already.
-pub async fn add_gmb(conn: &mut SqliteConnection, id: Option<i64>, gmail_id: i64, place: &sa_places::Place, now: Timestamp) -> eyre::Result<Option<Gmb>> {
+pub async fn add_gmb(conn: &mut SqliteConnection, id: Option<i64>, gmail_id: i64, place_id: &str, name: Option<&str>, address: Option<&str>, now: Timestamp) -> eyre::Result<Option<Gmb>> {
 	let row: Option<GmbRow> = sqlx::query_as(
 		"INSERT INTO gmbs (id, gmail_id, place_id, name, address, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING \
-		 RETURNING id, gmail_id, place_id, name, address, gbp_account, gbp_location, created_at, TRUE", // an id is never reused, so never off
+		 RETURNING id, gmail_id, place_id, name, address, gbp_account, gbp_location, created_at, TRUE, \
+		 (SELECT lat FROM place_points WHERE place_id = $3), (SELECT lng FROM place_points WHERE place_id = $3)", // an id is never reused, so never off
 	)
 	.bind(id)
 	.bind(gmail_id)
-	.bind(&place.place_id)
-	.bind(&place.name)
-	.bind(&place.address)
+	.bind(place_id)
+	.bind(name)
+	.bind(address)
 	.bind(to_db(now))
 	.fetch_optional(&mut *conn)
 	.await
 	.wrap_err("adding a GMB")?;
 	row.map(gmb).transpose()
+}
+
+/// Where `place_id` is, as Places answered last.
+pub async fn set_point(conn: &mut SqliteConnection, place_id: &str, at: LatLng) -> eyre::Result<()> {
+	sqlx::query("INSERT INTO place_points (place_id, lat, lng) VALUES ($1, $2, $3) ON CONFLICT (place_id) DO UPDATE SET lat = excluded.lat, lng = excluded.lng")
+		.bind(place_id)
+		.bind(at.lat)
+		.bind(at.lng)
+		.execute(&mut *conn)
+		.await
+		.wrap_err("locating a place")?;
+	Ok(())
+}
+
+/// The places of the GMBs not removed, under gmails not removed, that have no point.
+pub async fn unlocated(conn: &mut SqliteConnection) -> eyre::Result<Vec<String>> {
+	sqlx::query_scalar(
+		"SELECT DISTINCT b.place_id FROM gmbs b JOIN gmails g ON g.id = b.gmail_id \
+		 WHERE b.removed_at IS NULL AND g.removed_at IS NULL AND b.place_id NOT IN (SELECT place_id FROM place_points) ORDER BY b.place_id",
+	)
+	.fetch_all(&mut *conn)
+	.await
+	.wrap_err("listing the places without a point")
 }
 
 /// `false`: no such GMB under a gmail of the owner's, or one of them is removed already.

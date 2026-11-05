@@ -1,9 +1,19 @@
-import { http, ignoreBody } from "@/shared/api";
+import { ApiError, http, ignoreBody } from "@/shared/api";
 
-import { type Candidate, type Gmail, type SitesPlace, candidatesParser, gmailsParser, sitesPlacesParser } from "../model/gmb";
+import { type Candidate, type Gmail, type MapConfig, type SitesPlace, candidatesParser, gmailsParser, mapConfigParser, sitesPlacesParser } from "../model/gmb";
 
 export async function fetchGmails(): Promise<Gmail[]> {
   return (await http.get("/api/v1/gmails", gmailsParser)).gmails;
+}
+
+/** `null`: the conductor has no browser key, so there is no map. */
+export async function fetchMapConfig(): Promise<MapConfig | null> {
+  try {
+    return await http.get("/api/v1/map", mapConfigParser);
+  } catch (e) {
+    if (e instanceof ApiError && e.failure.kind === "not_found") return null;
+    throw e;
+  }
 }
 
 export async function addGmail(gmail: string): Promise<void> {

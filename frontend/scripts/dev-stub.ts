@@ -81,8 +81,8 @@ const gmails: { id: number; gmail: string; created_at: string; gmbs: Json[] }[] 
     gmail: "owner@gmail.com",
     created_at: minsAgo(60 * 24 * 30),
     gmbs: [
-      { id: 1, place_id: "ChIJstubstubstub00001", name: "Plombier Paris 11 (stub)", address: "12 rue Oberkampf, Paris", gbp_account: null, gbp_location: null, created_at: minsAgo(60 * 24 * 30) },
-      { id: 2, place_id: "ChIJstubstubstub00002", name: "Serrurier Lyon 3 (stub)", address: "4 cours Gambetta, Lyon", gbp_account: null, gbp_location: null, created_at: minsAgo(60 * 24 * 20) },
+      { id: 1, place_id: "ChIJstubstubstub00001", name: "Plombier Paris 11 (stub)", address: "12 rue Oberkampf, Paris", gbp_account: null, gbp_location: null, created_at: minsAgo(60 * 24 * 30), enabled: true, location: { lat: 48.8649, lng: 2.3766 } },
+      { id: 2, place_id: "ChIJstubstubstub00002", name: "Serrurier Lyon 3 (stub)", address: "4 cours Gambetta, Lyon", gbp_account: null, gbp_location: null, created_at: minsAgo(60 * 24 * 20), enabled: true, location: null },
     ],
   },
 ];
@@ -119,6 +119,8 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL): Promise
     gmails.push(made);
     return send(res, 201, made);
   }
+  // no browser key: the home page shows the outline without a map
+  if (path === "/map") return send(res, 404, { error: "not found" });
   if (path === "/gmbs/resolve") return send(res, 200, { candidates: [{ place_id: "ChIJstubstubstub00009", name: "Électricien Lille (stub)", address: "8 rue Faidherbe, Lille" }] });
   if (path === "/tokens") return send(res, 200, tokens);
   if (path === "/tokens/ledger") return send(res, 200, { entries: ledger, next: null });

@@ -124,17 +124,14 @@
             src = lib.cleanSource ./frontend;
             filter = path: _type: !(builtins.elem (baseNameOf path) [ "node_modules" ".next" "out" ]);
           };
-          npmDepsHash = "sha256-JKDCZ8uMBXRA/NxdpkIA5wtJyzr5zRoxhB4zynwrzZ0=";
+          npmDepsHash = "sha256-wo+QeRzq0BBf/IKQ07ivf2xhYkEYSOU0VusvJ94/dg8=";
           env = {
             NEXT_TELEMETRY_DISABLED = "1";
             # NEXT_PUBLIC_* values are inlined by `next build`, so these are compile-time:
             # the image carries the choice, no runtime switch. They turn on the platform path:
             # the sign-in dialog over the panel, the platform's account chip and sign-in, and
             # the wallet page. The bundles come from the platform origin (concierge's from
-            # /api/auth/mfe/*, the wallet's from /wallet/mfe/*), which the server's CSP names
-            # only with PANEL_CSP_PLATFORM_MFE=1 (devops panelEnv). Rollback: run the v0.12.1
-            # image. v0.11.0 boots too, but it loads the chip through the pinned proxy, so
-            # without its pins in the environment the chip shows only its fallback.
+            # /api/auth/mfe/*, the wallet's from /wallet/mfe/*).
             NEXT_PUBLIC_SIGNIN_OVERLAY = "1";
             NEXT_PUBLIC_WALLET_PAGE = "1";
           };
@@ -225,14 +222,10 @@
             "RP_CLIENT_SECRET_SA"
             "PANEL_ASSERTION_KEY"
             "TELEGRAM_BOT_TOKEN"
-            "GOOGLE_MAPS_KEY"
+            "GOOGLE_MAPS_KEYS"
           ];
-          # PANEL_CSP_PLATFORM_MFE: `0` (default) or `1`. With `1` the pages' CSP also allows the
-          # platform's MFE directories (https://evinvest.ltd/api/auth/mfe/ and /wallet/mfe/) in
-          # script-src and the origin in connect-src. The front end always loads them from there,
-          # so production sets `1`. TELEGRAM_BOT_TOKEN needs the forward (it sends sites' notes).
+          # TELEGRAM_BOT_TOKEN needs the forward (it sends sites' notes).
           optionalEnv = [
-            "PANEL_CSP_PLATFORM_MFE"
             "SENTRY_DSN"
             "TELEGRAM_BOT_TOKEN"
             "TELEGRAM_BOT_USERNAME"
@@ -240,8 +233,13 @@
             # 15 and 500 by default
             "TOKENS_DAILY"
             "TOKENS_CAP"
-            # without it a GMB is added by its place id alone, unnamed
-            "GOOGLE_MAPS_KEY"
+            # comma-separated, free ones first; without them a GMB is added by its place id alone,
+            # unnamed and unlocated
+            "GOOGLE_MAPS_KEYS"
+            # both or neither: the browser's Maps JS key (referrer-restricted) and the map id;
+            # without them the home page has no map
+            "GOOGLE_MAPS_BROWSER_KEY"
+            "GOOGLE_MAPS_MAP_ID"
           ];
           ingress = {
             # in-cluster only, by service DNS: the landings' and bots' ingest
@@ -254,7 +252,7 @@
           egress = {
             # concierge's gRPC, at the address it names
             grpcEnv = [ "CONCIERGE_GRPC_ADDR" ];
-            # the Bot API; the Places API (GOOGLE_MAPS_KEY)
+            # the Bot API; the Places API (GOOGLE_MAPS_KEYS)
             hosts = [ "api.telegram.org:443" "places.googleapis.com:443" ];
           };
         };

@@ -1,111 +1,227 @@
-//! What people paste, and Places API (New) against a stub: the text search a URL without a place
-//! id takes, and the name of a place added by its id.
+//! What people paste, and the Places API (New) against a stub that counts what it is asked: an
+//! answer is paid for once, a refusal never kept, a spent key passed over until its window ends.
 
-use std::sync::{Arc, Mutex};
+use std::{
+	collections::HashMap,
+	sync::{Arc, Mutex},
+	time::{SystemTime, UNIX_EPOCH},
+};
 
 use axum::{
-	Json, Router,
+	Router,
 	extract::{Path, State},
 	http::{HeaderMap, StatusCode},
 	response::{IntoResponse, Response},
 	routing::{get, post},
 };
 use sa_places::{
-	Error, details,
+	Ask, Error, Google, Keys, Spent,
 	parse::{Parsed, parse},
-	search,
 };
 use serde_json::{Value, json};
 
-#[derive(Clone, Default)]
-struct Stub {
-	got: Arc<Mutex<Vec<(HeaderMap, Value)>>>,
+/// A spent window as Google spells it, from `start` (unix seconds).
+fn refusal(start: u64) -> String {
+	json!({"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "details": [
+		{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "RATE_LIMIT_EXCEEDED", "metadata": {
+			"window_start_time": start.to_string(), "quota_limit_value": "100",
+			"quota_metric": "places.googleapis.com/SearchTextRequest",
+			"quota_limit": "SearchTextRequestPerDayPerProject"}}]}})
+	.to_string()
 }
 
-async fn search_text(State(s): State<Stub>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
-	let query = body["textQuery"].as_str().unwrap_or_default().to_owned();
-	s.got.lock().unwrap().push((headers, body));
-	if query == "Nowhere" {
-		return Json(json!({})).into_response();
+/// What an ended trial returns.
+const NO_BILLING: &str = r#"{"error":{"code":403,"status":"PERMISSION_DENIED","details":[
+	{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"BILLING_DISABLED","domain":"googleapis.com",
+		"metadata":{"consumer":"projects/1","service":"places.googleapis.com"}}]}}"#;
+
+fn now() -> u64 {
+	SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+}
+
+#[derive(Clone, Default)]
+struct Stub {
+	/// Each request: its key, field mask, and what it asked.
+	got: Arc<Mutex<Vec<(String, String, Value)>>>,
+	/// A key's next answers are these refusals.
+	refuse: Arc<Mutex<HashMap<String, Vec<(StatusCode, String)>>>>,
+}
+
+impl Stub {
+	fn asked(&self) -> usize {
+		self.got.lock().unwrap().len()
 	}
-	if query == "Broken" {
-		return (StatusCode::FORBIDDEN, "API key not valid").into_response();
+
+	fn keys(&self) -> Vec<String> {
+		self.got.lock().unwrap().iter().map(|(k, _, _)| k.clone()).collect()
 	}
-	Json(json!({ "places": [
-		{ "id": "ChIJprocopeprocopeproc", "displayName": { "text": "Le Procope" }, "formattedAddress": "13 Rue de l'Ancienne Comédie, Paris" },
-		{ "id": "ChIJsecondsecondsecond" },
-		{ "id": "ChIJnamesakenamesakena", "displayName": { "text": "le procope" }, "formattedAddress": "1 Rue de Lyon, Marseille" }
-	] }))
-	.into_response()
+
+	fn refusal(&self, headers: &HeaderMap, asked: Value) -> Option<Response> {
+		let key = headers["x-goog-api-key"].to_str().unwrap().to_owned();
+		self.got.lock().unwrap().push((key.clone(), headers["x-goog-fieldmask"].to_str().unwrap().to_owned(), asked));
+		let mut refuse = self.refuse.lock().unwrap();
+		let next = refuse.get_mut(&key).filter(|r| !r.is_empty())?.remove(0);
+		Some(next.into_response())
+	}
+}
+
+const PROCOPE: &str = "ChIJprocopeprocopeproc";
+
+fn procope() -> Value {
+	json!({ "id": PROCOPE, "displayName": { "text": "Le Procope" }, "formattedAddress": "13 Rue de l'Ancienne Comédie, Paris", "location": { "latitude": 48.853, "longitude": 2.3389 } })
+}
+
+async fn search_text(State(s): State<Stub>, headers: HeaderMap, body: String) -> Response {
+	let body: Value = serde_json::from_str(&body).unwrap();
+	let query = body["textQuery"].as_str().unwrap().to_owned();
+	if let Some(refused) = s.refusal(&headers, body) {
+		return refused;
+	}
+	match query.as_str() {
+		"Nowhere" => axum::Json(json!({})).into_response(),
+		"Broken" => (StatusCode::FORBIDDEN, "API key not valid").into_response(),
+		_ => axum::Json(json!({ "places": [
+			procope(),
+			{ "id": "ChIJsecondsecondsecond", "location": { "latitude": 1.0, "longitude": 2.0 } },
+			{ "id": "ChIJnamesakenamesakena", "displayName": { "text": "le procope" }, "formattedAddress": "1 Rue de Lyon, Marseille", "location": { "latitude": 43.3, "longitude": 5.4 } }
+		] }))
+		.into_response(),
+	}
 }
 
 async fn place_details(State(s): State<Stub>, headers: HeaderMap, Path(id): Path<String>) -> Response {
-	s.got.lock().unwrap().push((headers, json!(id)));
+	if let Some(refused) = s.refusal(&headers, json!(id)) {
+		return refused;
+	}
 	match id.as_str() {
-		"ChIJprocopeprocopeproc" | "ChIJmovedmovedmovedmo" =>
-			Json(json!({ "id": "ChIJprocopeprocopeproc", "displayName": { "text": "Le Procope" }, "formattedAddress": "13 Rue de l'Ancienne Comédie, Paris" })).into_response(),
+		PROCOPE | "ChIJmovedmovedmovedmo" => axum::Json(procope()).into_response(),
+		"ChIJotherotherotherot" => axum::Json(json!({ "id": id, "location": { "latitude": 0.5, "longitude": 0.5 } })).into_response(),
 		_ => (StatusCode::NOT_FOUND, "not found").into_response(),
 	}
 }
 
-/// The stub and its base URL (`…/v1/places`).
-async fn stub() -> (Stub, String, tokio::task::JoinHandle<()>) {
+/// The stub, and a `Google` on it with `keys` and a fresh cache.
+async fn google(keys: &[&str]) -> (Stub, Google, tempfile::TempDir, tokio::task::JoinHandle<()>) {
 	let s = Stub::default();
 	let app = Router::new()
 		.route("/v1/places:searchText", post(search_text))
 		.route("/v1/places/{id}", get(place_details))
 		.with_state(s.clone());
 	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-	let url = format!("http://{}/v1/places", listener.local_addr().unwrap());
+	let base = format!("http://{}/v1/places", listener.local_addr().unwrap());
 	let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-	(s, url, server)
+	let cache = tempfile::tempdir().unwrap();
+	let google = Google::new(Keys::new(keys.iter().map(|k| k.to_string()).collect()), cache.path().join("google_cache"))
+		.unwrap()
+		.at(base);
+	(s, google, cache, server)
 }
+
+const SEARCH: &str = "https://www.google.com/maps/place/Le+Procope/@48.853,2.3389,17z";
 
 #[tokio::test]
 async fn every_place_bearing_the_name_is_found_and_the_search_is_biased_to_the_map() {
-	let (s, url, server) = stub().await;
-	let got = search(&reqwest::Client::new(), &format!("{url}:searchText"), "key-123", "Le Procope", Some((48.853, 2.3389)))
-		.await
-		.unwrap();
+	let (s, google, _cache, server) = google(&["key-123"]).await;
+	let got = google.candidates(SEARCH).await.unwrap();
 	server.abort();
-	let ids: Vec<&str> = got.iter().map(|p| p.place_id.as_str()).collect();
-	assert_eq!(ids, ["ChIJprocopeprocopeproc", "ChIJnamesakenamesakena"]);
-	let (headers, body) = s.got.lock().unwrap()[0].clone();
-	assert_eq!(headers["x-goog-api-key"], "key-123");
-	assert_eq!(headers["x-goog-fieldmask"], "places.id,places.displayName,places.formattedAddress");
+	let ids: Vec<&str> = got.iter().map(|(id, _)| id.as_str()).collect();
+	assert_eq!(ids, [PROCOPE, "ChIJnamesakenamesakena"]);
+	assert_eq!(got[0].1.as_ref().unwrap().location.lat, 48.853);
+	let (key, mask, body) = s.got.lock().unwrap()[0].clone();
+	assert_eq!((key.as_str(), mask.as_str()), ("key-123", "places.id,places.displayName,places.formattedAddress,places.location"));
 	assert_eq!(body["locationBias"]["circle"]["center"], json!({ "latitude": 48.853, "longitude": 2.3389 }));
 }
 
 #[tokio::test]
 async fn nothing_or_another_place_found_is_the_callers_mistake_and_a_refusal_is_not() {
-	let (_s, url, server) = stub().await;
-	let http = reqwest::Client::new();
-	let url = format!("{url}:searchText");
-	let nothing = search(&http, &url, "k", "Nowhere", None).await.unwrap_err();
-	let refused = search(&http, &url, "k", "Broken", None).await.unwrap_err();
-	let another = search(&http, &url, "k", "Le Procope of Hicksville", None).await.unwrap_err(); // #37: the first hit was a namesake
+	let (_s, google, _cache, server) = google(&["k"]).await;
+	let nothing = google.resolve("https://www.google.com/maps/place/Nowhere").await.unwrap_err();
+	let refused = google.resolve("https://www.google.com/maps/place/Broken").await.unwrap_err();
+	let another = google.resolve("https://www.google.com/maps/place/Le+Procope+of+Hicksville").await.unwrap_err(); // #37: the first hit was a namesake
+	let ambiguous = google.resolve(SEARCH).await.unwrap_err();
 	server.abort();
 	assert!(matches!(nothing, Error::Invalid(_)), "{nothing:#}");
 	assert!(matches!(another, Error::Invalid(_)), "{another:#}");
+	assert!(matches!(ambiguous, Error::Invalid(_)), "{ambiguous:#}");
 	assert!(matches!(refused, Error::Api { status: 403, .. }), "{refused:#}");
 }
 
 #[tokio::test]
-async fn a_place_added_by_its_id_is_named_and_an_unknown_id_refused() {
-	let (s, url, server) = stub().await;
-	let http = reqwest::Client::new();
-	let got = details(&http, &url, "key-123", "ChIJprocopeprocopeproc").await.unwrap();
-	let unknown = details(&http, &url, "key-123", "ChIJunknownunknownunk").await.unwrap_err();
-	let moved = details(&http, &url, "key-123", "ChIJmovedmovedmovedmo").await.unwrap();
+async fn a_place_added_by_its_id_is_named_and_located_and_an_unknown_id_refused() {
+	let (s, google, _cache, server) = google(&["key-123"]).await;
+	let (_, got) = google.resolve(PROCOPE).await.unwrap();
+	let unknown = google.resolve("ChIJunknownunknownunk").await.unwrap_err();
+	let (moved, _) = google.resolve("ChIJmovedmovedmovedmo").await.unwrap();
 	server.abort();
-	assert_eq!(moved.place_id, "ChIJprocopeprocopeproc", "a moved place comes back under the id Google gives it now");
+	assert_eq!(moved, PROCOPE, "a moved place comes back under the id Google gives it now");
+	let got = got.unwrap();
 	assert_eq!((got.name.as_deref(), got.address.as_deref()), (Some("Le Procope"), Some("13 Rue de l'Ancienne Comédie, Paris")));
+	assert_eq!((got.location.lat, got.location.lng), (48.853, 2.3389));
 	assert!(matches!(unknown, Error::Invalid(_)), "{unknown:#}");
-	let (headers, _) = s.got.lock().unwrap()[0].clone();
-	assert_eq!(
-		(&headers["x-goog-api-key"], &headers["x-goog-fieldmask"]),
-		(&"key-123".parse().unwrap(), &"id,displayName,formattedAddress".parse().unwrap())
-	);
+	assert_eq!(s.got.lock().unwrap()[0].1, "id,displayName,formattedAddress,location");
+}
+
+#[tokio::test]
+async fn without_a_key_a_place_id_resolves_unnamed() {
+	let (s, google, _cache, server) = google(&[]).await;
+	let got = google.candidates(PROCOPE).await.unwrap();
+	let search = google.resolve(SEARCH).await.unwrap_err();
+	server.abort();
+	assert_eq!(got, [(PROCOPE.to_owned(), None)]);
+	assert!(matches!(search, Error::Invalid(_)), "{search:#}");
+	assert_eq!(s.asked(), 0);
+}
+
+#[tokio::test]
+async fn an_answer_is_paid_for_once() {
+	let (s, google, _cache, server) = google(&["k"]).await;
+	google.details(PROCOPE, Ask::Cached).await.unwrap();
+	google.details(PROCOPE, Ask::Cached).await.unwrap();
+	assert_eq!(s.asked(), 1, "the same details twice");
+
+	google.candidates(SEARCH).await.unwrap();
+	let picked = google.details("ChIJnamesakenamesakena", Ask::Cached).await.unwrap();
+	google.candidates(SEARCH).await.unwrap();
+	assert_eq!(s.asked(), 2, "a search, then details of a place it returned, then the search again");
+	assert_eq!(picked.address.as_deref(), Some("1 Rue de Lyon, Marseille"));
+
+	google.details(PROCOPE, Ask::Afresh).await.unwrap();
+	server.abort();
+	assert_eq!(s.asked(), 3, "asked afresh");
+}
+
+#[tokio::test]
+async fn a_refusal_is_never_kept() {
+	let (s, google, _cache, server) = google(&["k"]).await;
+	for _ in 0..2 {
+		google.resolve("https://www.google.com/maps/place/Broken").await.unwrap_err();
+		google.details("ChIJunknownunknownunk", Ask::Cached).await.unwrap_err();
+	}
+	server.abort();
+	assert_eq!(s.asked(), 4);
+}
+
+#[tokio::test]
+async fn a_spent_key_sits_out_until_its_window_ends() {
+	let (s, google, _cache, server) = google(&["free", "billed"]).await;
+	// the free key's day ends in 2 s
+	s.refuse.lock().unwrap().insert("free".into(), vec![(StatusCode::TOO_MANY_REQUESTS, refusal(now() - 86_400 + 2))]);
+	google.details(PROCOPE, Ask::Cached).await.unwrap();
+	google.details("ChIJotherotherotherot", Ask::Cached).await.unwrap();
+	assert_eq!(s.keys(), ["free", "billed", "billed"], "refused, the next key is asked, and asked again while the first sits out");
+
+	tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+	google.details(PROCOPE, Ask::Afresh).await.unwrap();
+	assert_eq!(s.keys().last().unwrap(), "free", "back once its window ended");
+
+	s.refuse.lock().unwrap().extend([
+		("free".into(), vec![(StatusCode::FORBIDDEN, NO_BILLING.to_owned())]),
+		("billed".into(), vec![(StatusCode::TOO_MANY_REQUESTS, refusal(now()))]),
+	]);
+	let spent = google.details(PROCOPE, Ask::Afresh).await.unwrap_err();
+	server.abort();
+	let Error::Exhausted(why) = spent else { panic!("{spent:#}") };
+	assert!(matches!(why[..], [Spent::Billing, Spent::Quota { .. }]), "{why:?}");
 }
 
 /// Decoding must turn `%2B` into `+` once, and leave it so.

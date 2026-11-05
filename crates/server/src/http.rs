@@ -63,6 +63,8 @@ pub(crate) struct ApiState {
 	pub(crate) probe: reqwest::Client,
 	/// With `TELEGRAM_BOT_TOKEN`.
 	pub(crate) telegram: Option<Telegram>,
+	/// With `GOOGLE_MAPS_BROWSER_KEY`.
+	pub(crate) map: Option<gmbs::MapDto>,
 }
 
 impl FromRef<ApiState> for Panel {
@@ -141,7 +143,7 @@ impl Default for Limits {
 
 /// Everything the conductor answers but the front end's files; ingest and the forward only with
 /// `forward`, `/grafana/` only with `grafana`.
-pub fn app(sign_in: SignIn, forward: Option<Forward>, grafana: Option<&Grafana>, limits: Limits, telegram: Option<Telegram>) -> Router {
+pub fn app(sign_in: SignIn, forward: Option<Forward>, grafana: Option<&Grafana>, limits: Limits, telegram: Option<Telegram>, map: Option<gmbs::MapDto>) -> Router {
 	let auth = Router::new()
 		.route("/auth/login", get(signin::login))
 		.route("/auth/callback", get(signin::callback))
@@ -163,6 +165,7 @@ pub fn app(sign_in: SignIn, forward: Option<Forward>, grafana: Option<&Grafana>,
 		sites: forward.as_ref().map(|f| f.services().clone()),
 		probe: connected::probe_client(),
 		telegram,
+		map,
 	};
 	let api = bounded(routes.with_state(state), limits.api_concurrent, limits.api_timeout);
 	// Its own budget: the bound and the timeout cover the handshake only (the socket lives on

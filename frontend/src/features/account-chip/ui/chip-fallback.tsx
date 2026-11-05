@@ -12,7 +12,7 @@ import { fallbackIdentity, panelGroups } from "../model/attributes";
 
 /**
  * The chip's stand-in while the platform bundle loads, and for good when it cannot (not
- * deployed, older, unreachable, `PANEL_CSP_PLATFORM_MFE=0`). The avatar alone, the name inside
+ * deployed, older, unreachable). The avatar alone, the name inside
  * the menu, opening the same entries the chip does, so the caller's own screens and the way out
  * of the session stay on the page whatever happens to the bundle.
  */

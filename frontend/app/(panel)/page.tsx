@@ -1,4 +1,4 @@
-import { Home } from "@/views/shell";
+import { Home } from "@/views/home";
 
 export default function HomePage() {
   return <Home />;

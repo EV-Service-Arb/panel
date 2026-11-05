@@ -1,6 +1,5 @@
 // Where the panel gets the platform's elements (sign-in, account chip) from: the platform origin,
-// named by its published registry.json (hashed file names, so no URL is written down here). The
-// server runs with PANEL_CSP_PLATFORM_MFE=1 so the CSP names those directories.
+// named by its published registry.json (hashed file names, so no URL is written down here).
 
 import { type ConciergeElement, conciergeEntry, fetchConciergeRegistry } from "@evinvest/concierge";
 import type { MfeEntry, ParseResult } from "@evinvest/mfe";
