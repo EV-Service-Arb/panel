@@ -225,14 +225,10 @@
             "RP_CLIENT_SECRET_SA"
             "PANEL_ASSERTION_KEY"
             "TELEGRAM_BOT_TOKEN"
-            "GOOGLE_MAPS_KEY"
+            "GOOGLE_MAPS_KEYS"
           ];
-          # PANEL_CSP_PLATFORM_MFE: `0` (default) or `1`. With `1` the pages' CSP also allows the
-          # platform's MFE directories (https://evinvest.ltd/api/auth/mfe/ and /wallet/mfe/) in
-          # script-src and the origin in connect-src. The front end always loads them from there,
-          # so production sets `1`. TELEGRAM_BOT_TOKEN needs the forward (it sends sites' notes).
+          # TELEGRAM_BOT_TOKEN needs the forward (it sends sites' notes).
           optionalEnv = [
-            "PANEL_CSP_PLATFORM_MFE"
             "SENTRY_DSN"
             "TELEGRAM_BOT_TOKEN"
             "TELEGRAM_BOT_USERNAME"
@@ -240,8 +236,13 @@
             # 15 and 500 by default
             "TOKENS_DAILY"
             "TOKENS_CAP"
-            # without it a GMB is added by its place id alone, unnamed
-            "GOOGLE_MAPS_KEY"
+            # comma-separated, free ones first; without them a GMB is added by its place id alone,
+            # unnamed and unlocated
+            "GOOGLE_MAPS_KEYS"
+            # both or neither: the browser's Maps JS key (referrer-restricted) and the map id;
+            # without them the home page has no map
+            "GOOGLE_MAPS_BROWSER_KEY"
+            "GOOGLE_MAPS_MAP_ID"
           ];
           ingress = {
             # in-cluster only, by service DNS: the landings' and bots' ingest
@@ -254,7 +255,7 @@
           egress = {
             # concierge's gRPC, at the address it names
             grpcEnv = [ "CONCIERGE_GRPC_ADDR" ];
-            # the Bot API; the Places API (GOOGLE_MAPS_KEY)
+            # the Bot API; the Places API (GOOGLE_MAPS_KEYS)
             hosts = [ "api.telegram.org:443" "places.googleapis.com:443" ];
           };
         };

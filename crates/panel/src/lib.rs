@@ -35,7 +35,6 @@ use zeroize::Zeroizing;
 
 pub use crate::store::sources::Grant;
 use crate::{
-	gmbs::Places,
 	seal::{DataKey, source_secret_aad},
 	store::Store,
 };
@@ -111,20 +110,20 @@ pub struct Panel {
 	rotations: Arc<session::Rotations>,
 	live: live::Bus,
 	renewal: Renewal,
-	places: Arc<Places>,
+	google: Arc<sa_places::Google>,
 	/// Told of every change review_archive's snapshot carries.
 	snapshot_due: Arc<tokio::sync::Notify>,
 }
 
 impl Panel {
-	pub fn new(store: Store, key: DataKey, renewal: Renewal, places: Places) -> Self {
+	pub fn new(store: Store, key: DataKey, renewal: Renewal, google: sa_places::Google) -> Self {
 		Self {
 			store,
 			key: Arc::new(key),
 			rotations: Arc::default(),
 			live: live::Bus::default(),
 			renewal,
-			places: Arc::new(places),
+			google: Arc::new(google),
 			snapshot_due: Arc::default(),
 		}
 	}

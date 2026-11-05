@@ -1,6 +1,6 @@
 [package]
 name = "sa_places"
-description = "A Google place from what a person pastes: its id, a Maps URL, or a Places API (New) search"
+description = "A Google place from what a person pastes: its id, a Maps URL, or a Places API (New) search; every Places answer paid for once, the keys rotated"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -11,15 +11,20 @@ readme.workspace = true
 [dependencies]
 base64.workspace = true
 eyre.workspace = true
+hex.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
 url.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
-tokio.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

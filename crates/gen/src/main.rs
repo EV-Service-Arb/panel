@@ -10,7 +10,7 @@ use sa_panel::tokens::Kind;
 use sa_server::{
 	access::AccessRequestDto,
 	alerts::AlertsDto,
-	gmbs::{CandidatesDto, GmailsDto},
+	gmbs::{CandidatesDto, GmailsDto, MapDto},
 	signin::Caller,
 	tokens::{BalanceChangeDto, BalanceDto, LedgerDto, TokenHoldersDto, TokensDto, UsageDto},
 };
@@ -37,7 +37,7 @@ fn main() {
 			},
 		],
 	);
-	Ts::write(&root.join("entities/gmb/model/generated.ts"), &[Ts::types::<(GmailsDto, CandidatesDto)>()]);
+	Ts::write(&root.join("entities/gmb/model/generated.ts"), &[Ts::types::<(GmailsDto, CandidatesDto, MapDto)>()]);
 	Ts::write(
 		&root.join("entities/tokens/model/generated.ts"),
 		&[

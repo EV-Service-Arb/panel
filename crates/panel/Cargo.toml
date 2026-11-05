@@ -20,7 +20,6 @@ futures.workspace = true
 getrandom.workspace = true
 hex.workspace = true
 jiff = { workspace = true, features = ["serde"] }
-reqwest.workspace = true
 sa_alerts.workspace = true
 sa_auth.workspace = true
 sa_core.workspace = true

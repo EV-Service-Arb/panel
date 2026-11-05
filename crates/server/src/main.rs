@@ -19,6 +19,7 @@ use sa_server::{
 	alerts::{self, Telegram},
 	concierge::{Concierge, DevIdentity},
 	forward::{Forward, Services},
+	gmbs::MapDto,
 	grafana::Grafana,
 	http, live,
 	signin::{SignIn, SignInConfig},
@@ -107,8 +108,11 @@ enum GmailCmd {
 
 #[derive(Subcommand)]
 enum GmbCmd {
-	/// Add a GMB under a gmail: a place id, or a Maps URL (a name in it needs GOOGLE_MAPS_KEY).
+	/// Add a GMB under a gmail: a place id, or a Maps URL (a name in it needs GOOGLE_MAPS_KEYS).
 	Add { gmail_id: i64, place: String },
+	/// Locate every GMB's place that has no point yet, through the Places cache: run once after
+	/// a deploy that brings points, and after `local-stack --from-prod`.
+	Locate,
 }
 
 #[derive(Subcommand)]
@@ -215,7 +219,7 @@ fn init_tracing() -> eyre::Result<()> {
 }
 
 async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSignIn>) -> eyre::Result<()> {
-	let connect = || async { eyre::Ok(Panel::new(Store::open(settings.db_path()?).await?, settings.data_key()?, settings.renewal()?, settings.places()?)) };
+	let connect = || async { eyre::Ok(Panel::new(Store::open(settings.db_path()?).await?, settings.data_key()?, settings.renewal()?, settings.google()?)) };
 	match cli.cmd {
 		Cmd::Migrate => {
 			Store::open(settings.db_path()?).await?.pool().close().await;
@@ -240,7 +244,7 @@ async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSign
 				grafana.is_none() || forward.is_some(),
 				"PANEL_GRAFANA_SERVER needs the forward (PANEL_ASSERTION_KEY and the services' URLs): Grafana reads the services through it"
 			);
-			serve(connect().await?, identity, forward, telegram, grafana, settings.web()?, bind).await
+			serve(connect().await?, identity, forward, telegram, grafana, settings.web()?, settings.map()?, bind).await
 		}
 		Cmd::Source(cmd) => source(&connect().await?, cmd).await,
 		Cmd::Gmail(GmailCmd::Add { email, gmail }) => {
@@ -252,7 +256,16 @@ async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSign
 		}
 		Cmd::Gmb(GmbCmd::Add { gmail_id, place }) => {
 			let added = connect().await?.add_gmb(None, gmail_id, &place, Timestamp::now()).await??;
-			println!("GMB {}: {} {}", added.id, added.place_id, added.name.as_deref().unwrap_or("(unnamed: no GOOGLE_MAPS_KEY)"));
+			println!("GMB {}: {} {}", added.id, added.place_id, added.name.as_deref().unwrap_or("(unnamed: no GOOGLE_MAPS_KEYS)"));
+			Ok(())
+		}
+		Cmd::Gmb(GmbCmd::Locate) => {
+			eyre::ensure!(!settings.places_keys().is_empty(), "locating asks Places: GOOGLE_MAPS_KEYS must be set");
+			let (located, refused) = connect().await?.locate().await?;
+			println!("{located} places located");
+			for (place_id, why) in &refused {
+				println!("{place_id}: {why}");
+			}
 			Ok(())
 		}
 		Cmd::Tokens(cmd) => {
@@ -322,6 +335,7 @@ async fn serve(
 	telegram: Option<settings::TelegramSettings>,
 	grafana: Option<settings::GrafanaSettings>,
 	files: Option<Files>,
+	map: Option<MapDto>,
 	bind: SocketAddr,
 ) -> eyre::Result<()> {
 	let (concierge, config) = match identity {
@@ -413,7 +427,10 @@ async fn serve(
 			None
 		}
 	};
-	let app = http::app(sign_in, forward, grafana.as_ref().map(|(g, _)| g), http::Limits::default(), bot.clone());
+	if map.is_none() {
+		tracing::warn!("GOOGLE_MAPS_BROWSER_KEY unset: no map, /api/v1/map is a 404");
+	}
+	let app = http::app(sign_in, forward, grafana.as_ref().map(|(g, _)| g), http::Limits::default(), bot.clone(), map);
 	let app = match files {
 		Some(files) => web::serve(app, files),
 		None => {

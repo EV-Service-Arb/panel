@@ -9,9 +9,7 @@ use axum::{
 	http::{HeaderMap, Method, Request, StatusCode, header},
 	routing::get,
 };
-use base64::Engine;
 use sa_server::web::{self, Files};
-use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -21,24 +19,6 @@ const LEADS: &str = r#"<html><script>self.__next_f.push([1,"leads"])</script><SC
 
 /// The page the sites' element mounts in, routing inside it.
 const SITES: &str = r#"<html><mfe-sites-panel api="/api/sites" base="/sites"></mfe-sites-panel></html>"#;
-
-/// `'sha256-…'` of an inline script's text, as the browser hashes it.
-fn hash(script: &str) -> String {
-	format!("'sha256-{}'", base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script.as_bytes())))
-}
-
-/// The directive's sources, split on spaces.
-fn sources<'a>(policy: &'a str, directive: &str) -> Vec<&'a str> {
-	let d = policy
-		.split("; ")
-		.find(|d| d.split(' ').next() == Some(directive))
-		.unwrap_or_else(|| panic!("{directive} in {policy}"));
-	d.split(' ').skip(1).collect()
-}
-
-fn policy(h: &HeaderMap) -> &str {
-	h[header::CONTENT_SECURITY_POLICY].to_str().unwrap()
-}
 
 /// A scratch directory holding `web/` (a stand-in export) and, beside it, a file the server
 /// must never hand out.
@@ -108,10 +88,9 @@ async fn get_(app: &Router, uri: &str) -> (StatusCode, HeaderMap, String) {
 fn is_page(h: &HeaderMap) -> bool {
 	h[header::CONTENT_TYPE].to_str().unwrap().starts_with("text/html")
 		&& h[header::CACHE_CONTROL] == "no-cache"
-		&& h.contains_key(header::CONTENT_SECURITY_POLICY)
-		&& h["content-security-policy-report-only"] == "require-trusted-types-for 'script'"
+		&& h[header::CONTENT_SECURITY_POLICY] == "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 		&& h[header::X_CONTENT_TYPE_OPTIONS] == "nosniff"
-		&& h[header::REFERRER_POLICY] == "same-origin"
+		&& h[header::REFERRER_POLICY] == "strict-origin-when-cross-origin"
 }
 
 #[tokio::test]
@@ -145,72 +124,6 @@ async fn pages_directories_and_the_404_page() {
 }
 
 #[tokio::test]
-async fn scripts_run_by_their_hash_never_inline_at_large() {
-	let export = Export::new();
-	let app = app(&export.web());
-	let mut hashes = [hash("self.__next_f=[]"), hash(r#"self.__next_f.push([1,"leads"])"#)];
-	hashes.sort();
-	for uri in ["/", "/leads/", "/no/such/screen/"] {
-		let (_, h, _) = get_(&app, uri).await;
-		let p = policy(&h);
-		let want: Vec<&str> = ["'self'"].into_iter().chain(hashes.iter().map(String::as_str)).chain(["'wasm-unsafe-eval'"]).collect();
-		assert_eq!(sources(p, "script-src"), want, "every page's inline scripts, once each, on every page: {uri}");
-		assert_eq!(sources(p, "style-src"), ["'self'", "'unsafe-inline'"], "the kit's inline styles");
-		assert_eq!(
-			p.split("; ").filter(|d| !d.starts_with("script-src")).collect::<Vec<_>>(),
-			[
-				"default-src 'self'",
-				"style-src 'self' 'unsafe-inline'",
-				"img-src 'self' data:",
-				"connect-src 'self'",
-				"frame-ancestors 'none'",
-				"base-uri 'none'",
-				"form-action 'self'"
-			]
-		);
-	}
-}
-
-#[tokio::test]
-async fn the_platform_policy_is_sent_only_when_switched_on() {
-	let export = Export::new();
-	let off = policy(&get_(&app(&export.web()), "/").await.1).to_owned();
-	let app = web::serve(app_routes(), Files::new(&export.web()).unwrap().platform_mfe(true));
-	for uri in ["/", "/no/such/screen/"] {
-		let (_, h, _) = get_(&app, uri).await;
-		let on = policy(&h);
-		let mut scripts = sources(&off, "script-src");
-		scripts.extend(["https://evinvest.ltd/api/auth/mfe/", "https://evinvest.ltd/wallet/mfe/", "https://challenges.cloudflare.com"]);
-		assert_eq!(sources(on, "script-src"), scripts, "{uri}");
-		assert!(!sources(on, "script-src").contains(&"https://evinvest.ltd"), "the bare origin is never a script source");
-		assert_eq!(
-			sources(on, "style-src"),
-			["'self'", "'unsafe-inline'", "https://evinvest.ltd/wallet/mfe/"],
-			"the wallet's stylesheet link"
-		);
-		assert_eq!(sources(on, "connect-src"), ["'self'", "https://evinvest.ltd"]);
-		assert_eq!(sources(on, "frame-src"), ["'self'", "https://challenges.cloudflare.com"], "review_archive's Grafana, Turnstile");
-		let rest = |p: &str| {
-			p.split("; ")
-				.filter(|d| !["script-src", "style-src", "connect-src", "frame-src"].iter().any(|n| d.starts_with(n)))
-				.map(str::to_owned)
-				.collect::<Vec<_>>()
-		};
-		assert_eq!(rest(on), rest(&off), "nothing else widens");
-	}
-	let (_, h, _) = get_(&app, "/favicon.ico").await;
-	assert!(!h.contains_key(header::CONTENT_SECURITY_POLICY));
-}
-
-#[test]
-fn an_export_whose_script_never_ends_is_refused_at_boot() {
-	let export = Export::new();
-	std::fs::write(export.web().join("leads/index.html"), "<html><script>self.x=1</html>").unwrap();
-	let e = Files::new(&export.web()).unwrap_err();
-	assert!(format!("{e:#}").contains("leads/index.html"), "{e:#}");
-}
-
-#[tokio::test]
 async fn hashed_assets_are_immutable_and_nothing_revalidates_by_date() {
 	let export = Export::new();
 	let app = app(&export.web());
@@ -234,8 +147,7 @@ async fn hashed_assets_are_immutable_and_nothing_revalidates_by_date() {
 
 /// Any view of the sites page loads the page, and the payload Next's client-side navigation asks
 /// for under a view is the page's: a click from a conductor screen to `/sites/leads` stays soft.
-/// The bundle the page loads is the forward's (`/sites/mfe`), never a page; and its policy is the
-/// pages' own, `'self'` already admitting the bundle.
+/// The bundle the page loads is the forward's (`/sites/mfe`), never a page.
 #[tokio::test]
 async fn the_sites_page_serves_every_view_of_it() {
 	let export = Export::new();
@@ -244,7 +156,6 @@ async fn the_sites_page_serves_every_view_of_it() {
 		let (status, h, body) = get_(&app, uri).await;
 		assert_eq!((status, body.as_str()), (StatusCode::OK, SITES), "{uri}");
 		assert!(is_page(&h), "{uri}");
-		assert_eq!(sources(policy(&h), "script-src")[0], "'self'", "{uri}: the bundle is this origin's");
 	}
 	for (uri, body) in [
 		("/sites/leads/index.txt?_rsc=1x2y", "sites payload"),

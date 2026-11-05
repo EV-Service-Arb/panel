@@ -9,6 +9,7 @@
 //! POST   /api/v1/gmails/{id}/gmbs {place_id}  → 201 Gmb; 409 that gmail has it
 //! DELETE /api/v1/gmbs/{id}            → 204
 //! PUT    /api/v1/gmbs/enabled {gmbs, enabled}  → 204; 404 one is not theirs, and none switched
+//! GET    /api/v1/map                  Map: what the browser loads Maps JS with; 404 without it
 //! ```
 //!
 //! Before the import from review_archive, the writes answer 503.
@@ -32,7 +33,7 @@ use ts_rs::TS;
 
 use crate::{
 	api::{ApiError, ApiResult, body},
-	http::ApiRoute,
+	http::{ApiRoute, ApiState},
 	signin::{Caller, Freshness},
 };
 
@@ -47,7 +48,16 @@ pub(crate) fn routes() -> Vec<ApiRoute> {
 		ApiRoute::new(M::POST, "/gmails/{id}/gmbs", None, Cached, add_gmb),
 		ApiRoute::new(M::DELETE, "/gmbs/{id}", None, Cached, remove_gmb),
 		ApiRoute::new(M::PUT, "/gmbs/enabled", None, Cached, switch),
+		ApiRoute::new(M::GET, "/map", None, Cached, map),
 	]
+}
+
+/// `GET /map`: the browser's Maps JS key, referrer-restricted, and the map's id.
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(rename = "MapConfig")]
+pub struct MapDto {
+	pub key: String,
+	pub map_id: String,
 }
 
 /// A GMB under one of the caller's gmails.
@@ -66,6 +76,9 @@ pub struct GmbDto {
 	pub created_at: String,
 	/// The caller's switch; review_archive inherits it.
 	pub enabled: bool,
+	/// `null`: added without a Places key, and not located since.
+	#[ts(type = "{ lat: number, lng: number } | null")]
+	pub location: Option<sa_places::LatLng>,
 }
 
 /// A gmail of the caller's, with the GMBs it manages.
@@ -115,6 +128,7 @@ impl From<Gmb> for GmbDto {
 			gbp_location: b.gbp_location,
 			created_at: b.created_at.to_string(),
 			enabled: b.enabled,
+			location: b.location,
 		}
 	}
 }
@@ -173,13 +187,17 @@ async fn resolve(State(panel): State<Panel>, q: Result<Query<Resolve>, QueryReje
 	Ok(Json(CandidatesDto {
 		candidates: candidates
 			.into_iter()
-			.map(|p| PlaceDto {
-				place_id: p.place_id,
-				name: p.name,
-				address: p.address,
+			.map(|(place_id, p)| PlaceDto {
+				place_id,
+				name: p.as_ref().and_then(|p| p.name.clone()),
+				address: p.and_then(|p| p.address),
 			})
 			.collect(),
 	}))
+}
+
+async fn map(State(s): State<ApiState>) -> ApiResult<Json<MapDto>> {
+	s.map.map(Json).ok_or(ApiError::NotFound)
 }
 
 #[derive(Deserialize)]

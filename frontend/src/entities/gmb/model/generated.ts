@@ -31,7 +31,15 @@ created_at: string,
 /**
  * The caller's switch; review_archive inherits it.
  */
-enabled: boolean, };
+enabled: boolean, 
+/**
+ * `null`: added without a Places key, and not located since.
+ */
+location: { lat: number, lng: number } | null, };
+/**
+ * `GET /map`: the browser's Maps JS key, referrer-restricted, and the map's id.
+ */
+export type MapConfig = { key: string, map_id: string, };
 /**
  * A place a pasted input may mean.
  */

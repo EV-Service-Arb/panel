@@ -2,7 +2,9 @@
 
 use sa_auth::{Catalog, PermissionSet};
 use sa_core::{notify::Locale, tokens::Renewal};
-use sa_panel::{gmbs::Places, seal::DataKey};
+use sa_panel::seal::DataKey;
+use sa_places::{Google, Keys};
+use sa_server::gmbs::MapDto;
 
 ev_lib::settings! {
 	/// Each secret is needed only by what uses it; a missing one fails that, with an error
@@ -55,10 +57,6 @@ ev_lib::settings! {
 		/// and the hubs' feeds.
 		#[required_in("production")]
 		panel_sites_url: Option<String>,
-		/// `1` lets the pages load the platform's MFE bundles from `https://evinvest.ltd`
-		/// (their directories in `script-src`, the origin in `connect-src`); `0` or unset, the
-		/// policy is as before. The front end always loads them from there, so production sets `1`.
-		panel_csp_platform_mfe: Option<String>,
 		/// The conductor's bot (`@evinvest_sa_bot`; not `telegram_token_main`). Unset: no Telegram
 		/// notifications, and `serve` says so. Needs the forward configured too: sites' notes
 		/// are what it sends.
@@ -76,10 +74,16 @@ ev_lib::settings! {
 		/// `migrate`: there is no first balance by default.
 		#[required_in("production")]
 		tokens_start_cap_multiple: Option<f64>,
-		/// The Places API key GMBs are named and addressed with. Unset: a GMB is added by its
-		/// place id alone, unnamed.
+		/// The Places API keys GMBs are named, addressed and located with, comma-separated in the
+		/// order they are used: free ones first. Unset: a GMB is added by its place id alone,
+		/// unnamed and unlocated.
 		#[secret]
-		google_maps_key: Option<String>,
+		google_maps_keys: Option<String>,
+		/// The key the browser loads Maps JS with: referrer-restricted, public by nature. With
+		/// GOOGLE_MAPS_MAP_ID, or neither: no map.
+		google_maps_browser_key: Option<String>,
+		/// The map's id (`DEMO_MAP_ID` in development).
+		google_maps_map_id: Option<String>,
 		/// Grafana's server (the image's `grafanaServer` wrapper): `serve` runs it, at `/grafana/`.
 		/// With PANEL_GRAFANA_DIR, or neither; needs the forward and a public origin.
 		panel_grafana_server: Option<String>,
@@ -118,8 +122,26 @@ impl Settings {
 		Ok(Renewal::new(self.tokens_daily, self.tokens_cap, multiple)?)
 	}
 
-	pub fn places(&self) -> eyre::Result<Places> {
-		Places::new(self.google_maps_key.as_deref().map(str::trim).filter(|k| !k.is_empty()).map(str::to_owned))
+	pub fn places_keys(&self) -> Vec<String> {
+		let keys = self.google_maps_keys.as_deref().unwrap_or_default().split(',');
+		keys.map(str::trim).filter(|k| !k.is_empty()).map(str::to_owned).collect()
+	}
+
+	/// Places, its answers cached beside the database (on the volume).
+	pub fn google(&self) -> eyre::Result<Google> {
+		let db = self.db_path()?;
+		let dir = db.parent().ok_or_else(|| eyre::eyre!("PANEL_DB_PATH {} has no directory", db.display()))?;
+		Ok(Google::new(Keys::new(self.places_keys()), dir.join("google_cache"))?)
+	}
+
+	/// The browser's map: both variables, or neither.
+	pub fn map(&self) -> eyre::Result<Option<MapDto>> {
+		let set = |v: &Option<String>| v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+		match (set(&self.google_maps_browser_key), set(&self.google_maps_map_id)) {
+			(Some(key), Some(map_id)) => Ok(Some(MapDto { key, map_id })),
+			(None, None) => Ok(None),
+			_ => eyre::bail!("GOOGLE_MAPS_BROWSER_KEY and GOOGLE_MAPS_MAP_ID: both, or neither"),
+		}
 	}
 }
 
@@ -145,17 +167,7 @@ impl Settings {
 		let Some(dir) = self.panel_web_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) else {
 			return Ok(None);
 		};
-		Ok(Some(sa_server::web::Files::new(std::path::Path::new(dir))?.platform_mfe(self.csp_platform_mfe()?)))
-	}
-
-	/// `PANEL_CSP_PLATFORM_MFE`: `0` (also unset or blank) or `1`; anything else fails the boot
-	/// rather than silently leaving the policy narrower or wider than meant.
-	pub fn csp_platform_mfe(&self) -> eyre::Result<bool> {
-		match self.panel_csp_platform_mfe.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-			None | Some("0") => Ok(false),
-			Some("1") => Ok(true),
-			Some(other) => eyre::bail!("PANEL_CSP_PLATFORM_MFE must be `0` or `1`, not `{other}`"),
-		}
+		Ok(Some(sa_server::web::Files::new(std::path::Path::new(dir))?))
 	}
 
 	/// `None` without `TELEGRAM_BOT_TOKEN`: the bot is off.
@@ -413,14 +425,15 @@ mod tests {
 				"PANEL_REVIEW_ARCHIVE_URL",
 				"PANEL_PLAYBOOK_URL",
 				"PANEL_SITES_URL",
-				"PANEL_CSP_PLATFORM_MFE",
 				"TELEGRAM_BOT_TOKEN",
 				"TELEGRAM_BOT_USERNAME",
 				"TELEGRAM_LOCALE",
 				"TOKENS_DAILY",
 				"TOKENS_CAP",
 				"TOKENS_START_CAP_MULTIPLE",
-				"GOOGLE_MAPS_KEY",
+				"GOOGLE_MAPS_KEYS",
+				"GOOGLE_MAPS_BROWSER_KEY",
+				"GOOGLE_MAPS_MAP_ID",
 				"PANEL_GRAFANA_SERVER",
 				"PANEL_GRAFANA_DIR",
 				"PANEL_WEB_DIR",
@@ -637,16 +650,6 @@ mod tests {
 			.unwrap_err()
 		);
 		assert!(e.contains("unset CONCIERGE_GRPC_ADDR"), "{e}");
-	}
-
-	#[test]
-	fn the_platform_csp_is_off_unless_asked_and_a_typo_fails_the_boot() {
-		assert!(!from(&[]).unwrap().csp_platform_mfe().unwrap());
-		assert!(!from(&[("PANEL_CSP_PLATFORM_MFE", " ")]).unwrap().csp_platform_mfe().unwrap());
-		assert!(!from(&[("PANEL_CSP_PLATFORM_MFE", "0")]).unwrap().csp_platform_mfe().unwrap());
-		assert!(from(&[("PANEL_CSP_PLATFORM_MFE", "1")]).unwrap().csp_platform_mfe().unwrap());
-		let e = format!("{}", from(&[("PANEL_CSP_PLATFORM_MFE", "true")]).unwrap().csp_platform_mfe().unwrap_err());
-		assert!(e.contains("PANEL_CSP_PLATFORM_MFE") && e.contains("true"), "{e}");
 	}
 
 	#[test]

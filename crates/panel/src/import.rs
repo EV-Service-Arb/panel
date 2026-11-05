@@ -148,12 +148,7 @@ impl Panel {
 			eyre::ensure!(added.is_some_and(|a| a.id == g.id), "gmail {} ({}) clashes with another", g.id, g.gmail);
 		}
 		for b in &export.gmbs {
-			let place = sa_places::Place {
-				place_id: b.place_id.clone(),
-				name: b.name.clone(),
-				address: b.address.clone(),
-			};
-			let added = gmbs_db::add_gmb(&mut tx, Some(b.id), b.gmail_id, &place, b.created_at).await?;
+			let added = gmbs_db::add_gmb(&mut tx, Some(b.id), b.gmail_id, &b.place_id, b.name.as_deref(), b.address.as_deref(), b.created_at).await?;
 			eyre::ensure!(added.is_some_and(|a| a.id == b.id), "GMB {} (gmail {}, {}) clashes with another", b.id, b.gmail_id, b.place_id);
 		}
 		for e in &export.ledger {

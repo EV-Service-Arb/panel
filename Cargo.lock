@@ -3915,7 +3915,6 @@ dependencies = [
  "getrandom 0.3.4",
  "hex",
  "jiff",
- "reqwest",
  "sa_alerts",
  "sa_auth",
  "sa_core",
@@ -3943,12 +3942,17 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "eyre",
+ "hex",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -3956,7 +3960,6 @@ name = "sa_server"
 version = "0.1.0"
 dependencies = [
  "axum",
- "base64 0.22.1",
  "clap",
  "color-eyre",
  "ev_lib 0.24.2",
