@@ -131,10 +131,7 @@
             # the image carries the choice, no runtime switch. They turn on the platform path:
             # the sign-in dialog over the panel, the platform's account chip and sign-in, and
             # the wallet page. The bundles come from the platform origin (concierge's from
-            # /api/auth/mfe/*, the wallet's from /wallet/mfe/*), which the server's CSP names
-            # only with PANEL_CSP_PLATFORM_MFE=1 (devops panelEnv). Rollback: run the v0.12.1
-            # image. v0.11.0 boots too, but it loads the chip through the pinned proxy, so
-            # without its pins in the environment the chip shows only its fallback.
+            # /api/auth/mfe/*, the wallet's from /wallet/mfe/*).
             NEXT_PUBLIC_SIGNIN_OVERLAY = "1";
             NEXT_PUBLIC_WALLET_PAGE = "1";
           };

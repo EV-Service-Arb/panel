@@ -40,8 +40,9 @@ crates/alerts/           no I/O: the alert rules, and the notes a service publis
 crates/auth/             the `sa` permissions (concierge_iam derives), the aliases `sa:operator` /
                          `sa:admin`, and the assertion: a User, a Source or the Conductor, for one
                          request of one service
-crates/places/           a Google place from what a person pastes (an id, a Maps URL, a Places
-                         API search); review_archive takes it too
+crates/places/           Google Places: a place from what a person pastes (an id, a Maps URL, a
+                         search), its point; every request through one cache, the keys rotated;
+                         review_archive takes it too
 crates/ui/               Dioxus components the services' front ends share
 crates/contracts/        concierge's gRPC contract (tonic, from contracts/proto)
 crates/server/           the `panel` binary: CLI and HTTP, thin over `Panel`
@@ -171,23 +172,24 @@ reserved paths (`web.rs`) are derived from it.
   decoded, is a 400.
 - **The outline.** Every signed-in page sits beside it: the open service's own views (the sites:
   `<mfe-sites-nav>`, mounted on every page and shown on theirs; the review archive: its places,
-  Telegram and settings), then the caller's gmails, each opening to its GMBs, with their switches.
-  `/` is the GMBs' own page.
+  Telegram and settings), then the caller's GMBs under a gmail scope every app shares (kept in the
+  browser), with their switches. `/` is the map of them: one Google map per page session, kept
+  while the page is away (each built is a billed load), its viewport splitting the outline's list.
 - **The pages.** `/sites` mounts `<mfe-sites-panel api="/api/sites" base="/sites" csrf-cookie>`
   from `/sites/mfe/`; `/review_archive` mounts
   `<mfe-review-archive-dashboard grafana="/grafana/">` from `/review_archive/mfe/`. Any `/sites/<view>` or
   `/review_archive/<view>` without a dot in its last segment is that page, for the element to
   route, and a file below a view (`/sites/<view>/index.txt`, `…/__next.*.txt`) is the page's
-  own, so Next's client-side navigation to a view stays soft. The bundles run on this origin,
-  under `script-src 'self'`: their builds are trusted as the conductor's own code is.
+  own, so Next's client-side navigation to a view stays soft. The bundles run on this origin:
+  their builds are trusted as the conductor's own code is.
 - **The elements route by the location.** Next moves it with `pushState`, which fires nothing:
   after each of its moves the shell dispatches a stateless `popstate`, as back and forward do
   (Next's own handler ignores it). An element is created once per tag, attributes and language
   and re-inserted after: a Dioxus one (ev_lib's `mfe`) cannot be torn down, so it keeps running
   while its page is not shown, and holds its last route while the location is not under its base.
 - **The platform's elements are not forwarded.** The account chip, the sign-in element and the
-  wallet load straight from `https://evinvest.ltd`, admitted by the CSP's directories (Deploy
-  requirements). `/cabinet` stays reserved: a JSON 404, never the front end's page.
+  wallet load straight from `https://evinvest.ltd`. `/cabinet` stays reserved: a JSON 404, never
+  the front end's page.
 - Without `PANEL_ASSERTION_KEY`, `PANEL_REVIEW_ARCHIVE_URL`, `PANEL_PLAYBOOK_URL` and
   `PANEL_SITES_URL` (all four, or none), nothing is forwarded, nothing ingested, the hubs hear
   nothing of sites, and review_archive is neither followed nor told.
@@ -284,7 +286,8 @@ POST   /alerts/destinations/{id}/test       204; 400 with what Telegram said
 DELETE /alerts/destinations/{id}            204, 404
 GET    /gmails                              {gmails: [{id, gmail, created_at, gmbs: [{id, place_id,
                                             name, address, gbp_account, gbp_location, created_at,
-                                            enabled}]}]} the caller's, removed ones left out
+                                            enabled, location: {lat, lng} | null}]}]} the caller's,
+                                            removed ones left out
 POST   /gmails                              {gmail} → 201 the gmail; 409 held already
 DELETE /gmails/{id}                         204; its GMBs count as removed
 GET    /gmbs/resolve?place=                 {candidates: [{place_id, name, address}]} (sa_places)
@@ -292,6 +295,8 @@ POST   /gmails/{id}/gmbs                    {place_id} → 201 the GMB; 409 unde
 DELETE /gmbs/{id}                           204
 PUT    /gmbs/enabled                        {gmbs: [id], enabled} → 204: every one switched, or none
                                             (404 one not the caller's)
+GET    /map                                 {key, map_id}: the browser's Maps JS key and map id;
+                                            404 without GOOGLE_MAPS_BROWSER_KEY
 GET    /tokens                              {balance, daily, cap, kickbacks}: renewed, the
                                             kick-backs not claimed
 GET    /tokens/ledger?before=&limit=        {entries, next}: newest first, limit 1–200
@@ -396,6 +401,10 @@ push (a change, a page, 60 s)
   document.
 - **A place's site** is sites': its `places.gmb_id`, linked from the outline through the forward;
   sites down or refusing leaves the GMBs without the link.
+- **A GMB's point** is its place's (`place_points`, keyed by place id, the newest answer kept),
+  written with the GMB from the answer that named it. A GMB added without a key, or imported, has
+  none until `panel gmb locate` asks for the missing ones: a command, so the spend is explicit;
+  run after a deploy that brings points, and after `local-stack --from-prod`.
 
 ## Alerts
 
@@ -507,6 +516,8 @@ delivery (0.5 s)  lead messages noted > 1 h ago dead ("stale"); > 20 of one rule
 - **A note is in the outbox before the cursor passes it**: the page and the cursor move in one
   transaction. **So is a charge in the ledger**, and a page is taken only from where the cursor
   stands.
+- **A Google answer is paid for once.** Every Places request goes through sa_places' cache; a
+  place a search returned is not asked about again.
 - **The ledger is append-only, and nothing a service stores an id of is deleted.**
   `token_ledger` refuses UPDATE and DELETE; gmails and GMBs only get `removed_at`, kick-backs
   only `claimed_at`, each once.
@@ -515,7 +526,7 @@ delivery (0.5 s)  lead messages noted > 1 h ago dead ("stale"); > 20 of one rule
   only that). A migration newer than the build is let be. Tables are STRICT, foreign keys
   enforced, timestamps INTEGER microseconds since the epoch, UUIDs 16-byte blobs.
 - **Secrets come from the environment only** (`PANEL_DATA_KEY`, `SENTRY_DSN`,
-  `RP_CLIENT_SECRET_SA`, `PANEL_ASSERTION_KEY`, `TELEGRAM_BOT_TOKEN`, `GOOGLE_MAPS_KEY`), through
+  `RP_CLIENT_SECRET_SA`, `PANEL_ASSERTION_KEY`, `TELEGRAM_BOT_TOKEN`, `GOOGLE_MAPS_KEYS`), through
   `ev_lib::settings`; with `APP_ENV=production` the database, the data key, the four sign-in
   variables, the forward's four and `TOKENS_START_CAP_MULTIPLE` are required at boot
   (`panel --print-required-vars` lists them).
@@ -526,20 +537,12 @@ delivery (0.5 s)  lead messages noted > 1 h ago dead ("stale"); > 20 of one rule
   and sets `PANEL_WEB_DIR` to it; `serve` answers `/api`, `/auth` and `/health` first, then the
   forward's prefixes, then the files (a directory by its `index.html`, anything else `404.html`
   with a 404). `/cabinet` is held, and `/grafana` without Grafana: JSON 404s. `/_next/static/*` is `immutable`
-  for a year, everything else `no-cache`; every page carries a CSP of `default-src 'self'`,
-  scripts from this origin and inline only by hash (`web::Files::new` hashes every inline
-  `<script>` of every page at boot), `'unsafe-inline'` for styles, `'wasm-unsafe-eval'` (the
-  review_archive dashboard), `frame-ancestors 'none'`, `Referrer-Policy: same-origin`, and
-  Trusted Types report-only.
+  for a year, everything else `no-cache`; every page carries a CSP of `frame-ancestors 'none';
+  base-uri 'none'; form-action 'self'`, and every answer `Referrer-Policy:
+  strict-origin-when-cross-origin` (Maps JS checks its referrer-restricted key by the origin).
 - **Grafana's memory.** ~340 MB at its peak, ~185 of it its binary's pages, and its Infinity plugin
   server ~80 MB at a board's load, ~110 under a sustained one: the pod's limit has room for both
   above the conductor. Its dir is `/data/grafana`, unreplicated: provisioned again on every start.
-- **The platform's MFE bundles (`PANEL_CSP_PLATFORM_MFE`).** `0` (default) leaves the CSP as
-  above; `1` adds to `script-src` the directories `https://evinvest.ltd/api/auth/mfe/` and
-  `https://evinvest.ltd/wallet/mfe/` and `https://challenges.cloudflare.com` (the sign-in
-  element's Turnstile), to `style-src` the wallet's directory, to `connect-src` the origin
-  `https://evinvest.ltd`, and a `frame-src` of `'self'` and Turnstile's origin. Directories, not
-  the origin: only the elements the platform publishes for hosts run in the session.
 - **The contract** (`nix eval .#containers.<system>.panel.contract`) names the port (the flake's `port`),
   `/health`, `APP_ENV=production`, the variables required, secret and optional,
   `PANEL_DB_PATH`, the volume (`/data`) and the SQLite file on it to replicate, what the ingress
@@ -561,8 +564,13 @@ delivery (0.5 s)  lead messages noted > 1 h ago dead ("stale"); > 20 of one rule
 - **concierge within reach.** The pods call concierge's gRPC (`CONCIERGE_GRPC_ADDR`) for every
   sign-in, rotation and `GetMe`. concierge must register client `sa` with redirect URI
   `<PANEL_PUBLIC_ORIGIN>/auth/callback` exactly and hold the hash of `RP_CLIENT_SECRET_SA`.
-- **Places, outbound.** With `GOOGLE_MAPS_KEY` the pods need egress to
-  `places.googleapis.com:443` (a pasted URL without a place id, a GMB's name and address).
+- **Places, outbound.** With `GOOGLE_MAPS_KEYS` the pods need egress to
+  `places.googleapis.com:443` (a pasted URL without a place id, a GMB's name, address and point).
+  The keys are used in their order, free ones first; one Google says is spent for a quota window
+  sits out until the window resets, one whose billing is off until restart. Every answer is kept
+  in `google_cache/` beside `PANEL_DB_PATH`, on the volume. The browser loads Maps JS straight
+  from Google with `GOOGLE_MAPS_BROWSER_KEY` (referrer-restricted to the public origin) and
+  `GOOGLE_MAPS_MAP_ID`; the server's keys never reach it.
 - **Telegram, outbound only.** With `TELEGRAM_BOT_TOKEN` the pods need egress to
   `api.telegram.org:443`; no webhook is set on the bot (`getUpdates` refuses to run while one is).
 - **`/api/v1/live` through the public IngressRoute, as a WebSocket.** Nothing in front may buffer

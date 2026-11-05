@@ -4,7 +4,7 @@ The conductor with its Grafana, sites_panel, review_archive and both landings (a
 on one machine, wired as in the cluster: a lead posted on a landing reaches sites_panel through
 the conductor's ingest, a place's phone or hours edited on the sites page shows on the landing
 through sites' `/api/internal`, review_archive's overview and boards draw in the conductor's
-Grafana, and the conductor's GMBs and tokens reach review_archive. No concierge, no PostHog, no Telegram, no playbook (its forward answers 502), no Google
+Grafana, and the conductor's GMBs and tokens reach review_archive. No concierge, no PostHog, no Telegram, no playbook (its forward answers 502), no Google for review_archive
 (review_archive scans nothing): the conductor signs you in by itself (dev sign-in, below).
 
 ## Prerequisites
@@ -191,7 +191,23 @@ configures them (`../gitops`, fetched), with the R2 keys from `../devops`'s sops
 replicated, off its volume over ssh (`PROD_SSH` in the script). Everyone's data comes along; dev
 sign-in is prod's `admin@evinvest.ltd`. What prod sealed under its own `PANEL_DATA_KEY` (prod's
 sessions, its sources' secrets, sites' Google tokens) does not open here: the landings sign with
-the stack's own `<brand>-local` keys. Nothing walks Maps, nothing is told to Telegram.
+the stack's own `<brand>-local` keys. Nothing walks Maps, nothing is told to Telegram. Prod's
+GMBs come without the cache that located them: `panel gmb locate` (the stack's `PANEL_DB_PATH`
+and data key) asks for their points once.
+
+## Google
+
+The conductor names, addresses and locates GMBs with `gmaps_optimal_placement`'s keys, in the
+order `~/.config/gmaps_optimal_placement.nix` lists them, and the map loads with the first:
+
+| Variable | Value, unless the shell sets it |
+| --- | --- |
+| `GOOGLE_MAPS_KEYS` | `$GOOGLE_MAPS_KEY,$GOOGLE_MAPS_KEY_ICOS1` |
+| `GOOGLE_MAPS_BROWSER_KEY` | `$GOOGLE_MAPS_KEY` |
+| `GOOGLE_MAPS_MAP_ID` | `DEMO_MAP_ID` |
+
+Without `GOOGLE_MAPS_KEY` in the shell, a GMB is added by its place id alone and `/` has no map.
+Answers are kept in `.local/google_cache/`: `--reset` pays for them again.
 
 ## The end-to-end check
 
