@@ -90,13 +90,6 @@ pub enum Signal {
 pub struct Bus {
 	tx: broadcast::Sender<Signal>,
 }
-
-impl Default for Bus {
-	fn default() -> Self {
-		Self::new(DEFAULT_CAPACITY)
-	}
-}
-
 impl Bus {
 	/// A bus whose subscribers may fall `capacity` messages behind (at least 1).
 	pub fn new(capacity: usize) -> Self {
@@ -129,6 +122,12 @@ impl Bus {
 			// moments of `GoingAway`, so a short poll is enough.
 			tokio::time::sleep(Duration::from_millis(20)).await;
 		}
+	}
+}
+
+impl Default for Bus {
+	fn default() -> Self {
+		Self::new(DEFAULT_CAPACITY)
 	}
 }
 

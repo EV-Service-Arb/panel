@@ -51,29 +51,9 @@ pub struct BotApi {
 	base: String,
 	token: Arc<Zeroizing<String>>,
 }
-
-impl std::fmt::Debug for BotApi {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		f.debug_struct("BotApi").field("base", &self.base).finish_non_exhaustive()
-	}
-}
-
-#[derive(Deserialize)]
-struct Answer {
-	ok: bool,
-	result: Option<Value>,
-	description: Option<String>,
-	parameters: Option<Parameters>,
-}
-
-#[derive(Deserialize)]
-struct Parameters {
-	retry_after: Option<i64>,
-}
-
 impl BotApi {
 	/// `base`: [`API_BASE`], or a test's mock.
-	pub fn new(base: &str, token: &str) -> eyre::Result<Self> {
+	pub fn try_new(base: &str, token: &str) -> eyre::Result<Self> {
 		let http = reqwest::Client::builder()
 			.connect_timeout(Duration::from_secs(5))
 			.timeout(Duration::from_secs(15))
@@ -118,6 +98,182 @@ impl BotApi {
 		};
 		Ok(all.into_iter().filter_map(|u| Some((u.get("update_id")?.as_i64()?, u))).collect())
 	}
+}
+
+impl std::fmt::Debug for BotApi {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("BotApi").field("base", &self.base).finish_non_exhaustive()
+	}
+}
+
+/// One update as the engine takes it; `None` for what the panel ignores (edits, joins, …).
+pub fn parse_update(raw: &Value) -> Option<Update> {
+	let chat_of = |m: &Value| -> Option<Chat> {
+		let chat = m.get("chat")?;
+		Some(Chat {
+			id: chat.get("id")?.as_i64()?,
+			private: chat.get("type").and_then(Value::as_str) == Some("private"),
+		})
+	};
+	if let Some(q) = raw.get("callback_query") {
+		let message = q.get("message")?;
+		// Only the formatting is kept: Telegram adds a link of its own over a URL it sees, and a
+		// customer's words must not become one when the message is edited.
+		const FORMATTING: [&str; 9] = ["code", "pre", "bold", "italic", "underline", "strikethrough", "spoiler", "blockquote", "expandable_blockquote"];
+		let entities = message
+			.get("entities")
+			.and_then(Value::as_array)
+			.map(|all| {
+				all.iter()
+					.filter(|e| e.get("type").and_then(Value::as_str).is_some_and(|t| FORMATTING.contains(&t)))
+					.cloned()
+					.collect()
+			})
+			.unwrap_or_default();
+		return Some(Update::Callback {
+			id: q.get("id")?.as_str()?.to_owned(),
+			chat_id: chat_of(message)?.id,
+			message_id: message.get("message_id")?.as_i64()?,
+			data: q.get("data").and_then(Value::as_str).unwrap_or_default().to_owned(),
+			message: Rendered {
+				text: message.get("text").and_then(Value::as_str).unwrap_or_default().to_owned(),
+				entities,
+			},
+		});
+	}
+	let message = raw.get("message")?;
+	let chat = chat_of(message)?;
+	// A forwarded `/start <token>` is someone else's link, passed on: never a link here.
+	if message.get("forward_origin").is_some() {
+		return Some(Update::Other { chat });
+	}
+	let from = message.get("from");
+	let field = |k: &str| from.and_then(|f| f.get(k)).and_then(Value::as_str).map(str::to_owned);
+	let account = Account {
+		username: field("username"),
+		first_name: field("first_name"),
+	};
+	let text = message.get("text").and_then(Value::as_str).unwrap_or_default().trim();
+	let (command, rest) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
+	// `/start@evinvest_sa_bot` in a group names the bot; in a private chat it is the same.
+	let command = command.split('@').next().unwrap_or_default();
+	Some(match command {
+		"/start" => Update::Start {
+			chat,
+			payload: Some(rest.trim()).filter(|p| !p.is_empty()).map(str::to_owned),
+			from: account,
+		},
+		"/stop" => Update::Stop { chat },
+		_ => Update::Other { chat },
+	})
+}
+
+/// The bot's username, once known (from `TELEGRAM_BOT_USERNAME`, or `getMe` at start).
+#[derive(Clone, Debug, Default)]
+pub struct BotName(Arc<OnceLock<String>>);
+impl BotName {
+	/// Its name is `known`, or learned later by [`Self::learn`].
+	pub fn new(known: Option<String>) -> Self {
+		let cell = OnceLock::new();
+		if let Some(name) = known {
+			cell.set(name.trim_start_matches('@').to_owned()).expect("a fresh cell");
+		}
+		Self(Arc::new(cell))
+	}
+
+	pub fn learn(&self, name: String) {
+		// A name already set (from the environment) wins over getMe's.
+		let _kept = self.0.set(name);
+	}
+
+	pub fn get(&self) -> Option<&str> {
+		self.0.get().map(String::as_str)
+	}
+}
+
+/// Polls for updates and handles them until `shutdown` turns true, on the replica holding the
+/// poller's lease; first learns the bot's name, which the link waits for.
+pub async fn poll<F: Feeds>(hub: &Hub<BotApi, Concierge, F>, name: &BotName, mut shutdown: watch::Receiver<bool>) {
+	let holder = Uuid::now_v7();
+	let stopped = |s: &watch::Receiver<bool>| *s.borrow();
+	while name.get().is_none() && !stopped(&shutdown) {
+		match hub.bot.username().await {
+			Ok(username) => {
+				tracing::info!(username, "telegram: the bot is up");
+				name.learn(username);
+			}
+			Err(f) => {
+				tracing::warn!(failure = ?f, "telegram: getMe failed; linking waits for it");
+				tokio::select! {
+					() = tokio::time::sleep(STANDBY_EVERY) => {}
+					_ = shutdown.changed() => {}
+				}
+			}
+		}
+	}
+	while !stopped(&shutdown) {
+		let now = Timestamp::now();
+		let offset = match hub.panel.telegram_poll_lease(holder, now, now + POLL_LEASE).await {
+			Ok(Some(offset)) => offset,
+			Ok(None) => {
+				tokio::select! {
+					() = tokio::time::sleep(STANDBY_EVERY) => {}
+					_ = shutdown.changed() => {}
+				}
+				continue;
+			}
+			Err(e) => {
+				crate::report(&e, "leasing the telegram poller");
+				tokio::time::sleep(STANDBY_EVERY).await;
+				continue;
+			}
+		};
+		let updates = tokio::select! {
+			u = hub.bot.updates(offset, Duration::from_secs(POLL_SECONDS)) => u,
+			_ = shutdown.changed() => break,
+		};
+		let updates = match updates {
+			Ok(u) => u,
+			Err(f) => {
+				tracing::warn!(failure = ?f, "telegram: getUpdates failed");
+				tokio::time::sleep(Duration::from_secs(3)).await;
+				continue;
+			}
+		};
+		for (id, raw) in updates {
+			if let Some(update) = parse_update(&raw)
+				&& let Err(e) = hub.handle(update, Timestamp::now()).await
+			{
+				// Past it anyway: an update that fails every time must not stop the bot; the
+				// user presses again.
+				crate::report(&e, "handling a telegram update");
+			}
+			match hub.panel.telegram_poll_advance(holder, id + 1).await {
+				Ok(true) => {}
+				Ok(false) => break,
+				Err(e) => {
+					crate::report(&e, "advancing the telegram poller");
+					break;
+				}
+			}
+		}
+	}
+	if let Err(e) = hub.panel.telegram_poll_release(holder).await {
+		crate::report(&e, "releasing the telegram poller");
+	}
+}
+
+#[derive(Deserialize)]
+struct Answer {
+	ok: bool,
+	result: Option<Value>,
+	description: Option<String>,
+	parameters: Option<Parameters>,
+}
+
+#[derive(Deserialize)]
+struct Parameters {
+	retry_after: Option<i64>,
 }
 
 /// What Telegram answered `method`: its `result`, or how it failed.
@@ -221,164 +377,6 @@ impl Bot for BotApi {
 		let member = self.call("getChatMember", &json!({"chat_id": chat_id, "user_id": user_id}), None).await?;
 		let status = member.get("status").and_then(Value::as_str).ok_or_else(|| Failure::Refused("getChatMember: no status".into()))?;
 		Ok(matches!(status, "creator" | "administrator"))
-	}
-}
-
-/// One update as the engine takes it; `None` for what the panel ignores (edits, joins, …).
-pub fn parse_update(raw: &Value) -> Option<Update> {
-	let chat_of = |m: &Value| -> Option<Chat> {
-		let chat = m.get("chat")?;
-		Some(Chat {
-			id: chat.get("id")?.as_i64()?,
-			private: chat.get("type").and_then(Value::as_str) == Some("private"),
-		})
-	};
-	if let Some(q) = raw.get("callback_query") {
-		let message = q.get("message")?;
-		// Only the formatting is kept: Telegram adds a link of its own over a URL it sees, and a
-		// customer's words must not become one when the message is edited.
-		const FORMATTING: [&str; 9] = ["code", "pre", "bold", "italic", "underline", "strikethrough", "spoiler", "blockquote", "expandable_blockquote"];
-		let entities = message
-			.get("entities")
-			.and_then(Value::as_array)
-			.map(|all| {
-				all.iter()
-					.filter(|e| e.get("type").and_then(Value::as_str).is_some_and(|t| FORMATTING.contains(&t)))
-					.cloned()
-					.collect()
-			})
-			.unwrap_or_default();
-		return Some(Update::Callback {
-			id: q.get("id")?.as_str()?.to_owned(),
-			chat_id: chat_of(message)?.id,
-			message_id: message.get("message_id")?.as_i64()?,
-			data: q.get("data").and_then(Value::as_str).unwrap_or_default().to_owned(),
-			message: Rendered {
-				text: message.get("text").and_then(Value::as_str).unwrap_or_default().to_owned(),
-				entities,
-			},
-		});
-	}
-	let message = raw.get("message")?;
-	let chat = chat_of(message)?;
-	// A forwarded `/start <token>` is someone else's link, passed on: never a link here.
-	if message.get("forward_origin").is_some() {
-		return Some(Update::Other { chat });
-	}
-	let from = message.get("from");
-	let field = |k: &str| from.and_then(|f| f.get(k)).and_then(Value::as_str).map(str::to_owned);
-	let account = Account {
-		username: field("username"),
-		first_name: field("first_name"),
-	};
-	let text = message.get("text").and_then(Value::as_str).unwrap_or_default().trim();
-	let (command, rest) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
-	// `/start@evinvest_sa_bot` in a group names the bot; in a private chat it is the same.
-	let command = command.split('@').next().unwrap_or_default();
-	Some(match command {
-		"/start" => Update::Start {
-			chat,
-			payload: Some(rest.trim()).filter(|p| !p.is_empty()).map(str::to_owned),
-			from: account,
-		},
-		"/stop" => Update::Stop { chat },
-		_ => Update::Other { chat },
-	})
-}
-
-/// The bot's username, once known (from `TELEGRAM_BOT_USERNAME`, or `getMe` at start).
-#[derive(Clone, Debug, Default)]
-pub struct BotName(Arc<OnceLock<String>>);
-
-impl BotName {
-	/// Its name is `known`, or learned later by [`Self::learn`].
-	pub fn new(known: Option<String>) -> Self {
-		let cell = OnceLock::new();
-		if let Some(name) = known {
-			cell.set(name.trim_start_matches('@').to_owned()).expect("a fresh cell");
-		}
-		Self(Arc::new(cell))
-	}
-
-	pub fn learn(&self, name: String) {
-		// A name already set (from the environment) wins over getMe's.
-		let _kept = self.0.set(name);
-	}
-
-	pub fn get(&self) -> Option<&str> {
-		self.0.get().map(String::as_str)
-	}
-}
-
-/// Polls for updates and handles them until `shutdown` turns true, on the replica holding the
-/// poller's lease; first learns the bot's name, which the link waits for.
-pub async fn poll<F: Feeds>(hub: &Hub<BotApi, Concierge, F>, name: &BotName, mut shutdown: watch::Receiver<bool>) {
-	let holder = Uuid::now_v7();
-	let stopped = |s: &watch::Receiver<bool>| *s.borrow();
-	while name.get().is_none() && !stopped(&shutdown) {
-		match hub.bot.username().await {
-			Ok(username) => {
-				tracing::info!(username, "telegram: the bot is up");
-				name.learn(username);
-			}
-			Err(f) => {
-				tracing::warn!(failure = ?f, "telegram: getMe failed; linking waits for it");
-				tokio::select! {
-					() = tokio::time::sleep(STANDBY_EVERY) => {}
-					_ = shutdown.changed() => {}
-				}
-			}
-		}
-	}
-	while !stopped(&shutdown) {
-		let now = Timestamp::now();
-		let offset = match hub.panel.telegram_poll_lease(holder, now, now + POLL_LEASE).await {
-			Ok(Some(offset)) => offset,
-			Ok(None) => {
-				tokio::select! {
-					() = tokio::time::sleep(STANDBY_EVERY) => {}
-					_ = shutdown.changed() => {}
-				}
-				continue;
-			}
-			Err(e) => {
-				crate::report(&e, "leasing the telegram poller");
-				tokio::time::sleep(STANDBY_EVERY).await;
-				continue;
-			}
-		};
-		let updates = tokio::select! {
-			u = hub.bot.updates(offset, Duration::from_secs(POLL_SECONDS)) => u,
-			_ = shutdown.changed() => break,
-		};
-		let updates = match updates {
-			Ok(u) => u,
-			Err(f) => {
-				tracing::warn!(failure = ?f, "telegram: getUpdates failed");
-				tokio::time::sleep(Duration::from_secs(3)).await;
-				continue;
-			}
-		};
-		for (id, raw) in updates {
-			if let Some(update) = parse_update(&raw)
-				&& let Err(e) = hub.handle(update, Timestamp::now()).await
-			{
-				// Past it anyway: an update that fails every time must not stop the bot; the
-				// user presses again.
-				crate::report(&e, "handling a telegram update");
-			}
-			match hub.panel.telegram_poll_advance(holder, id + 1).await {
-				Ok(true) => {}
-				Ok(false) => break,
-				Err(e) => {
-					crate::report(&e, "advancing the telegram poller");
-					break;
-				}
-			}
-		}
-	}
-	if let Err(e) = hub.panel.telegram_poll_release(holder).await {
-		crate::report(&e, "releasing the telegram poller");
 	}
 }
 

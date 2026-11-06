@@ -61,6 +61,22 @@ const STALE_AFTER: SignedDuration = SignedDuration::from_hours(1);
 /// Messages sent at once in a pass.
 const PARALLEL_SENDS: usize = 8;
 
+/// The Bot API, as the method needs it. Every call answers the failure as [`notify::Failure`],
+/// so the outbox can decide what becomes of the message.
+pub trait Bot: Sync {
+	/// Sends a plain-text message with its entities, or a photo with it as the caption; the id
+	/// Telegram gave it.
+	fn send(&self, to: Target, message: &Rendered, buttons: &[InlineButton], photo: Option<Vec<u8>>) -> impl Future<Output = Result<i64, Failure>> + Send;
+	/// Replaces a message's text and buttons (none: the keyboard is removed).
+	fn edit(&self, chat_id: i64, message_id: i64, message: &Rendered, buttons: &[InlineButton]) -> impl Future<Output = Result<(), Failure>> + Send;
+	/// Answers a button press, with a short notice the user sees.
+	fn answer(&self, callback_id: &str, text: &str) -> impl Future<Output = Result<(), Failure>> + Send;
+	/// `getChat`: `chat` is `@name` or a numeric id.
+	fn chat(&self, chat: &str) -> impl Future<Output = Result<ChatInfo, Failure>> + Send;
+	/// Whether `user` administers `chat` (`getChatMember`).
+	fn is_admin(&self, chat_id: i64, user_id: i64) -> impl Future<Output = Result<bool, Failure>> + Send;
+}
+
 /// A button under a message.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InlineButton {
@@ -86,22 +102,6 @@ pub struct ChatInfo {
 	pub kind: String,
 	pub title: Option<String>,
 	pub forum: bool,
-}
-
-/// The Bot API, as the method needs it. Every call answers the failure as [`notify::Failure`],
-/// so the outbox can decide what becomes of the message.
-pub trait Bot: Sync {
-	/// Sends a plain-text message with its entities, or a photo with it as the caption; the id
-	/// Telegram gave it.
-	fn send(&self, to: Target, message: &Rendered, buttons: &[InlineButton], photo: Option<Vec<u8>>) -> impl Future<Output = Result<i64, Failure>> + Send;
-	/// Replaces a message's text and buttons (none: the keyboard is removed).
-	fn edit(&self, chat_id: i64, message_id: i64, message: &Rendered, buttons: &[InlineButton]) -> impl Future<Output = Result<(), Failure>> + Send;
-	/// Answers a button press, with a short notice the user sees.
-	fn answer(&self, callback_id: &str, text: &str) -> impl Future<Output = Result<(), Failure>> + Send;
-	/// `getChat`: `chat` is `@name` or a numeric id.
-	fn chat(&self, chat: &str) -> impl Future<Output = Result<ChatInfo, Failure>> + Send;
-	/// Whether `user` administers `chat` (`getChatMember`).
-	fn is_admin(&self, chat_id: i64, user_id: i64) -> impl Future<Output = Result<bool, Failure>> + Send;
 }
 
 /// A chat an update came from.

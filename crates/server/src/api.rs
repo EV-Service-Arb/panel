@@ -25,6 +25,20 @@ use crate::{
 	signin::{Caller, Freshness},
 };
 
+pub(crate) type ApiResult<T> = Result<T, ApiError>;
+
+/// Why a request failed, as the front end is told.
+#[derive(Debug)]
+pub enum ApiError {
+	BadRequest(String),
+	Forbidden,
+	NotFound,
+	Conflict(String),
+	/// Not now: the message says until when.
+	Unavailable(String),
+	Internal(eyre::Report),
+}
+
 pub(crate) fn routes() -> Vec<ApiRoute> {
 	use Freshness::{Cached, Fresh};
 	use Method as M;
@@ -37,18 +51,6 @@ pub(crate) fn routes() -> Vec<ApiRoute> {
 		ApiRoute::new(M::POST, "/sources", admin, Fresh, add_source),
 		ApiRoute::new(M::DELETE, "/sources/{key_id}", admin, Fresh, revoke_source),
 	]
-}
-
-/// Why a request failed, as the front end is told.
-#[derive(Debug)]
-pub enum ApiError {
-	BadRequest(String),
-	Forbidden,
-	NotFound,
-	Conflict(String),
-	/// Not now: the message says until when.
-	Unavailable(String),
-	Internal(eyre::Report),
 }
 
 impl IntoResponse for ApiError {
@@ -90,8 +92,6 @@ impl From<Invalid> for ApiError {
 		Self::BadRequest(e.0)
 	}
 }
-
-pub(crate) type ApiResult<T> = Result<T, ApiError>;
 
 /// A JSON body, its rejection turned into our error shape.
 pub(crate) fn body<T: DeserializeOwned>(b: Result<Json<T>, JsonRejection>) -> ApiResult<T> {

@@ -345,7 +345,7 @@ async fn serve(
 	let (concierge, config) = match identity {
 		Identity::Concierge(s) => {
 			tracing::info!(panel_origin = s.panel_origin, "signing in through concierge");
-			let concierge = Concierge::new(&s.concierge_grpc, &s.client_secret)?;
+			let concierge = Concierge::try_new(&s.concierge_grpc, &s.client_secret)?;
 			// Before serving: a user's permissions name what this catalog defines.
 			concierge
 				.publish_catalog(&Catalog::collect("sa", s.build_epoch))
@@ -392,7 +392,7 @@ async fn serve(
 		(Some(tg), Some(services)) => {
 			let hub = Hub {
 				panel: panel.clone(),
-				bot: BotApi::new(telegram::API_BASE, &tg.token)?,
+				bot: BotApi::try_new(telegram::API_BASE, &tg.token)?,
 				concierge: concierge.clone(),
 				feeds: services.clone(),
 				locale: tg.locale,

@@ -38,22 +38,6 @@ use crate::{
 	signin::{Caller, Freshness},
 };
 
-pub(crate) fn routes() -> Vec<ApiRoute> {
-	use Freshness::Cached;
-	use Method as M;
-	vec![
-		ApiRoute::new(M::GET, "/gmails", None, Cached, gmails),
-		ApiRoute::new(M::POST, "/gmails", None, Cached, add_gmail),
-		ApiRoute::new(M::DELETE, "/gmails/{id}", None, Cached, remove_gmail),
-		ApiRoute::new(M::GET, "/gmbs/resolve", None, Cached, resolve),
-		ApiRoute::new(M::POST, "/gmails/{id}/gmbs", None, Cached, add_gmb),
-		ApiRoute::new(M::DELETE, "/gmbs/{id}", None, Cached, remove_gmb),
-		ApiRoute::new(M::PUT, "/gmbs/enabled", None, Cached, switch),
-		ApiRoute::new(M::PUT, "/gmbs/{id}/location", None, Cached, place),
-		ApiRoute::new(M::GET, "/map", None, Cached, map),
-	]
-}
-
 /// `GET /map`: the browser's Maps JS key, referrer-restricted, and the map's id.
 #[derive(Clone, Debug, Serialize, TS)]
 #[ts(rename = "MapConfig")]
@@ -118,6 +102,22 @@ pub struct PlaceDto {
 #[ts(rename = "Candidates")]
 pub struct CandidatesDto {
 	pub candidates: Vec<PlaceDto>,
+}
+
+pub(crate) fn routes() -> Vec<ApiRoute> {
+	use Freshness::Cached;
+	use Method as M;
+	vec![
+		ApiRoute::new(M::GET, "/gmails", None, Cached, gmails),
+		ApiRoute::new(M::POST, "/gmails", None, Cached, add_gmail),
+		ApiRoute::new(M::DELETE, "/gmails/{id}", None, Cached, remove_gmail),
+		ApiRoute::new(M::GET, "/gmbs/resolve", None, Cached, resolve),
+		ApiRoute::new(M::POST, "/gmails/{id}/gmbs", None, Cached, add_gmb),
+		ApiRoute::new(M::DELETE, "/gmbs/{id}", None, Cached, remove_gmb),
+		ApiRoute::new(M::PUT, "/gmbs/enabled", None, Cached, switch),
+		ApiRoute::new(M::PUT, "/gmbs/{id}/location", None, Cached, place),
+		ApiRoute::new(M::GET, "/map", None, Cached, map),
+	]
 }
 
 impl From<Gmb> for GmbDto {

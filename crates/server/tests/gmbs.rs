@@ -55,7 +55,7 @@ async fn places() -> (Arc<Mutex<Vec<String>>>, String) {
 /// A panel on `db` asking `base` with a key (`None`: keyless), its cache in `cache`, GMBs open.
 async fn panel(db: &TestDb, base: Option<&str>, cache: &std::path::Path) -> Panel {
 	let keys = Keys::new(base.map(|_| vec!["k".to_owned()]).unwrap_or_default());
-	let google = Google::new(keys, cache.to_owned()).unwrap();
+	let google = Google::try_new(keys, cache.to_owned()).unwrap();
 	let google = match base {
 		Some(b) => google.at(b),
 		None => google,

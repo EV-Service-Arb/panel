@@ -89,14 +89,6 @@ pub struct Kickback {
 	pub why: Owed,
 }
 
-fn charged(service: Option<String>, key: Option<String>, label: Option<String>) -> Option<Charged> {
-	match (service, key) {
-		(Some(service), Some(key)) => Some(Charged { service, key, label }),
-		(None, None) => None,
-		other => unreachable!("the table's CHECK: service and key together; got {other:?}"),
-	}
-}
-
 pub async fn append(conn: &mut SqliteConnection, user: Uuid, e: &Entry) -> eyre::Result<()> {
 	let c = e.charged.as_ref();
 	sqlx::query("INSERT INTO token_ledger (user_id, at, delta, kind, service, key, label, by_email, note) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")
@@ -289,4 +281,12 @@ pub async fn untouched(conn: &mut SqliteConnection) -> eyre::Result<bool> {
 	.fetch_one(&mut *conn)
 	.await
 	.wrap_err("looking for tokens and GMBs")
+}
+
+fn charged(service: Option<String>, key: Option<String>, label: Option<String>) -> Option<Charged> {
+	match (service, key) {
+		(Some(service), Some(key)) => Some(Charged { service, key, label }),
+		(None, None) => None,
+		other => unreachable!("the table's CHECK: service and key together; got {other:?}"),
+	}
 }

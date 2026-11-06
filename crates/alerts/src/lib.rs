@@ -174,22 +174,6 @@ pub struct Note {
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub photo: Option<String>,
 }
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NotePage {
-	pub notes: Vec<Note>,
-	pub next: i64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("note {seq} ({rule}): {reason}")]
-pub struct InvalidNote {
-	pub seq: i64,
-	pub rule: Rule,
-	pub reason: String,
-}
-
 impl Note {
 	pub fn check(&self, feed: Origin) -> Result<(), InvalidNote> {
 		let fail = |reason: String| InvalidNote {
@@ -244,6 +228,21 @@ impl Note {
 		}
 		Ok(())
 	}
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotePage {
+	pub notes: Vec<Note>,
+	pub next: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("note {seq} ({rule}): {reason}")]
+pub struct InvalidNote {
+	pub seq: i64,
+	pub rule: Rule,
+	pub reason: String,
 }
 
 pub fn is_button_id(value: &str) -> bool {

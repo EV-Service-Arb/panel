@@ -19,6 +19,8 @@ use sa_server::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+const EVENTS: &str = "/api/ingest/v1/events";
+
 /// Sites as ingest reaches it: a verdict per event, a 409 with `Retry-After` for a batch naming
 /// `"defer"`, and a lead found by its ref.
 async fn sites() -> (String, Log) {
@@ -66,8 +68,6 @@ async fn send(app: &Router, uri: &str, signed: &Signed, all: bool) -> (StatusCod
 	let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
 	(status, retry, serde_json::from_slice(&body).unwrap_or(Value::Null))
 }
-
-const EVENTS: &str = "/api/ingest/v1/events";
 
 #[tokio::test]
 async fn a_signed_batch_reaches_sites_with_its_grant_and_comes_back_as_sites_answered() {

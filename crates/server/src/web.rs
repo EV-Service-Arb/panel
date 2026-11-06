@@ -48,6 +48,9 @@ const HASHED: &str = "/_next/static/";
 /// build may ask for `/cabinet/mfe/*`: a script request must get a 404, not the panel's HTML.
 const RESERVED: [&str; 5] = ["/api", "/auth", "/health", "/grafana", "/cabinet"];
 
+/// The pages a mounted element routes inside of: a link to one of its views loads its page.
+const ELEMENT_PAGES: [&str; 2] = ["/review_archive", "/sites"];
+
 /// The export's files.
 #[derive(Clone, Debug)]
 pub struct Files {
@@ -57,7 +60,7 @@ pub struct Files {
 impl Files {
 	/// The export in `dir`; it must hold `index.html` and `404.html`, so a wrong path fails the
 	/// boot rather than every page.
-	pub fn new(dir: &Path) -> eyre::Result<Self> {
+	pub fn try_new(dir: &Path) -> eyre::Result<Self> {
 		for page in ["index.html", "404.html"] {
 			let path = dir.join(page);
 			eyre::ensure!(path.is_file(), "PANEL_WEB_DIR {} has no {page}: not a build of frontend/", dir.display());
@@ -75,9 +78,6 @@ pub fn serve(app: Router, files: Files) -> Router {
 fn reserved(path: &str) -> bool {
 	RESERVED.iter().copied().chain(crate::forward::prefixes()).any(|r| crate::forward::under(path, r))
 }
-
-/// The pages a mounted element routes inside of: a link to one of its views loads its page.
-const ELEMENT_PAGES: [&str; 2] = ["/review_archive", "/sites"];
 
 /// What a path below an element's page is served from: a view (no dot in its last segment) is
 /// the page itself, and a file below a view is the page's file of that name.

@@ -1,5 +1,7 @@
 //! The environment: secrets and the deployment profile. Where to listen is a flag.
 
+use std::path::{Path, PathBuf};
+
 use sa_auth::{Catalog, PermissionSet};
 use sa_core::{notify::Locale, tokens::Renewal};
 use sa_panel::seal::DataKey;
@@ -107,9 +109,9 @@ ev_lib::settings! {
 }
 
 impl Settings {
-	pub fn db_path(&self) -> eyre::Result<&std::path::Path> {
+	pub fn db_path(&self) -> eyre::Result<&Path> {
 		let path = self.panel_db_path.as_deref().map(str::trim).filter(|p| !p.is_empty());
-		Ok(std::path::Path::new(path.ok_or_else(|| eyre::eyre!("PANEL_DB_PATH must be set"))?))
+		Ok(Path::new(path.ok_or_else(|| eyre::eyre!("PANEL_DB_PATH must be set"))?))
 	}
 
 	pub fn data_key(&self) -> eyre::Result<DataKey> {
@@ -119,7 +121,7 @@ impl Settings {
 
 	pub fn renewal(&self) -> eyre::Result<Renewal> {
 		let multiple = self.tokens_start_cap_multiple.ok_or_else(|| eyre::eyre!("TOKENS_START_CAP_MULTIPLE must be set"))?;
-		Ok(Renewal::new(self.tokens_daily, self.tokens_cap, multiple)?)
+		Ok(Renewal::try_new(self.tokens_daily, self.tokens_cap, multiple)?)
 	}
 
 	pub fn places_keys(&self) -> Vec<String> {
@@ -131,7 +133,7 @@ impl Settings {
 	pub fn google(&self) -> eyre::Result<Google> {
 		let db = self.db_path()?;
 		let dir = db.parent().ok_or_else(|| eyre::eyre!("PANEL_DB_PATH {} has no directory", db.display()))?;
-		Ok(Google::new(Keys::new(self.places_keys()), dir.join("google_cache"))?)
+		Ok(Google::try_new(Keys::new(self.places_keys()), dir.join("google_cache"))?)
 	}
 
 	/// The browser's map: both variables, or neither.
@@ -143,31 +145,13 @@ impl Settings {
 			_ => eyre::bail!("GOOGLE_MAPS_BROWSER_KEY and GOOGLE_MAPS_MAP_ID: both, or neither"),
 		}
 	}
-}
 
-/// The Telegram bot, when it is configured.
-pub struct TelegramSettings {
-	pub token: String,
-	pub username: Option<String>,
-	pub locale: Locale,
-}
-
-impl std::fmt::Debug for TelegramSettings {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		f.debug_struct("TelegramSettings")
-			.field("username", &self.username)
-			.field("locale", &self.locale)
-			.finish_non_exhaustive()
-	}
-}
-
-impl Settings {
 	/// The front end's files, when `PANEL_WEB_DIR` names them.
 	pub fn web(&self) -> eyre::Result<Option<sa_server::web::Files>> {
 		let Some(dir) = self.panel_web_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) else {
 			return Ok(None);
 		};
-		Ok(Some(sa_server::web::Files::new(std::path::Path::new(dir))?))
+		Ok(Some(sa_server::web::Files::try_new(Path::new(dir))?))
 	}
 
 	/// `None` without `TELEGRAM_BOT_TOKEN`: the bot is off.
@@ -181,30 +165,7 @@ impl Settings {
 			locale: self.telegram_locale.parse()?,
 		}))
 	}
-}
 
-/// What signing in needs, all of it or none.
-pub struct SignInSettings {
-	pub panel_origin: String,
-	pub concierge_origin: String,
-	pub concierge_grpc: String,
-	pub client_secret: String,
-	/// The version of the catalog published at boot.
-	pub build_epoch: u64,
-}
-
-impl std::fmt::Debug for SignInSettings {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		f.debug_struct("SignInSettings")
-			.field("panel_origin", &self.panel_origin)
-			.field("concierge_origin", &self.concierge_origin)
-			.field("concierge_grpc", &self.concierge_grpc)
-			.field("build_epoch", &self.build_epoch)
-			.finish_non_exhaustive()
-	}
-}
-
-impl Settings {
 	/// `None` when none of the sign-in variables is set: `serve` then answers ingest alone.
 	/// Some but not all is a mistake, named.
 	pub fn sign_in(&self) -> eyre::Result<Option<SignInSettings>> {
@@ -236,9 +197,7 @@ impl Settings {
 			build_epoch,
 		}))
 	}
-}
 
-impl Settings {
 	/// The services behind the conductor (docs/ARCHITECTURE.md, Forward): `None` when none of their
 	/// variables is set; some but not all is a mistake, named.
 	pub fn forward(&self) -> eyre::Result<Option<sa_server::forward::Upstreams>> {
@@ -267,18 +226,10 @@ impl Settings {
 				.map_err(|e| eyre::eyre!("PANEL_ASSERTION_KEY: {e}"))?,
 		}))
 	}
-}
 
-/// Grafana, when it is configured.
-pub struct GrafanaSettings {
-	pub server: std::path::PathBuf,
-	pub dir: std::path::PathBuf,
-}
-
-impl Settings {
 	/// `None` when neither variable is set; one without the other is a mistake, named.
 	pub fn grafana(&self) -> eyre::Result<Option<GrafanaSettings>> {
-		let set = |v: &Option<String>| v.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(std::path::PathBuf::from);
+		let set = |v: &Option<String>| v.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(PathBuf::from);
 		match (set(&self.panel_grafana_server), set(&self.panel_grafana_dir)) {
 			(None, None) => Ok(None),
 			(Some(server), Some(dir)) => Ok(Some(GrafanaSettings { server, dir })),
@@ -286,28 +237,7 @@ impl Settings {
 			(None, Some(_)) => eyre::bail!("PANEL_GRAFANA_DIR needs PANEL_GRAFANA_SERVER too"),
 		}
 	}
-}
 
-/// An in-cluster peer's address: `http://host[:port]`, nothing after it.
-fn bare_http_origin(name: &str, raw: &str) -> eyre::Result<axum::http::Uri> {
-	let raw = raw.trim();
-	let uri: axum::http::Uri = raw.parse().map_err(|e| eyre::eyre!("{name} is not a URL: {e}"))?;
-	eyre::ensure!(
-		uri.scheme_str() == Some("http") && uri.path() == "/" && uri.query().is_none(),
-		"{name} must be a bare http:// origin, not {raw}"
-	);
-	Ok(uri)
-}
-
-/// `PANEL_DEV_SIGN_IN`, checked: who everyone signs in as, and where.
-#[derive(Debug)]
-pub struct DevSignIn {
-	pub permissions: PermissionSet,
-	pub email: String,
-	pub panel_origin: String,
-}
-
-impl Settings {
 	/// `None` without `PANEL_DEV_SIGN_IN`. With it, refused unless this is development on the
 	/// developer's own machine — the way concierge refuses `RP_DEV_REDIRECT_URIS`: anyone who
 	/// reaches `/auth/login` is let in, so it must never be reachable from anywhere else.
@@ -341,6 +271,83 @@ impl Settings {
 			panel_origin: origin,
 		}))
 	}
+}
+
+/// The Telegram bot, when it is configured.
+pub struct TelegramSettings {
+	pub token: String,
+	pub username: Option<String>,
+	pub locale: Locale,
+}
+
+impl std::fmt::Debug for TelegramSettings {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("TelegramSettings")
+			.field("username", &self.username)
+			.field("locale", &self.locale)
+			.finish_non_exhaustive()
+	}
+}
+
+/// What signing in needs, all of it or none.
+pub struct SignInSettings {
+	pub panel_origin: String,
+	pub concierge_origin: String,
+	pub concierge_grpc: String,
+	pub client_secret: String,
+	/// The version of the catalog published at boot.
+	pub build_epoch: u64,
+}
+
+impl std::fmt::Debug for SignInSettings {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("SignInSettings")
+			.field("panel_origin", &self.panel_origin)
+			.field("concierge_origin", &self.concierge_origin)
+			.field("concierge_grpc", &self.concierge_grpc)
+			.field("build_epoch", &self.build_epoch)
+			.finish_non_exhaustive()
+	}
+}
+
+/// Grafana, when it is configured.
+pub struct GrafanaSettings {
+	pub server: PathBuf,
+	pub dir: PathBuf,
+}
+
+/// `PANEL_DEV_SIGN_IN`, checked: who everyone signs in as, and where.
+#[derive(Debug)]
+pub struct DevSignIn {
+	pub permissions: PermissionSet,
+	pub email: String,
+	pub panel_origin: String,
+}
+
+/// `--print-required-vars[=PROFILE]` (default `production`): the variables a deploy into
+/// that profile must provide, one per line, for the gitops preflight. Read before clap,
+/// which would otherwise demand a subcommand.
+pub fn print_required_vars_for() -> Option<String> {
+	const FLAG: &str = "--print-required-vars";
+	let mut args = std::env::args().skip(1);
+	let arg = args.next()?;
+	match arg.split_once('=') {
+		Some((FLAG, profile)) => Some(profile.to_owned()),
+		Some(_) => None,
+		None if arg == FLAG => Some(args.next().unwrap_or_else(|| "production".to_owned())),
+		None => None,
+	}
+}
+
+/// An in-cluster peer's address: `http://host[:port]`, nothing after it.
+fn bare_http_origin(name: &str, raw: &str) -> eyre::Result<axum::http::Uri> {
+	let raw = raw.trim();
+	let uri: axum::http::Uri = raw.parse().map_err(|e| eyre::eyre!("{name} is not a URL: {e}"))?;
+	eyre::ensure!(
+		uri.scheme_str() == Some("http") && uri.path() == "/" && uri.query().is_none(),
+		"{name} must be a bare http:// origin, not {raw}"
+	);
+	Ok(uri)
 }
 
 /// `PANEL_DEV_SIGN_IN`'s set, resolved against the `sa` catalog.
@@ -383,21 +390,6 @@ fn bare_https_origin(var: &str, raw: &str) -> eyre::Result<()> {
 		"{var} must be an origin alone, e.g. https://sa.evinvest.ltd"
 	);
 	Ok(())
-}
-
-/// `--print-required-vars[=PROFILE]` (default `production`): the variables a deploy into
-/// that profile must provide, one per line, for the gitops preflight. Read before clap,
-/// which would otherwise demand a subcommand.
-pub fn print_required_vars_for() -> Option<String> {
-	const FLAG: &str = "--print-required-vars";
-	let mut args = std::env::args().skip(1);
-	let arg = args.next()?;
-	match arg.split_once('=') {
-		Some((FLAG, profile)) => Some(profile.to_owned()),
-		Some(_) => None,
-		None if arg == FLAG => Some(args.next().unwrap_or_else(|| "production".to_owned())),
-		None => None,
-	}
 }
 
 #[cfg(test)]

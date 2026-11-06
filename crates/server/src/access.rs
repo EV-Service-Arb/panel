@@ -32,15 +32,6 @@ use crate::{
 	signin::{Caller, Freshness},
 };
 
-static CATALOG: LazyLock<Catalog> = LazyLock::new(|| Catalog::collect("sa", 0));
-
-pub(crate) fn routes() -> Vec<ApiRoute> {
-	vec![
-		ApiRoute::new(Method::POST, "/access/requests", None, Freshness::Cached, request),
-		ApiRoute::new(Method::GET, "/access/requests/mine", None, Freshness::Cached, mine),
-	]
-}
-
 /// An access request of the caller's, standing.
 #[derive(Clone, Debug, Serialize, TS)]
 #[ts(rename = "AccessRequest")]
@@ -50,6 +41,15 @@ pub struct AccessRequestDto {
 	pub need: String,
 	/// RFC 3339.
 	pub requested_at: String,
+}
+
+static CATALOG: LazyLock<Catalog> = LazyLock::new(|| Catalog::collect("sa", 0));
+
+pub(crate) fn routes() -> Vec<ApiRoute> {
+	vec![
+		ApiRoute::new(Method::POST, "/access/requests", None, Freshness::Cached, request),
+		ApiRoute::new(Method::GET, "/access/requests/mine", None, Freshness::Cached, mine),
+	]
 }
 
 impl From<AccessRequest> for AccessRequestDto {

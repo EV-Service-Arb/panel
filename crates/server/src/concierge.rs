@@ -27,6 +27,10 @@ use zeroize::Zeroizing;
 /// The panel's client id at concierge.
 pub const CLIENT_ID: &str = "sa";
 
+/// The code `/auth/login` hands straight to the callback under [`Concierge::dev`]: there is no
+/// concierge to issue one. Any other code is refused, as concierge would refuse it.
+pub const DEV_CODE: &str = "dev-sign-in";
+
 /// How long a call to concierge may take, connecting included.
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -92,80 +96,9 @@ pub struct Issued {
 pub struct Concierge {
 	backend: Backend,
 }
-
-#[derive(Clone)]
-enum Backend {
-	Grpc(Arc<Grpc>),
-	Dev(Arc<DevIdentity>),
-}
-
-struct Grpc {
-	auth: AuthServiceClient<Channel>,
-	directory: UserDirectoryClient<Channel>,
-	secret: Zeroizing<String>,
-}
-
-impl std::fmt::Debug for Concierge {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match &self.backend {
-			Backend::Grpc(_) => f.debug_struct("Concierge").finish_non_exhaustive(),
-			Backend::Dev(who) => f.debug_tuple("Concierge::Dev").field(who).finish(),
-		}
-	}
-}
-
-/// The code `/auth/login` hands straight to the callback under [`Concierge::dev`]: there is no
-/// concierge to issue one. Any other code is refused, as concierge would refuse it.
-pub const DEV_CODE: &str = "dev-sign-in";
-
-/// Who [`Concierge::dev`] signs everyone in as.
-#[derive(Clone, Debug)]
-pub struct DevIdentity {
-	pub user_id: Uuid,
-	pub permissions: PermissionSet,
-	pub email: String,
-}
-
-impl DevIdentity {
-	/// The user of `email` in a database that has none yet: named by it, so a local database keeps
-	/// one user per dev identity across restarts.
-	pub fn named(email: &str) -> Uuid {
-		let digest = Sha256::digest(format!("sa-panel/dev-sign-in/{email}"));
-		uuid::Builder::from_custom_bytes(digest[..16].try_into().expect("SHA-256 is 32 bytes")).into_uuid()
-	}
-
-	/// What the panel shows as the user's name: the sidebar says that this is dev sign-in.
-	pub fn display_name(&self) -> String {
-		format!("Dev sign-in ({})", self.email)
-	}
-
-	fn me(&self) -> Me {
-		Me {
-			user_id: self.user_id,
-			email: self.email.clone(),
-			email_verified: true,
-			preferred_name: self.display_name(),
-			permissions: self.permissions.clone(),
-		}
-	}
-
-	/// A pair as concierge would issue one; the access token outlives a working day, so a dev
-	/// session rarely rotates (when it does, it rotates through [`Refresher`] as usual).
-	fn tokens(&self) -> Result<Tokens, ConciergeError> {
-		let now = Timestamp::now();
-		let token = || random_token().map(Zeroizing::new).map_err(|e| ConciergeError::Failed(format!("{e:#}")));
-		Ok(Tokens {
-			access: token()?,
-			access_expires_at: now + SignedDuration::from_hours(12),
-			refresh: token()?,
-			refresh_expires_at: now + SignedDuration::from_hours(24 * 30),
-		})
-	}
-}
-
 impl Concierge {
 	/// Connects on first use, so the panel starts (and serves ingest) while concierge is down.
-	pub fn new(grpc_addr: &str, client_secret: &str) -> eyre::Result<Self> {
+	pub fn try_new(grpc_addr: &str, client_secret: &str) -> eyre::Result<Self> {
 		let channel = Endpoint::from_shared(grpc_addr.to_owned())
 			.map_err(|e| eyre::eyre!("CONCIERGE_GRPC_ADDR {grpc_addr:?}: {e}"))?
 			.connect_timeout(CALL_TIMEOUT)
@@ -264,6 +197,71 @@ impl Concierge {
 			.map_err(|_| ConciergeError::Failed("an access token that is not a header value".into()))?;
 		req.metadata_mut().insert("authorization", bearer);
 		directory.clone().get_me(req).await?.into_inner().try_into()
+	}
+}
+
+/// Who [`Concierge::dev`] signs everyone in as.
+#[derive(Clone, Debug)]
+pub struct DevIdentity {
+	pub user_id: Uuid,
+	pub permissions: PermissionSet,
+	pub email: String,
+}
+impl DevIdentity {
+	/// The user of `email` in a database that has none yet: named by it, so a local database keeps
+	/// one user per dev identity across restarts.
+	pub fn named(email: &str) -> Uuid {
+		let digest = Sha256::digest(format!("sa-panel/dev-sign-in/{email}"));
+		uuid::Builder::from_custom_bytes(digest[..16].try_into().expect("SHA-256 is 32 bytes")).into_uuid()
+	}
+
+	/// What the panel shows as the user's name: the sidebar says that this is dev sign-in.
+	pub fn display_name(&self) -> String {
+		format!("Dev sign-in ({})", self.email)
+	}
+
+	fn me(&self) -> Me {
+		Me {
+			user_id: self.user_id,
+			email: self.email.clone(),
+			email_verified: true,
+			preferred_name: self.display_name(),
+			permissions: self.permissions.clone(),
+		}
+	}
+
+	/// A pair as concierge would issue one; the access token outlives a working day, so a dev
+	/// session rarely rotates (when it does, it rotates through [`Refresher`] as usual).
+	fn tokens(&self) -> Result<Tokens, ConciergeError> {
+		let now = Timestamp::now();
+		let token = || random_token().map(Zeroizing::new).map_err(|e| ConciergeError::Failed(format!("{e:#}")));
+		Ok(Tokens {
+			access: token()?,
+			access_expires_at: now + SignedDuration::from_hours(12),
+			refresh: token()?,
+			refresh_expires_at: now + SignedDuration::from_hours(24 * 30),
+		})
+	}
+}
+
+#[derive(Clone)]
+enum Backend {
+	Grpc(Arc<Grpc>),
+	Dev(Arc<DevIdentity>),
+}
+
+struct Grpc {
+	auth: AuthServiceClient<Channel>,
+	directory: UserDirectoryClient<Channel>,
+	secret: Zeroizing<String>,
+}
+
+impl std::fmt::Debug for Concierge {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match &self.backend {
+			Backend::Grpc(_) => f.debug_struct("Concierge").finish_non_exhaustive(),
+			Backend::Dev(who) => f.debug_tuple("Concierge::Dev").field(who).finish(),
+		}
 	}
 }
 

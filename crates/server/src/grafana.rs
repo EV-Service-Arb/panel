@@ -270,6 +270,29 @@ impl Grafana {
 		}
 		Ok(())
 	}
+
+	/// A request to Grafana, `/grafana` stripped and no one's credentials on it; its answer streams.
+	async fn send(&self, method: Method, uri: &Uri, mut headers: HeaderMap, body: Body) -> Response {
+		let path = uri.path_and_query().expect("routed by its path").as_str();
+		let path = path.strip_prefix("/grafana").expect("routed under /grafana/");
+		forward::strip(&mut headers, &forward::DROPPED_UP);
+		headers.remove(header::HOST);
+		let mut req = Request::new(body);
+		*req.method_mut() = method;
+		*req.uri_mut() = format!("http://grafana{path}").parse().expect("a path and query that arrived in a URI stay one");
+		*req.headers_mut() = headers;
+		match self.client.request(req).await {
+			Ok(res) => {
+				let (mut parts, body) = res.into_parts();
+				forward::strip(&mut parts.headers, &forward::DROPPED_DOWN);
+				Response::from_parts(parts, Body::new(body))
+			}
+			Err(e) => {
+				tracing::warn!(error = %e, "grafana did not answer");
+				json_error(StatusCode::BAD_GATEWAY, "grafana did not answer")
+			}
+		}
+	}
 }
 
 /// The uids of the dashboards in `dir`: its `<uid>.json` files.
@@ -349,42 +372,10 @@ async fn as_viewer(State(g): State<Grafana>, req: Request) -> Response {
 	}
 }
 
-impl Grafana {
-	/// A request to Grafana, `/grafana` stripped and no one's credentials on it; its answer streams.
-	async fn send(&self, method: Method, uri: &Uri, mut headers: HeaderMap, body: Body) -> Response {
-		let path = uri.path_and_query().expect("routed by its path").as_str();
-		let path = path.strip_prefix("/grafana").expect("routed under /grafana/");
-		forward::strip(&mut headers, &forward::DROPPED_UP);
-		headers.remove(header::HOST);
-		let mut req = Request::new(body);
-		*req.method_mut() = method;
-		*req.uri_mut() = format!("http://grafana{path}").parse().expect("a path and query that arrived in a URI stay one");
-		*req.headers_mut() = headers;
-		match self.client.request(req).await {
-			Ok(res) => {
-				let (mut parts, body) = res.into_parts();
-				forward::strip(&mut parts.headers, &forward::DROPPED_DOWN);
-				Response::from_parts(parts, Body::new(body))
-			}
-			Err(e) => {
-				tracing::warn!(error = %e, "grafana did not answer");
-				json_error(StatusCode::BAD_GATEWAY, "grafana did not answer")
-			}
-		}
-	}
-}
-
 /// Grafana holds no identity: each query a viewer's browser sends it has a token written into
 /// it, standing for that viewer on GETs, until Grafana answers the query.
 #[derive(Default)]
 struct Viewers(Mutex<HashMap<String, Caller>>);
-
-/// A [`Viewers`] token, forgotten when dropped.
-struct Viewer<'a> {
-	viewers: &'a Viewers,
-	token: String,
-}
-
 impl Viewers {
 	fn mint(&self, caller: Caller) -> Viewer<'_> {
 		let mut raw = [0u8; 32];
@@ -398,6 +389,12 @@ impl Viewers {
 	fn get(&self, token: &str) -> Option<Caller> {
 		self.0.lock().expect("held for a lookup only").get(token).cloned()
 	}
+}
+
+/// A [`Viewers`] token, forgotten when dropped.
+struct Viewer<'a> {
+	viewers: &'a Viewers,
+	token: String,
 }
 
 impl Drop for Viewer<'_> {

@@ -13,6 +13,10 @@ use super::{from_db, telegram::Kind, to_db};
 
 // ── access ──────────────────────────────────────────────────────────────────────────────
 
+type DestinationRow = (i64, Uuid, Option<i64>, String, i64, Option<i64>, Option<String>, Option<String>, Json<Vec<(String, bool)>>);
+
+type RecipientRow = (i64, Uuid, Json<PermissionSet>, i64, Option<i64>, String);
+
 /// What concierge said of a user at `at`: their permissions and name. An answer older than the
 /// one kept is not taken (a link token's, redeemed after the gate asked again).
 pub async fn access_seen(conn: &mut SqliteConnection, user: Uuid, permissions: &PermissionSet, display: &str, at: Timestamp) -> eyre::Result<()> {
@@ -99,8 +103,6 @@ pub struct Destination {
 	pub chosen: Vec<(Rule, bool)>,
 }
 
-type DestinationRow = (i64, Uuid, Option<i64>, String, i64, Option<i64>, Option<String>, Option<String>, Json<Vec<(String, bool)>>);
-
 macro_rules! destination_select {
 	() => {
 		"SELECT d.id, d.user_id, d.gmail_id, t.kind, t.chat_id, t.topic_id, t.title, t.dead_reason, \
@@ -108,23 +110,6 @@ macro_rules! destination_select {
 		  FROM alert_rules r WHERE r.destination_id = d.id) \
 		 FROM alert_destinations d JOIN telegram_destinations t ON t.destination_id = d.id "
 	};
-}
-
-fn destination((id, user_id, gmail_id, kind, chat_id, topic_id, title, dead, Json(chosen)): DestinationRow) -> eyre::Result<Destination> {
-	Ok(Destination {
-		id,
-		user_id,
-		gmail_id,
-		kind: kind.parse()?,
-		chat_id,
-		topic_id,
-		title,
-		dead,
-		chosen: chosen
-			.into_iter()
-			.map(|(rule, on)| Ok((rule.parse::<Rule>().wrap_err("a stored rule")?, on)))
-			.collect::<eyre::Result<_>>()?,
-	})
 }
 
 /// The user's destinations, oldest first.
@@ -235,8 +220,6 @@ pub struct Recipient {
 	pub private: bool,
 }
 
-type RecipientRow = (i64, Uuid, Json<PermissionSet>, i64, Option<i64>, String);
-
 /// `gmbs`: for a GMB rule, the GMBs its note names; only destinations of their owners (the GMB
 /// and its gmail not removed, the GMB on), scoped to none or to one of those gmails.
 pub async fn recipients(conn: &mut SqliteConnection, rule: Rule, confirmed_since: Timestamp, gmbs: Option<&[i64]>) -> eyre::Result<Vec<Recipient>> {
@@ -274,8 +257,6 @@ pub async fn recipients(conn: &mut SqliteConnection, rule: Rule, confirmed_since
 		.collect()
 }
 
-// ── fan-out ─────────────────────────────────────────────────────────────────────────────
-
 /// An active source: its key id, kind and when it was added.
 pub async fn active_sources(conn: &mut SqliteConnection) -> eyre::Result<Vec<(String, String, Timestamp)>> {
 	let rows: Vec<(String, String, i64)> = sqlx::query_as("SELECT key_id, kind, created_at FROM sources WHERE revoked_at IS NULL ORDER BY key_id")
@@ -308,8 +289,6 @@ pub async fn prune(conn: &mut SqliteConnection, before: Timestamp) -> eyre::Resu
 	Ok(())
 }
 
-// ── the feeds ───────────────────────────────────────────────────────────────────────────
-
 /// The last of a service's notes already fanned out.
 pub async fn feed_after(conn: &mut SqliteConnection, service: Origin) -> eyre::Result<i64> {
 	sqlx::query_scalar("SELECT after FROM alert_feeds WHERE service = $1")
@@ -332,3 +311,24 @@ pub async fn move_feed(conn: &mut SqliteConnection, service: Origin, after: i64,
 		.rows_affected();
 	Ok(moved == 1)
 }
+
+fn destination((id, user_id, gmail_id, kind, chat_id, topic_id, title, dead, Json(chosen)): DestinationRow) -> eyre::Result<Destination> {
+	Ok(Destination {
+		id,
+		user_id,
+		gmail_id,
+		kind: kind.parse()?,
+		chat_id,
+		topic_id,
+		title,
+		dead,
+		chosen: chosen
+			.into_iter()
+			.map(|(rule, on)| Ok((rule.parse::<Rule>().wrap_err("a stored rule")?, on)))
+			.collect::<eyre::Result<_>>()?,
+	})
+}
+
+// ── fan-out ─────────────────────────────────────────────────────────────────────────────
+
+// ── the feeds ───────────────────────────────────────────────────────────────────────────

@@ -41,6 +41,10 @@ const CODE: &str = "code-1";
 
 // ── the fake concierge ───────────────────────────────────────────────────────────────────
 
+const OPERATOR: &str = "0190a7c4-0000-7000-8000-000000000001";
+
+const OUTSIDER: &str = "0190a7c4-0000-7000-8000-000000000002";
+const ADMIN: &str = "0190a7c4-0000-7000-8000-000000000003";
 #[derive(Default)]
 struct Fake {
 	/// The challenge the browser was sent to concierge with, as the test read it off the
@@ -268,13 +272,6 @@ fn profile(user_id: &str, who: &str, permissions: &[&str]) -> pb::UserProfile {
 struct Browser {
 	jar: HashMap<String, String>,
 }
-
-struct Answer {
-	status: StatusCode,
-	headers: HeaderMap,
-	body: Value,
-}
-
 impl Browser {
 	async fn send(&mut self, app: &Router, method: Method, uri: &str, body: Option<Value>, csrf: bool) -> Answer {
 		let mut req = Request::builder().method(method).uri(uri);
@@ -337,6 +334,12 @@ impl Browser {
 	}
 }
 
+struct Answer {
+	status: StatusCode,
+	headers: HeaderMap,
+	body: Value,
+}
+
 async fn setup(db: &TestDb) -> (Router, FakeConcierge, sa_panel::Panel) {
 	setup_with(db, http::Limits::default()).await
 }
@@ -345,7 +348,7 @@ async fn setup_with(db: &TestDb, limits: http::Limits) -> (Router, FakeConcierge
 	let fake = FakeConcierge::default();
 	let addr = serve_fake(fake.clone()).await;
 	let panel = panel(db).await;
-	let concierge = Concierge::new(&addr, SECRET).unwrap();
+	let concierge = Concierge::try_new(&addr, SECRET).unwrap();
 	let app = http::app(
 		SignIn::new(
 			panel.clone(),
@@ -363,10 +366,6 @@ async fn setup_with(db: &TestDb, limits: http::Limits) -> (Router, FakeConcierge
 	);
 	(app, fake, panel)
 }
-
-const OPERATOR: &str = "0190a7c4-0000-7000-8000-000000000001";
-const OUTSIDER: &str = "0190a7c4-0000-7000-8000-000000000002";
-const ADMIN: &str = "0190a7c4-0000-7000-8000-000000000003";
 
 // ── the tests ────────────────────────────────────────────────────────────────────────────
 
@@ -523,7 +522,7 @@ async fn concierge_down_is_a_503_not_a_sign_out() {
 	let db = TestDb::create().await;
 	let panel = panel(&db).await;
 	// Nothing listens there.
-	let concierge = Concierge::new("http://127.0.0.1:9", SECRET).unwrap();
+	let concierge = Concierge::try_new("http://127.0.0.1:9", SECRET).unwrap();
 	let app = http::app(
 		SignIn::new(
 			panel.clone(),
@@ -723,7 +722,7 @@ async fn the_alerts_page_links_telegram_and_chooses_rules() {
 	let fake = FakeConcierge::default();
 	let addr = serve_fake(fake.clone()).await;
 	let panel = panel(&db).await;
-	let concierge = Concierge::new(&addr, SECRET).unwrap();
+	let concierge = Concierge::try_new(&addr, SECRET).unwrap();
 	let sign_in = SignIn::new(
 		panel.clone(),
 		concierge.clone(),
@@ -735,7 +734,7 @@ async fn the_alerts_page_links_telegram_and_chooses_rules() {
 	let telegram = Telegram {
 		hub: Hub {
 			panel: panel.clone(),
-			bot: BotApi::new("http://127.0.0.1:9", "1:unused").unwrap(),
+			bot: BotApi::try_new("http://127.0.0.1:9", "1:unused").unwrap(),
 			concierge,
 			feeds: sa_server::testing::services("http://127.0.0.1:9"),
 			locale: Locale::Ru,

@@ -62,6 +62,23 @@ const BATCH: i64 = 50;
 /// Users re-confirmed per pass.
 const RECHECKS: i64 = 20;
 
+/// concierge's `GetMe`: the port the hub confirms a user's access through.
+pub trait Directory: Sync {
+	fn me(&self, access: &str) -> impl Future<Output = Result<Identity, DirectoryError>> + Send;
+}
+
+/// The services, as the hub needs them; each call under the conductor's assertion.
+pub trait Feeds: Sync {
+	/// Up to `limit` of `service`'s notes after `after`; `None` while it publishes none (404).
+	fn notes(&self, service: Origin, after: i64, limit: usize) -> impl Future<Output = eyre::Result<Option<NotePage>>> + Send;
+	/// When each source key's last event arrived at sites.
+	fn received(&self) -> impl Future<Output = eyre::Result<BTreeMap<String, Timestamp>>> + Send;
+	/// `call` made to sites as `who`, under `idempotency_key`: the status sites answered.
+	fn press(&self, who: &Identity, call: &Call, idempotency_key: &str) -> impl Future<Output = eyre::Result<u16>> + Send;
+	/// The photo at `path` of `service`, as a note named it.
+	fn photo(&self, service: Origin, path: &str) -> impl Future<Output = eyre::Result<Vec<u8>>> + Send;
+}
+
 /// Who concierge says the holder of an access token is.
 #[derive(Clone, Debug)]
 pub struct Identity {
@@ -90,23 +107,6 @@ pub enum DirectoryError {
 	Failed(String),
 }
 
-/// concierge's `GetMe`: the port the hub confirms a user's access through.
-pub trait Directory: Sync {
-	fn me(&self, access: &str) -> impl Future<Output = Result<Identity, DirectoryError>> + Send;
-}
-
-/// The services, as the hub needs them; each call under the conductor's assertion.
-pub trait Feeds: Sync {
-	/// Up to `limit` of `service`'s notes after `after`; `None` while it publishes none (404).
-	fn notes(&self, service: Origin, after: i64, limit: usize) -> impl Future<Output = eyre::Result<Option<NotePage>>> + Send;
-	/// When each source key's last event arrived at sites.
-	fn received(&self) -> impl Future<Output = eyre::Result<BTreeMap<String, Timestamp>>> + Send;
-	/// `call` made to sites as `who`, under `idempotency_key`: the status sites answered.
-	fn press(&self, who: &Identity, call: &Call, idempotency_key: &str) -> impl Future<Output = eyre::Result<u16>> + Send;
-	/// The photo at `path` of `service`, as a note named it.
-	fn photo(&self, service: Origin, path: &str) -> impl Future<Output = eyre::Result<Vec<u8>>> + Send;
-}
-
 /// What concierge said of a user just now.
 #[derive(Clone, Debug)]
 pub enum Access {
@@ -122,6 +122,103 @@ pub struct Alerts {
 	/// The rules open to the user: their permissions' and, holding a GMB, the GMB rules.
 	pub rules: Vec<Rule>,
 	pub destinations: Vec<Destination>,
+}
+
+/// The hub at work: the feeds read, the conductor's own rules, and the access checks; a method's
+/// delivery runs on it too ([`crate::telegram`]).
+#[derive(Clone, Debug)]
+pub struct Hub<B, C, F> {
+	pub panel: Panel,
+	pub bot: B,
+	/// concierge: to rotate a session's tokens and to ask `GetMe` with them.
+	pub concierge: C,
+	/// Where the services' notes come from, and what a button calls.
+	pub feeds: F,
+	pub locale: Locale,
+	/// concierge's origin: where the admins grant the access a user asks for.
+	pub cabinet: url::Url,
+}
+impl<B, C: Refresher + Directory, F: Feeds> Hub<B, C, F> {
+	/// Queues what the conductor's own rules say is due.
+	pub async fn fan_out_own(&self, now: Timestamp) -> eyre::Result<usize> {
+		let received = self.feeds.received().await?;
+		self.panel.alerts_fan_out_own(now, self.locale, &self.cabinet, &received).await
+	}
+
+	/// A page of `service`'s notes into the outbox: how many messages were queued, `None` while it
+	/// publishes none.
+	pub async fn take_feed(&self, service: Origin, now: Timestamp) -> eyre::Result<Option<usize>> {
+		let after = self.panel.alerts_feed_after(service).await?;
+		let Some(page) = self.feeds.notes(service, after, NOTES_PAGE).await? else {
+			return Ok(None);
+		};
+		self.panel.alerts_take_notes(service, page, after, now).await.map(Some)
+	}
+
+	/// Confirms the access of users not confirmed for [`RECHECK_AFTER`], and prunes what is past
+	/// keeping. How many were asked about.
+	pub async fn recheck_access(&self, now: Timestamp) -> eyre::Result<usize> {
+		let users = {
+			let mut conn = self.panel.store.pool().acquire().await.wrap_err("a connection for access checks")?;
+			db::prune(&mut conn, now - KEEP).await?;
+			crate::store::telegram::prune(&mut conn, now - KEEP).await?;
+			db::stale_access(&mut conn, now - RECHECK_AFTER, RECHECKS).await?
+		};
+		for user in &users {
+			let access = self.confirm_access(*user, now).await?;
+			tracing::debug!(user_id = %user, ?access, "alerts: access rechecked");
+		}
+		Ok(users.len())
+	}
+
+	/// Asks concierge, now, what the user may do — with their newest panel session used within
+	/// [`SESSION_IDLE`], rotated when due — and records the answer. A session concierge refuses (to
+	/// rotate, or `GetMe` twice running) ends the user's alerts and drops what was queued for them.
+	pub async fn confirm_access(&self, user: Uuid, now: Timestamp) -> eyre::Result<Access> {
+		let panel = &self.panel;
+		let conn = || async { panel.store.pool().acquire().await.wrap_err("a connection to record access") };
+		let session = match panel.session_of_user(user, now, now - SESSION_IDLE, &self.concierge).await {
+			Ok(s) => s,
+			Err(SessionError::Missing) => {
+				db::access_tried(&mut *conn().await?, user, now).await?;
+				return Ok(Access::NoSession);
+			}
+			Err(SessionError::Rejected) => {
+				db::access_lost(&mut *conn().await?, user, now).await?;
+				return Ok(Access::NoSession);
+			}
+			Err(SessionError::Unavailable) => {
+				db::access_tried(&mut *conn().await?, user, now).await?;
+				return Ok(Access::Unavailable);
+			}
+			Err(SessionError::Internal(e)) => return Err(e),
+		};
+		let answer = match self.concierge.me(&session.access).await {
+			// One refusal may be a hiccup on concierge's side; the session is closed only on a
+			// second.
+			Err(DirectoryError::Refused) => self.concierge.me(&session.access).await,
+			other => other,
+		};
+		match answer {
+			Ok(id) if id.user_id != user => Err(eyre::eyre!("GetMe answered another user than the session's")),
+			Ok(identity) => {
+				db::access_seen(&mut *conn().await?, user, &identity.permissions, identity.display_name(), now).await?;
+				Ok(Access::Granted(identity))
+			}
+			Err(DirectoryError::Refused) => {
+				// The token is dead at concierge: so is the session, and whatever it vouched for.
+				panel.close_session(&session.key).await?;
+				db::access_lost(&mut *conn().await?, user, now).await?;
+				Ok(Access::NoSession)
+			}
+			Err(DirectoryError::Unavailable(why)) => {
+				tracing::warn!(why, "alerts: concierge unavailable for an access check");
+				db::access_tried(&mut *conn().await?, user, now).await?;
+				Ok(Access::Unavailable)
+			}
+			Err(e @ DirectoryError::Failed(_)) => Err(eyre::eyre!(e)),
+		}
+	}
 }
 
 /// What a recipient is sent.
@@ -348,102 +445,4 @@ impl Panel {
 /// Whether a rule is open to a user holding `permissions`, and a GMB if `gmbs`.
 fn open(rule: Rule, permissions: &PermissionSet, gmbs: bool) -> bool {
 	rule.open_to(permissions) && (rule.audience() == Audience::Permission || gmbs)
-}
-
-/// The hub at work: the feeds read, the conductor's own rules, and the access checks; a method's
-/// delivery runs on it too ([`crate::telegram`]).
-#[derive(Clone, Debug)]
-pub struct Hub<B, C, F> {
-	pub panel: Panel,
-	pub bot: B,
-	/// concierge: to rotate a session's tokens and to ask `GetMe` with them.
-	pub concierge: C,
-	/// Where the services' notes come from, and what a button calls.
-	pub feeds: F,
-	pub locale: Locale,
-	/// concierge's origin: where the admins grant the access a user asks for.
-	pub cabinet: url::Url,
-}
-
-impl<B, C: Refresher + Directory, F: Feeds> Hub<B, C, F> {
-	/// Queues what the conductor's own rules say is due.
-	pub async fn fan_out_own(&self, now: Timestamp) -> eyre::Result<usize> {
-		let received = self.feeds.received().await?;
-		self.panel.alerts_fan_out_own(now, self.locale, &self.cabinet, &received).await
-	}
-
-	/// A page of `service`'s notes into the outbox: how many messages were queued, `None` while it
-	/// publishes none.
-	pub async fn take_feed(&self, service: Origin, now: Timestamp) -> eyre::Result<Option<usize>> {
-		let after = self.panel.alerts_feed_after(service).await?;
-		let Some(page) = self.feeds.notes(service, after, NOTES_PAGE).await? else {
-			return Ok(None);
-		};
-		self.panel.alerts_take_notes(service, page, after, now).await.map(Some)
-	}
-
-	/// Confirms the access of users not confirmed for [`RECHECK_AFTER`], and prunes what is past
-	/// keeping. How many were asked about.
-	pub async fn recheck_access(&self, now: Timestamp) -> eyre::Result<usize> {
-		let users = {
-			let mut conn = self.panel.store.pool().acquire().await.wrap_err("a connection for access checks")?;
-			db::prune(&mut conn, now - KEEP).await?;
-			crate::store::telegram::prune(&mut conn, now - KEEP).await?;
-			db::stale_access(&mut conn, now - RECHECK_AFTER, RECHECKS).await?
-		};
-		for user in &users {
-			let access = self.confirm_access(*user, now).await?;
-			tracing::debug!(user_id = %user, ?access, "alerts: access rechecked");
-		}
-		Ok(users.len())
-	}
-
-	/// Asks concierge, now, what the user may do — with their newest panel session used within
-	/// [`SESSION_IDLE`], rotated when due — and records the answer. A session concierge refuses (to
-	/// rotate, or `GetMe` twice running) ends the user's alerts and drops what was queued for them.
-	pub async fn confirm_access(&self, user: Uuid, now: Timestamp) -> eyre::Result<Access> {
-		let panel = &self.panel;
-		let conn = || async { panel.store.pool().acquire().await.wrap_err("a connection to record access") };
-		let session = match panel.session_of_user(user, now, now - SESSION_IDLE, &self.concierge).await {
-			Ok(s) => s,
-			Err(SessionError::Missing) => {
-				db::access_tried(&mut *conn().await?, user, now).await?;
-				return Ok(Access::NoSession);
-			}
-			Err(SessionError::Rejected) => {
-				db::access_lost(&mut *conn().await?, user, now).await?;
-				return Ok(Access::NoSession);
-			}
-			Err(SessionError::Unavailable) => {
-				db::access_tried(&mut *conn().await?, user, now).await?;
-				return Ok(Access::Unavailable);
-			}
-			Err(SessionError::Internal(e)) => return Err(e),
-		};
-		let answer = match self.concierge.me(&session.access).await {
-			// One refusal may be a hiccup on concierge's side; the session is closed only on a
-			// second.
-			Err(DirectoryError::Refused) => self.concierge.me(&session.access).await,
-			other => other,
-		};
-		match answer {
-			Ok(id) if id.user_id != user => Err(eyre::eyre!("GetMe answered another user than the session's")),
-			Ok(identity) => {
-				db::access_seen(&mut *conn().await?, user, &identity.permissions, identity.display_name(), now).await?;
-				Ok(Access::Granted(identity))
-			}
-			Err(DirectoryError::Refused) => {
-				// The token is dead at concierge: so is the session, and whatever it vouched for.
-				panel.close_session(&session.key).await?;
-				db::access_lost(&mut *conn().await?, user, now).await?;
-				Ok(Access::NoSession)
-			}
-			Err(DirectoryError::Unavailable(why)) => {
-				tracing::warn!(why, "alerts: concierge unavailable for an access check");
-				db::access_tried(&mut *conn().await?, user, now).await?;
-				Ok(Access::Unavailable)
-			}
-			Err(e @ DirectoryError::Failed(_)) => Err(eyre::eyre!(e)),
-		}
-	}
 }

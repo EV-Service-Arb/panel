@@ -16,6 +16,27 @@ use crate::Invalid;
 /// How long a source may send nothing before the admins hear of it.
 pub const SOURCE_SILENCE: SignedDuration = SignedDuration::from_hours(24);
 
+/// Longest a name may run in a message, in characters.
+pub const MAX_NAME: usize = 80;
+
+/// At most one message a second to a private chat (Telegram's limit for one).
+pub const PER_CHAT_GAP: SignedDuration = SignedDuration::from_secs(1);
+
+/// At most twenty a minute to a channel or a group (Telegram's limit for one).
+pub const PER_GROUP_GAP: SignedDuration = SignedDuration::from_secs(3);
+
+/// At most this many messages in any second, across every chat and every replica (under the
+/// Bot API's 30).
+pub const GLOBAL_PER_SECOND: i64 = 25;
+
+/// Tries before a message is given up on: with [`backoff`], about an hour — past that a lead
+/// notice is news nobody needs.
+pub const MAX_ATTEMPTS: i32 = 10;
+
+/// Bytes of HMAC in a button's data: 80 bits, far past guessing within Telegram's rate of
+/// callbacks, and short enough for its 64-byte limit.
+const CALLBACK_MAC_LEN: usize = 10;
+
 /// The language of the bot's messages (one per deployment, `TELEGRAM_LOCALE`).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Locale {
@@ -34,23 +55,6 @@ impl FromStr for Locale {
 			other => Err(Invalid::new(format!("TELEGRAM_LOCALE {other:?} is not one of ru, en"))),
 		}
 	}
-}
-
-/// Bytes of HMAC in a button's data: 80 bits, far past guessing within Telegram's rate of
-/// callbacks, and short enough for its 64-byte limit.
-const CALLBACK_MAC_LEN: usize = 10;
-
-fn callback_mac(key: &[u8; 32], chat_id: i64, message: i64, button: &str) -> [u8; CALLBACK_MAC_LEN] {
-	// HMAC takes a key of any length, so this cannot fail.
-	let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(key).expect("HMAC accepts any key length");
-	mac.update(b"sa-panel/tg-callback/v1/");
-	mac.update(&chat_id.to_be_bytes());
-	mac.update(&message.to_be_bytes());
-	mac.update(button.as_bytes());
-	let full = mac.finalize().into_bytes();
-	let mut out = [0u8; CALLBACK_MAC_LEN];
-	out.copy_from_slice(&full[..CALLBACK_MAC_LEN]);
-	out
 }
 
 /// A button's `callback_data`: `<button>.<outbox message id>.<mac>`. The message id is all it
@@ -106,7 +110,6 @@ pub enum Note {
 		need: String,
 	},
 }
-
 impl Note {
 	pub fn rule(&self) -> Rule {
 		match self {
@@ -196,34 +199,6 @@ impl Note {
 	}
 }
 
-fn rule_name(rule: Rule, locale: Locale) -> &'static str {
-	let ru = locale == Locale::Ru;
-	match rule {
-		Rule::NewLead if ru => "новая заявка",
-		Rule::NewLead => "new lead",
-		Rule::ContactOverdue if ru => "заявка ждёт звонка",
-		Rule::ContactOverdue => "contact overdue",
-		Rule::PaymentReceived if ru => "оплата получена",
-		Rule::PaymentReceived => "payment received",
-		Rule::SourceSilent if ru => "источник молчит",
-		Rule::SourceSilent => "source silent",
-		Rule::Booked if ru => "запись",
-		Rule::Booked => "booking",
-		Rule::AccessRequested if ru => "запрос доступа",
-		Rule::AccessRequested => "access request",
-		Rule::ReviewNew if ru => "новый отзыв",
-		Rule::ReviewNew => "new review",
-		Rule::ReviewChanged if ru => "отзыв изменён",
-		Rule::ReviewChanged => "review changed",
-		Rule::ReviewGone if ru => "отзыв пропал",
-		Rule::ReviewGone => "review gone",
-		Rule::ReviewReappeared if ru => "отзыв вернулся",
-		Rule::ReviewReappeared => "review reappeared",
-		Rule::ScanFailed if ru => "проверка не удалась",
-		Rule::ScanFailed => "scan failed",
-	}
-}
-
 /// What a destination is sent when it is added or tested.
 pub fn test_text(locale: Locale) -> &'static str {
 	match locale {
@@ -232,9 +207,6 @@ pub fn test_text(locale: Locale) -> &'static str {
 	}
 }
 
-/// Longest a name may run in a message, in characters.
-pub const MAX_NAME: usize = 80;
-
 /// A message: its text and its Telegram `MessageEntity` objects (offsets in UTF-16 code units,
 /// as the Bot API counts), sent with no parse mode.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -242,7 +214,6 @@ pub struct Rendered {
 	pub text: String,
 	pub entities: Vec<Value>,
 }
-
 impl Rendered {
 	pub fn push(&mut self, s: &str) {
 		self.text.push_str(s);
@@ -258,13 +229,6 @@ impl Rendered {
 	}
 }
 
-/// Whether a character is one a user's text may not carry into a message as it is: any control
-/// character (a line break could start a line that reads as ours), the line and paragraph
-/// separators, and the marks that reorder text (bidi overrides and isolates).
-fn hidden(c: char) -> bool {
-	c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-}
-
 /// A user's text on one line: the characters `hidden` names made spaces, runs of spaces one, at
 /// most `max` characters (the last one "…" when cut).
 pub fn one_line(s: &str, max: usize) -> String {
@@ -274,11 +238,6 @@ pub fn one_line(s: &str, max: usize) -> String {
 		Some((i, _)) if joined.chars().count() > max => format!("{}…", &joined[..i]),
 		_ => joined,
 	}
-}
-
-/// UTC, to the minute.
-fn minute(at: Timestamp) -> String {
-	at.strftime("%Y-%m-%d %H:%M UTC").to_string()
 }
 
 /// What the bot says once a chat is linked: to which panel account, so a link opened from
@@ -314,7 +273,6 @@ pub enum Reply {
 	/// What the button acts on is gone.
 	LeadGone,
 }
-
 impl Reply {
 	pub fn text(self, locale: Locale) -> &'static str {
 		let ru = locale == Locale::Ru;
@@ -346,22 +304,6 @@ impl Reply {
 		}
 	}
 }
-
-// ── delivery ────────────────────────────────────────────────────────────────────────────
-
-/// At most one message a second to a private chat (Telegram's limit for one).
-pub const PER_CHAT_GAP: SignedDuration = SignedDuration::from_secs(1);
-
-/// At most twenty a minute to a channel or a group (Telegram's limit for one).
-pub const PER_GROUP_GAP: SignedDuration = SignedDuration::from_secs(3);
-
-/// At most this many messages in any second, across every chat and every replica (under the
-/// Bot API's 30).
-pub const GLOBAL_PER_SECOND: i64 = 25;
-
-/// Tries before a message is given up on: with [`backoff`], about an hour — past that a lead
-/// notice is news nobody needs.
-pub const MAX_ATTEMPTS: i32 = 10;
 
 /// How a try to send ended.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -412,6 +354,61 @@ pub fn after_failure(attempts: i32, failure: &Failure, now: Timestamp) -> Next {
 		},
 	}
 }
+
+fn callback_mac(key: &[u8; 32], chat_id: i64, message: i64, button: &str) -> [u8; CALLBACK_MAC_LEN] {
+	// HMAC takes a key of any length, so this cannot fail.
+	let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(key).expect("HMAC accepts any key length");
+	mac.update(b"sa-panel/tg-callback/v1/");
+	mac.update(&chat_id.to_be_bytes());
+	mac.update(&message.to_be_bytes());
+	mac.update(button.as_bytes());
+	let full = mac.finalize().into_bytes();
+	let mut out = [0u8; CALLBACK_MAC_LEN];
+	out.copy_from_slice(&full[..CALLBACK_MAC_LEN]);
+	out
+}
+
+fn rule_name(rule: Rule, locale: Locale) -> &'static str {
+	let ru = locale == Locale::Ru;
+	match rule {
+		Rule::NewLead if ru => "новая заявка",
+		Rule::NewLead => "new lead",
+		Rule::ContactOverdue if ru => "заявка ждёт звонка",
+		Rule::ContactOverdue => "contact overdue",
+		Rule::PaymentReceived if ru => "оплата получена",
+		Rule::PaymentReceived => "payment received",
+		Rule::SourceSilent if ru => "источник молчит",
+		Rule::SourceSilent => "source silent",
+		Rule::Booked if ru => "запись",
+		Rule::Booked => "booking",
+		Rule::AccessRequested if ru => "запрос доступа",
+		Rule::AccessRequested => "access request",
+		Rule::ReviewNew if ru => "новый отзыв",
+		Rule::ReviewNew => "new review",
+		Rule::ReviewChanged if ru => "отзыв изменён",
+		Rule::ReviewChanged => "review changed",
+		Rule::ReviewGone if ru => "отзыв пропал",
+		Rule::ReviewGone => "review gone",
+		Rule::ReviewReappeared if ru => "отзыв вернулся",
+		Rule::ReviewReappeared => "review reappeared",
+		Rule::ScanFailed if ru => "проверка не удалась",
+		Rule::ScanFailed => "scan failed",
+	}
+}
+
+/// Whether a character is one a user's text may not carry into a message as it is: any control
+/// character (a line break could start a line that reads as ours), the line and paragraph
+/// separators, and the marks that reorder text (bidi overrides and isolates).
+fn hidden(c: char) -> bool {
+	c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+/// UTC, to the minute.
+fn minute(at: Timestamp) -> String {
+	at.strftime("%Y-%m-%d %H:%M UTC").to_string()
+}
+
+// ── delivery ────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

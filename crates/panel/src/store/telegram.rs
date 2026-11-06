@@ -98,17 +98,6 @@ macro_rules! drop_pending {
 	};
 }
 
-/// Gives up what the outbox still owed a user, and why.
-pub(super) async fn drop_pending_of_user(conn: &mut SqliteConnection, user: Uuid, why: &str) -> eyre::Result<()> {
-	sqlx::query(concat!(drop_pending!(), "user_id = $2"))
-		.bind(why)
-		.bind(user)
-		.execute(&mut *conn)
-		.await
-		.wrap_err_with(|| format!("dropping what a user was owed ({why})"))?;
-	Ok(())
-}
-
 /// The user's private chat: its destination and chat id.
 pub async fn private_of_user(conn: &mut SqliteConnection, user: Uuid) -> eyre::Result<Option<(i64, i64)>> {
 	sqlx::query_as(
@@ -256,8 +245,6 @@ pub async fn reach(conn: &mut SqliteConnection, destination: i64) -> eyre::Resul
 		.await
 		.wrap_err("reading a destination's chat")
 }
-
-// ── the outbox ──────────────────────────────────────────────────────────────────────────
 
 /// A message to queue.
 pub struct NewMessage<'a> {
@@ -554,8 +541,6 @@ pub async fn message(conn: &mut SqliteConnection, id: i64) -> eyre::Result<Optio
 	Ok(row.map(|(user_id, chat_id, Json(buttons))| SentMessage { user_id, chat_id, buttons }))
 }
 
-// ── the poller ──────────────────────────────────────────────────────────────────────────
-
 /// Takes or renews the poller's lease for `holder` until `until`: the next update id to ask
 /// for, or `None` when another replica holds it.
 pub async fn poll_lease(conn: &mut SqliteConnection, holder: Uuid, now: Timestamp, until: Timestamp) -> eyre::Result<Option<i64>> {
@@ -592,3 +577,18 @@ pub async fn poll_release(conn: &mut SqliteConnection, holder: Uuid) -> eyre::Re
 		.wrap_err("releasing the poller")?;
 	Ok(())
 }
+
+/// Gives up what the outbox still owed a user, and why.
+pub(super) async fn drop_pending_of_user(conn: &mut SqliteConnection, user: Uuid, why: &str) -> eyre::Result<()> {
+	sqlx::query(concat!(drop_pending!(), "user_id = $2"))
+		.bind(why)
+		.bind(user)
+		.execute(&mut *conn)
+		.await
+		.wrap_err_with(|| format!("dropping what a user was owed ({why})"))?;
+	Ok(())
+}
+
+// ── the outbox ──────────────────────────────────────────────────────────────────────────
+
+// ── the poller ──────────────────────────────────────────────────────────────────────────

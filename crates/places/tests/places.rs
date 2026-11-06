@@ -20,6 +20,19 @@ use sa_places::{
 };
 use serde_json::{Value, json};
 
+/// What an ended trial returns.
+const NO_BILLING: &str = r#"{"error":{"code":403,"status":"PERMISSION_DENIED","details":[
+	{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"BILLING_DISABLED","domain":"googleapis.com",
+		"metadata":{"consumer":"projects/1","service":"places.googleapis.com"}}]}}"#;
+
+const PROCOPE: &str = "ChIJprocopeprocopeproc";
+
+const MOLD_ASSIST: &str = "ChIJmoldassistmoldassi";
+
+const SEARCH: &str = "https://www.google.com/maps/place/Le+Procope/@48.853,2.3389,17z";
+
+type Refusals = HashMap<String, Vec<(StatusCode, String)>>;
+
 /// A spent window as Google spells it, from `start` (unix seconds).
 fn refusal(start: u64) -> String {
 	json!({"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "details": [
@@ -30,16 +43,9 @@ fn refusal(start: u64) -> String {
 	.to_string()
 }
 
-/// What an ended trial returns.
-const NO_BILLING: &str = r#"{"error":{"code":403,"status":"PERMISSION_DENIED","details":[
-	{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"BILLING_DISABLED","domain":"googleapis.com",
-		"metadata":{"consumer":"projects/1","service":"places.googleapis.com"}}]}}"#;
-
 fn now() -> u64 {
 	SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
 }
-
-type Refusals = HashMap<String, Vec<(StatusCode, String)>>;
 
 #[derive(Clone, Default)]
 struct Stub {
@@ -67,13 +73,9 @@ impl Stub {
 	}
 }
 
-const PROCOPE: &str = "ChIJprocopeprocopeproc";
-
 fn procope() -> Value {
 	json!({ "id": PROCOPE, "displayName": { "text": "Le Procope" }, "formattedAddress": "13 Rue de l'Ancienne Comédie, Paris", "location": { "latitude": 48.853, "longitude": 2.3389 } })
 }
-
-const MOLD_ASSIST: &str = "ChIJmoldassistmoldassi";
 
 /// A service-area business: Places answers it with no address and no point.
 fn mold_assist() -> Value {
@@ -122,13 +124,11 @@ async fn google(keys: &[&str]) -> (Stub, Google, tempfile::TempDir, tokio::task:
 	let base = format!("http://{}/v1/places", listener.local_addr().unwrap());
 	let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 	let cache = tempfile::tempdir().unwrap();
-	let google = Google::new(Keys::new(keys.iter().map(|k| k.to_string()).collect()), cache.path().join("google_cache"))
+	let google = Google::try_new(Keys::new(keys.iter().map(|k| k.to_string()).collect()), cache.path().join("google_cache"))
 		.unwrap()
 		.at(base);
 	(s, google, cache, server)
 }
-
-const SEARCH: &str = "https://www.google.com/maps/place/Le+Procope/@48.853,2.3389,17z";
 
 #[tokio::test]
 async fn every_place_bearing_the_name_is_found_and_the_search_is_biased_to_the_map() {

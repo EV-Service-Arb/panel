@@ -42,21 +42,24 @@ use crate::{
 	signin::{Caller, Freshness},
 };
 
-pub(crate) fn routes() -> Vec<ApiRoute> {
-	use Freshness::{Cached, Fresh};
-	use Method as M;
-	let admin = Some(Section::Tokens);
-	vec![
-		ApiRoute::new(M::GET, "/tokens", None, Cached, tokens),
-		ApiRoute::new(M::GET, "/tokens/ledger", None, Cached, ledger),
-		ApiRoute::new(M::GET, "/tokens/usage", None, Cached, usage),
-		ApiRoute::new(M::POST, "/tokens/claim", None, Cached, claim),
-		ApiRoute::new(M::GET, "/admin/tokens", admin, Cached, holders),
-		// Tokens must not be handed out on a permission revoked a moment ago.
-		ApiRoute::new(M::POST, "/admin/tokens/{user_id}", admin, Fresh, change),
-	]
-}
+/// The most entries a page of the ledger holds.
+const LEDGER_PAGE: i64 = 200;
 
+/// Charges asked of review_archive at once.
+const CHARGES_PAGE: usize = 500;
+
+/// A page is asked for this often while review_archive has no more.
+const FOLLOW_EVERY: Duration = Duration::from_secs(10);
+/// The snapshot goes out at least this often, renewals included.
+const PUSH_EVERY: Duration = Duration::from_secs(60);
+/// Before the import, or while review_archive answers 404 (not cut over yet), looked at again
+/// this often.
+const LOOK_AGAIN: Duration = Duration::from_secs(60);
+/// After a failure: doubling from the first to the second.
+const BACKOFF: (Duration, Duration) = (Duration::from_secs(1), Duration::from_secs(60));
+const CALL_TIMEOUT: Duration = Duration::from_secs(10);
+/// The most of review_archive's answer read: a page of charges, with room.
+const ANSWER: usize = 16 * 1024 * 1024;
 /// What the caller is owed until they claim it: a charge kicked back (`service`, `key`,
 /// `label`), or an admin's grant (`by`, `note`).
 #[derive(Clone, Debug, Serialize, TS)]
@@ -186,6 +189,54 @@ pub struct BalanceDto {
 	pub balance: i64,
 }
 
+/// Follows review_archive's charges and pushes it the snapshot until `shutdown` turns true.
+/// Nothing here ends `serve`.
+pub async fn run(panel: Panel, services: Services, shutdown: watch::Receiver<bool>) {
+	let follow = repeat("following review_archive's charges", FOLLOW_EVERY, std::future::pending, shutdown.clone(), || async {
+		let Some(after) = panel.charges_after().await? else { return Ok(Pass::Closed) };
+		let (status, answer) = call(&services, Method::GET, &format!("/api/conductor/charges?after={after}&limit={CHARGES_PAGE}"), None).await?;
+		match status {
+			StatusCode::NOT_FOUND => return Ok(Pass::NotCutOver),
+			StatusCode::OK => {}
+			other => eyre::bail!("review_archive answered its charges with {other}: {}", String::from_utf8_lossy(&answer)),
+		}
+		let page: ChargePage = serde_json::from_slice(&answer).map_err(|e| eyre::eyre!("review_archive's charges: {e}"))?;
+		Ok(Pass::Done(panel.take_charges(page, after, Timestamp::now()).await?))
+	});
+	let push = repeat(
+		"pushing review_archive the snapshot",
+		PUSH_EVERY,
+		|| panel.snapshot_due(),
+		shutdown,
+		|| async {
+			let Some(snapshot) = panel.snapshot(Timestamp::now()).await? else { return Ok(Pass::Closed) };
+			let body = serde_json::to_vec(&snapshot).expect("a snapshot serializes");
+			let (status, answer) = call(&services, Method::PUT, "/api/conductor/gmbs", Some(body)).await?;
+			match status {
+				StatusCode::NOT_FOUND => Ok(Pass::NotCutOver),
+				StatusCode::NO_CONTENT => Ok(Pass::Done(0)),
+				other => eyre::bail!("review_archive refused the snapshot with {other}: {}", String::from_utf8_lossy(&answer)),
+			}
+		},
+	);
+	tokio::join!(follow, push);
+}
+
+pub(crate) fn routes() -> Vec<ApiRoute> {
+	use Freshness::{Cached, Fresh};
+	use Method as M;
+	let admin = Some(Section::Tokens);
+	vec![
+		ApiRoute::new(M::GET, "/tokens", None, Cached, tokens),
+		ApiRoute::new(M::GET, "/tokens/ledger", None, Cached, ledger),
+		ApiRoute::new(M::GET, "/tokens/usage", None, Cached, usage),
+		ApiRoute::new(M::POST, "/tokens/claim", None, Cached, claim),
+		ApiRoute::new(M::GET, "/admin/tokens", admin, Cached, holders),
+		// Tokens must not be handed out on a permission revoked a moment ago.
+		ApiRoute::new(M::POST, "/admin/tokens/{user_id}", admin, Fresh, change),
+	]
+}
+
 impl From<Kickback> for KickbackDto {
 	fn from(k: Kickback) -> Self {
 		let (service, key, label, by, note) = match k.why {
@@ -255,9 +306,6 @@ async fn claim(State(panel): State<Panel>, Extension(caller): Extension<Caller>)
 	Ok(Json(tokens_dto(&panel, held)))
 }
 
-/// The most entries a page of the ledger holds.
-const LEDGER_PAGE: i64 = 200;
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LedgerQuery {
@@ -315,21 +363,6 @@ async fn change(State(panel): State<Panel>, Extension(caller): Extension<Caller>
 
 // ── review_archive, in `serve` ──────────────────────────────────────────────────────────
 
-/// Charges asked of review_archive at once.
-const CHARGES_PAGE: usize = 500;
-/// A page is asked for this often while review_archive has no more.
-const FOLLOW_EVERY: Duration = Duration::from_secs(10);
-/// The snapshot goes out at least this often, renewals included.
-const PUSH_EVERY: Duration = Duration::from_secs(60);
-/// Before the import, or while review_archive answers 404 (not cut over yet), looked at again
-/// this often.
-const LOOK_AGAIN: Duration = Duration::from_secs(60);
-/// After a failure: doubling from the first to the second.
-const BACKOFF: (Duration, Duration) = (Duration::from_secs(1), Duration::from_secs(60));
-const CALL_TIMEOUT: Duration = Duration::from_secs(10);
-/// The most of review_archive's answer read: a page of charges, with room.
-const ANSWER: usize = 16 * 1024 * 1024;
-
 /// How a pass with review_archive went.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Pass {
@@ -339,39 +372,6 @@ enum Pass {
 	Closed,
 	/// review_archive answered 404: it is not cut over to the conductor's tokens yet.
 	NotCutOver,
-}
-
-/// Follows review_archive's charges and pushes it the snapshot until `shutdown` turns true.
-/// Nothing here ends `serve`.
-pub async fn run(panel: Panel, services: Services, shutdown: watch::Receiver<bool>) {
-	let follow = repeat("following review_archive's charges", FOLLOW_EVERY, std::future::pending, shutdown.clone(), || async {
-		let Some(after) = panel.charges_after().await? else { return Ok(Pass::Closed) };
-		let (status, answer) = call(&services, Method::GET, &format!("/api/conductor/charges?after={after}&limit={CHARGES_PAGE}"), None).await?;
-		match status {
-			StatusCode::NOT_FOUND => return Ok(Pass::NotCutOver),
-			StatusCode::OK => {}
-			other => eyre::bail!("review_archive answered its charges with {other}: {}", String::from_utf8_lossy(&answer)),
-		}
-		let page: ChargePage = serde_json::from_slice(&answer).map_err(|e| eyre::eyre!("review_archive's charges: {e}"))?;
-		Ok(Pass::Done(panel.take_charges(page, after, Timestamp::now()).await?))
-	});
-	let push = repeat(
-		"pushing review_archive the snapshot",
-		PUSH_EVERY,
-		|| panel.snapshot_due(),
-		shutdown,
-		|| async {
-			let Some(snapshot) = panel.snapshot(Timestamp::now()).await? else { return Ok(Pass::Closed) };
-			let body = serde_json::to_vec(&snapshot).expect("a snapshot serializes");
-			let (status, answer) = call(&services, Method::PUT, "/api/conductor/gmbs", Some(body)).await?;
-			match status {
-				StatusCode::NOT_FOUND => Ok(Pass::NotCutOver),
-				StatusCode::NO_CONTENT => Ok(Pass::Done(0)),
-				other => eyre::bail!("review_archive refused the snapshot with {other}: {}", String::from_utf8_lossy(&answer)),
-			}
-		},
-	);
-	tokio::join!(follow, push);
 }
 
 /// `pass` until `shutdown`: again at once after a full page of charges, else after `every` or

@@ -3,6 +3,7 @@
 
 use std::{
 	collections::HashMap,
+	path::Path,
 	sync::{Arc, Mutex},
 };
 
@@ -29,6 +30,8 @@ use crate::{
 pub const ORIGIN: &str = "http://127.0.0.1:59120";
 pub const SEED: &str = "k1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
+pub type Log = Arc<Mutex<Vec<Seen>>>;
+
 /// What a service behind the conductor was sent.
 #[derive(Clone, Debug)]
 pub struct Seen {
@@ -48,8 +51,6 @@ impl Seen {
 		sa_auth::verify(&keys, token, service, self.method.as_str(), path, body, jiff::Timestamp::now().as_second()).expect("the conductor's assertion")
 	}
 }
-
-pub type Log = Arc<Mutex<Vec<Seen>>>;
 
 /// A service at a loopback address: `routes`, and anything else answered with a cookie of its
 /// own and a compressed, cacheable body. Every request is logged first.
@@ -108,26 +109,11 @@ pub fn app_with(panel: Panel, permissions: PermissionSet, email: &str, base: &st
 
 /// What a viewer's browser and Grafana reach: the conductor of [`app_with`] with Grafana on `dir`,
 /// Grafana's loopback listener, and Grafana itself, to run.
-pub fn app_with_grafana(panel: Panel, permissions: PermissionSet, email: &str, base: &str, dir: &std::path::Path) -> (Router, Router, Grafana) {
+pub fn app_with_grafana(panel: Panel, permissions: PermissionSet, email: &str, base: &str, dir: &Path) -> (Router, Router, Grafana) {
 	let (sign_in, forward) = conductor(panel, permissions, email, base);
 	let grafana = Grafana::new(forward.clone(), dir.to_owned());
 	let app = http::app(sign_in, Some(forward), Some(&grafana), http::Limits::default(), None, None);
 	(app, grafana.loopback(), grafana)
-}
-
-fn conductor(panel: Panel, permissions: PermissionSet, email: &str, base: &str) -> (SignIn, Forward) {
-	let who = DevIdentity {
-		user_id: DevIdentity::named(email),
-		permissions,
-		email: email.to_owned(),
-	};
-	let config = SignInConfig {
-		panel_origin: ORIGIN.to_owned(),
-		concierge_origin: ORIGIN.to_owned(),
-	};
-	let sign_in = SignIn::new(panel, Concierge::dev(who), config);
-	let forward = Forward::new(sign_in.clone(), services(base));
-	(sign_in, forward)
 }
 
 pub fn app(panel: Panel, permissions: PermissionSet, base: &str) -> Router {
@@ -138,7 +124,6 @@ pub fn app(panel: Panel, permissions: PermissionSet, base: &str) -> Router {
 pub struct Browser {
 	pub jar: HashMap<String, String>,
 }
-
 impl Browser {
 	pub async fn send_body(&mut self, app: &Router, method: Method, uri: &str, extra: &[(&str, &str)], csrf: bool, body: Body) -> (StatusCode, HeaderMap, Bytes) {
 		let mut req = Request::builder().method(method).uri(uri);
@@ -180,4 +165,19 @@ impl Browser {
 	pub fn cookie(&self) -> String {
 		self.jar.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("; ")
 	}
+}
+
+fn conductor(panel: Panel, permissions: PermissionSet, email: &str, base: &str) -> (SignIn, Forward) {
+	let who = DevIdentity {
+		user_id: DevIdentity::named(email),
+		permissions,
+		email: email.to_owned(),
+	};
+	let config = SignInConfig {
+		panel_origin: ORIGIN.to_owned(),
+		concierge_origin: ORIGIN.to_owned(),
+	};
+	let sign_in = SignIn::new(panel, Concierge::dev(who), config);
+	let forward = Forward::new(sign_in.clone(), services(base));
+	(sign_in, forward)
 }

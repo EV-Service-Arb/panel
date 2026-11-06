@@ -11,6 +11,22 @@ use uuid::Uuid;
 
 use super::{from_db, to_db};
 
+type GmailRow = (i64, Uuid, String, i64);
+
+type GmbRow = (
+	i64,
+	i64,
+	String,
+	Option<String>,
+	Option<String>,
+	Option<String>,
+	Option<String>,
+	i64,
+	bool,
+	Option<f64>,
+	Option<f64>,
+	bool,
+);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Gmail {
 	pub id: i64,
@@ -56,51 +72,6 @@ pub struct Managed {
 	pub place_id: String,
 	/// Its owner's switch.
 	pub enabled: bool,
-}
-
-type GmailRow = (i64, Uuid, String, i64);
-type GmbRow = (
-	i64,
-	i64,
-	String,
-	Option<String>,
-	Option<String>,
-	Option<String>,
-	Option<String>,
-	i64,
-	bool,
-	Option<f64>,
-	Option<f64>,
-	bool,
-);
-
-fn gmail((id, owner, gmail, created_at): GmailRow) -> eyre::Result<Gmail> {
-	Ok(Gmail {
-		id,
-		owner,
-		gmail,
-		created_at: from_db(created_at)?,
-	})
-}
-
-fn gmb((id, gmail_id, place_id, name, address, gbp_account, gbp_location, created_at, enabled, lat, lng, placed): GmbRow) -> eyre::Result<Gmb> {
-	let location = match (lat, lng) {
-		(Some(lat), Some(lng)) => Some(Point { at: LatLng { lat, lng }, placed }),
-		(None, None) => None,
-		half => eyre::bail!("GMB {id}'s point is half there: {half:?}"),
-	};
-	Ok(Gmb {
-		id,
-		gmail_id,
-		place_id,
-		name,
-		address,
-		gbp_account,
-		gbp_location,
-		created_at: from_db(created_at)?,
-		enabled,
-		location,
-	})
 }
 
 /// The owner's gmails not removed, by address.
@@ -307,4 +278,33 @@ pub async fn managed(conn: &mut SqliteConnection) -> eyre::Result<Vec<Managed>> 
 			enabled,
 		})
 		.collect())
+}
+
+fn gmail((id, owner, gmail, created_at): GmailRow) -> eyre::Result<Gmail> {
+	Ok(Gmail {
+		id,
+		owner,
+		gmail,
+		created_at: from_db(created_at)?,
+	})
+}
+
+fn gmb((id, gmail_id, place_id, name, address, gbp_account, gbp_location, created_at, enabled, lat, lng, placed): GmbRow) -> eyre::Result<Gmb> {
+	let location = match (lat, lng) {
+		(Some(lat), Some(lng)) => Some(Point { at: LatLng { lat, lng }, placed }),
+		(None, None) => None,
+		half => eyre::bail!("GMB {id}'s point is half there: {half:?}"),
+	};
+	Ok(Gmb {
+		id,
+		gmail_id,
+		place_id,
+		name,
+		address,
+		gbp_account,
+		gbp_location,
+		created_at: from_db(created_at)?,
+		enabled,
+		location,
+	})
 }

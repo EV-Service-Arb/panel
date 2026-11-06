@@ -15,7 +15,7 @@ pub struct Renewal {
 }
 
 impl Renewal {
-	pub fn new(daily: i64, cap: i64, start_cap_multiple: f64) -> Result<Self, crate::Invalid> {
+	pub fn try_new(daily: i64, cap: i64, start_cap_multiple: f64) -> Result<Self, crate::Invalid> {
 		if daily < 0 || cap < 0 {
 			return Err(crate::Invalid::new(format!("TOKENS_DAILY ({daily}) and TOKENS_CAP ({cap}) are 0 or more")));
 		}

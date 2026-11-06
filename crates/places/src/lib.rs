@@ -13,6 +13,11 @@ pub use keys::{Keys, Spent};
 use parse::Parsed;
 use serde::{Deserialize, Serialize};
 
+const SEARCH_MASK: &str = "places.id,places.displayName,places.formattedAddress,places.location";
+
+const DETAILS_MASK: &str = "id,displayName,formattedAddress,location";
+/// A GMB created on Google today is findable by name tomorrow.
+const SEARCH_AGE: Duration = Duration::from_secs(86_400);
 /// A Google place, as Places answers for it.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Place {
@@ -59,11 +64,6 @@ pub enum Ask {
 	Afresh,
 }
 
-const SEARCH_MASK: &str = "places.id,places.displayName,places.formattedAddress,places.location";
-const DETAILS_MASK: &str = "id,displayName,formattedAddress,location";
-/// A GMB created on Google today is findable by name tomorrow.
-const SEARCH_AGE: Duration = Duration::from_secs(86_400);
-
 /// The Places API (New), through the cache and the keys.
 #[derive(Debug)]
 pub struct Google {
@@ -76,7 +76,7 @@ pub struct Google {
 
 impl Google {
 	/// With no keys, a place id still resolves, unnamed and unlocated.
-	pub fn new(keys: Keys, cache_dir: PathBuf) -> Result<Self, Error> {
+	pub fn try_new(keys: Keys, cache_dir: PathBuf) -> Result<Self, Error> {
 		let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(10)).build()?;
 		Ok(Self {
 			http,

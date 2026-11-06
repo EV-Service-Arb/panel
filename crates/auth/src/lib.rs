@@ -19,6 +19,12 @@ use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+/// The request header the assertion rides in, panel → service.
+pub const HEADER: &str = "x-sa-assertion";
+
+/// How long an assertion lives, in seconds: one request's way through the panel.
+pub const TTL: i64 = 60;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Permission)]
 #[permission("sa:sites:work")]
 pub enum Work {
@@ -121,12 +127,6 @@ alias!(
 	],
 	delegates [SA_OPERATOR]
 );
-
-/// The request header the assertion rides in, panel → service.
-pub const HEADER: &str = "x-sa-assertion";
-
-/// How long an assertion lives, in seconds: one request's way through the panel.
-pub const TTL: i64 = 60;
 
 /// A service behind the panel: the assertion's audience, and the permission slice it gets.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -297,18 +297,11 @@ pub enum Refused {
 	Slice,
 }
 
-#[derive(Deserialize, Serialize)]
-struct Header {
-	alg: String,
-	kid: String,
-}
-
 /// The panel's signing key: `<kid>:<base64 of the 32-byte Ed25519 seed>`.
 pub struct Signer {
 	kid: String,
 	key: SigningKey,
 }
-
 impl Signer {
 	/// `<kid>:<base64 of the public key>`, what the services are given.
 	pub fn public(&self) -> String {
@@ -334,51 +327,10 @@ impl Signer {
 	}
 }
 
-impl FromStr for Signer {
-	type Err = String;
-
-	fn from_str(s: &str) -> Result<Self, String> {
-		let (kid, seed) = split_key(s)?;
-		Ok(Self {
-			kid,
-			key: SigningKey::from_bytes(&seed),
-		})
-	}
-}
-
 /// The panel's public keys a service accepts: `<kid>:<base64 key>` comma-separated, more than
 /// one while a key rotates.
 #[derive(Clone, Debug)]
 pub struct Keys(BTreeMap<String, VerifyingKey>);
-
-impl FromStr for Keys {
-	type Err = String;
-
-	fn from_str(s: &str) -> Result<Self, String> {
-		let mut keys = BTreeMap::new();
-		for entry in s.split(',').map(str::trim).filter(|e| !e.is_empty()) {
-			let (kid, raw) = split_key(entry)?;
-			let key = VerifyingKey::from_bytes(&raw).map_err(|e| format!("key `{kid}` is not an Ed25519 public key: {e}"))?;
-			if keys.insert(kid.clone(), key).is_some() {
-				return Err(format!("key `{kid}` is listed twice"));
-			}
-		}
-		match keys.is_empty() {
-			true => Err("no key".into()),
-			false => Ok(Self(keys)),
-		}
-	}
-}
-
-fn split_key(s: &str) -> Result<(String, [u8; 32]), String> {
-	let (kid, b64) = s.split_once(':').ok_or("expected `<kid>:<base64>`")?;
-	if kid.is_empty() {
-		return Err("the key id is empty".into());
-	}
-	let raw = STANDARD.decode(b64.trim()).map_err(|e| format!("key `{kid}`: {e}"))?;
-	let raw: [u8; 32] = raw.try_into().map_err(|_| format!("key `{kid}` is not 32 bytes"))?;
-	Ok((kid.to_owned(), raw))
-}
 
 /// The assertion on one request, if the panel signed it for `aud` and for exactly this
 /// `method` and `path`, and it is alive at `now` (unix seconds). A source's assertion also
@@ -420,6 +372,53 @@ pub fn verify(keys: &Keys, token: &str, aud: Service, method: &str, path: &str, 
 		Principal::Conductor => {}
 	}
 	Ok(assertion)
+}
+
+#[derive(Deserialize, Serialize)]
+struct Header {
+	alg: String,
+	kid: String,
+}
+
+impl FromStr for Signer {
+	type Err = String;
+
+	fn from_str(s: &str) -> Result<Self, String> {
+		let (kid, seed) = split_key(s)?;
+		Ok(Self {
+			kid,
+			key: SigningKey::from_bytes(&seed),
+		})
+	}
+}
+
+impl FromStr for Keys {
+	type Err = String;
+
+	fn from_str(s: &str) -> Result<Self, String> {
+		let mut keys = BTreeMap::new();
+		for entry in s.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+			let (kid, raw) = split_key(entry)?;
+			let key = VerifyingKey::from_bytes(&raw).map_err(|e| format!("key `{kid}` is not an Ed25519 public key: {e}"))?;
+			if keys.insert(kid.clone(), key).is_some() {
+				return Err(format!("key `{kid}` is listed twice"));
+			}
+		}
+		match keys.is_empty() {
+			true => Err("no key".into()),
+			false => Ok(Self(keys)),
+		}
+	}
+}
+
+fn split_key(s: &str) -> Result<(String, [u8; 32]), String> {
+	let (kid, b64) = s.split_once(':').ok_or("expected `<kid>:<base64>`")?;
+	if kid.is_empty() {
+		return Err("the key id is empty".into());
+	}
+	let raw = STANDARD.decode(b64.trim()).map_err(|e| format!("key `{kid}`: {e}"))?;
+	let raw: [u8; 32] = raw.try_into().map_err(|_| format!("key `{kid}` is not 32 bytes"))?;
+	Ok((kid.to_owned(), raw))
 }
 
 #[cfg(test)]

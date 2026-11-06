@@ -1,7 +1,11 @@
 //! Grafana (docs/ARCHITECTURE.md, Grafana): what reaches it from a viewer's browser, what its
 //! fetches reach the services as, and the dashboards it is given.
 
-use std::{collections::BTreeSet, path::Path, time::Duration};
+use std::{
+	collections::BTreeSet,
+	path::{Path, PathBuf},
+	time::Duration,
+};
 
 use axum::{
 	Router,
@@ -207,7 +211,7 @@ async fn grafanas_queries_reach_the_services_as_the_viewer_who_asked() {
 }
 
 /// A server that only says it was started, with what: Grafana as `run` sees it.
-fn fake_server(dir: &Path) -> std::path::PathBuf {
+fn fake_server(dir: &Path) -> PathBuf {
 	use std::os::unix::fs::PermissionsExt;
 	let path = dir.join("grafana-server");
 	std::fs::write(

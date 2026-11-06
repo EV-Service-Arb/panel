@@ -31,15 +31,6 @@ use sqlx::{
 /// short.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The schema, embedded from `migrations/`.
-fn migrator() -> Migrator {
-	let mut m = sqlx::migrate!("./migrations");
-	// A migration the database has and this build does not know is a rollback onto a schema
-	// moved on: fine, as it was on Postgres.
-	m.set_ignore_missing(true);
-	m
-}
-
 /// The connection settings every connection to the panel's file gets.
 pub fn options(path: &Path) -> SqliteConnectOptions {
 	SqliteConnectOptions::new()
@@ -59,7 +50,6 @@ pub fn options(path: &Path) -> SqliteConnectOptions {
 pub struct Store {
 	pool: SqlitePool,
 }
-
 impl Store {
 	/// Opens (creating it if need be) the database at `path` and applies the migrations it
 	/// lacks. There is no separate migrate step: the process that owns the file migrates it.
@@ -93,6 +83,15 @@ impl Store {
 /// [`Store::begin_write`] on a connection already in hand.
 pub async fn begin_write(conn: &mut SqliteConnection) -> eyre::Result<Transaction<'_, Sqlite>> {
 	sqlx::Connection::begin_with(conn, "BEGIN IMMEDIATE").await.wrap_err("beginning a write")
+}
+
+/// The schema, embedded from `migrations/`.
+fn migrator() -> Migrator {
+	let mut m = sqlx::migrate!("./migrations");
+	// A migration the database has and this build does not know is a rollback onto a schema
+	// moved on: fine, as it was on Postgres.
+	m.set_ignore_missing(true);
+	m
 }
 
 /// A timestamp as the database holds it: microseconds since the epoch, the precision Postgres'

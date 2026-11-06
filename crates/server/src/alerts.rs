@@ -33,6 +33,13 @@ use crate::{
 	telegram::{self, BotApi, BotName},
 };
 
+/// How often each part of the work runs.
+const DELIVER_EVERY: Duration = Duration::from_millis(500);
+
+const FAN_OUT_EVERY: Duration = Duration::from_secs(2);
+const RECHECK_EVERY: Duration = Duration::from_secs(60);
+/// A service that publishes no feed yet (404) is asked again this often.
+const LOOK_AGAIN: Duration = Duration::from_secs(60);
 /// The hub with its Telegram bot, as `serve` runs it.
 #[derive(Clone)]
 pub struct Telegram {
@@ -47,21 +54,6 @@ impl FromRef<ApiState> for Option<Telegram> {
 }
 
 // ── /api/v1/alerts ──────────────────────────────────────────────────────────────────────
-
-pub(crate) fn routes() -> Vec<ApiRoute> {
-	use Freshness::{Cached, Fresh};
-	use Method as M;
-	vec![
-		ApiRoute::new(M::GET, "/alerts", None, Cached, alerts),
-		// What a link token or a chat carries is concierge's answer of this moment.
-		ApiRoute::new(M::POST, "/alerts/telegram/link", None, Fresh, link),
-		ApiRoute::new(M::POST, "/alerts/telegram/chats", None, Fresh, add_chat),
-		ApiRoute::new(M::PUT, "/alerts/destinations/{id}/rules", None, Cached, set_rules),
-		ApiRoute::new(M::PUT, "/alerts/destinations/{id}/gmail", None, Cached, set_gmail),
-		ApiRoute::new(M::POST, "/alerts/destinations/{id}/test", None, Cached, test),
-		ApiRoute::new(M::DELETE, "/alerts/destinations/{id}", None, Cached, remove),
-	]
-}
 
 /// `GET /alerts`, and what every change answers.
 #[derive(Clone, Debug, Serialize, TS)]
@@ -97,6 +89,41 @@ pub struct DestinationDto {
 	/// Every rule open to the caller, on or off here.
 	#[ts(type = "Partial<Record<Rule, boolean>>")]
 	pub rules: BTreeMap<&'static str, bool>,
+}
+
+/// Runs the hub until `shutdown` turns true: the bot's poller (on the replica holding its lease),
+/// the conductor's own rules, each service's feed, the delivery and the access checks, each on its
+/// own schedule. A failing pass is reported and tried again at the next tick; nothing here ends
+/// `serve`.
+pub async fn run(t: Telegram, shutdown: watch::Receiver<bool>) {
+	let hub = &t.hub;
+	tokio::join!(
+		telegram::poll(hub, &t.name, shutdown.clone()),
+		crate::every(FAN_OUT_EVERY, shutdown.clone(), "alerts: the conductor's own", || async {
+			hub.fan_out_own(Timestamp::now()).await.map(drop)
+		}),
+		feed(hub, Origin::Sites, shutdown.clone()),
+		feed(hub, Origin::ReviewArchive, shutdown.clone()),
+		crate::every(DELIVER_EVERY, shutdown.clone(), "alerts: telegram delivery", || async {
+			hub.deliver(Timestamp::now()).await.map(drop)
+		}),
+		crate::every(RECHECK_EVERY, shutdown, "alerts: access check", || async { hub.recheck_access(Timestamp::now()).await.map(drop) }),
+	);
+}
+
+pub(crate) fn routes() -> Vec<ApiRoute> {
+	use Freshness::{Cached, Fresh};
+	use Method as M;
+	vec![
+		ApiRoute::new(M::GET, "/alerts", None, Cached, alerts),
+		// What a link token or a chat carries is concierge's answer of this moment.
+		ApiRoute::new(M::POST, "/alerts/telegram/link", None, Fresh, link),
+		ApiRoute::new(M::POST, "/alerts/telegram/chats", None, Fresh, add_chat),
+		ApiRoute::new(M::PUT, "/alerts/destinations/{id}/rules", None, Cached, set_rules),
+		ApiRoute::new(M::PUT, "/alerts/destinations/{id}/gmail", None, Cached, set_gmail),
+		ApiRoute::new(M::POST, "/alerts/destinations/{id}/test", None, Cached, test),
+		ApiRoute::new(M::DELETE, "/alerts/destinations/{id}", None, Cached, remove),
+	]
 }
 
 fn dto(t: Option<&Telegram>, alerts: sa_panel::alerts::Alerts) -> AlertsDto {
@@ -226,33 +253,6 @@ async fn remove(State(panel): State<Panel>, Extension(caller): Extension<Caller>
 }
 
 // ── the hub's work in `serve` ───────────────────────────────────────────────────────────
-
-/// How often each part of the work runs.
-const DELIVER_EVERY: Duration = Duration::from_millis(500);
-const FAN_OUT_EVERY: Duration = Duration::from_secs(2);
-const RECHECK_EVERY: Duration = Duration::from_secs(60);
-/// A service that publishes no feed yet (404) is asked again this often.
-const LOOK_AGAIN: Duration = Duration::from_secs(60);
-
-/// Runs the hub until `shutdown` turns true: the bot's poller (on the replica holding its lease),
-/// the conductor's own rules, each service's feed, the delivery and the access checks, each on its
-/// own schedule. A failing pass is reported and tried again at the next tick; nothing here ends
-/// `serve`.
-pub async fn run(t: Telegram, shutdown: watch::Receiver<bool>) {
-	let hub = &t.hub;
-	tokio::join!(
-		telegram::poll(hub, &t.name, shutdown.clone()),
-		crate::every(FAN_OUT_EVERY, shutdown.clone(), "alerts: the conductor's own", || async {
-			hub.fan_out_own(Timestamp::now()).await.map(drop)
-		}),
-		feed(hub, Origin::Sites, shutdown.clone()),
-		feed(hub, Origin::ReviewArchive, shutdown.clone()),
-		crate::every(DELIVER_EVERY, shutdown.clone(), "alerts: telegram delivery", || async {
-			hub.deliver(Timestamp::now()).await.map(drop)
-		}),
-		crate::every(RECHECK_EVERY, shutdown, "alerts: access check", || async { hub.recheck_access(Timestamp::now()).await.map(drop) }),
-	);
-}
 
 /// Follows `service`'s feed: a page every [`FAN_OUT_EVERY`]; while it publishes none, said once
 /// and asked again after [`LOOK_AGAIN`].

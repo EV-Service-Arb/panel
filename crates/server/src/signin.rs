@@ -64,6 +64,12 @@ use crate::{
 /// at most this much later (at the next token rotation, concierge refuses outright).
 pub const ME_TTL: Duration = Duration::from_secs(60);
 
+/// What a sign-in page may load and do: nothing but this origin, and never inside a frame.
+pub const PAGE_CSP: &str = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
+/// Longest `return_to`: a path the panel links to, with room for its query.
+const MAX_RETURN_TO: usize = 512;
+
 /// What signing in needs.
 #[derive(Clone, Debug)]
 pub struct SignInConfig {
@@ -151,68 +157,10 @@ pub struct Caller {
 	pub dev_sign_in: bool,
 }
 
-fn json_error(status: StatusCode, msg: &str) -> Response {
-	(status, Json(json!({ "error": msg }))).into_response()
-}
-
-/// What a sign-in page may load and do: nothing but this origin, and never inside a frame.
-pub const PAGE_CSP: &str = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
-
-/// A page on this origin with fixed text: nothing from the request is echoed.
-fn page(status: StatusCode, title: &str, message: &str) -> Response {
-	let body = format!(
-		"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-		 <title>{title}</title></head><body><main><h1>{title}</h1><p>{message}</p><p><a href=\"/auth/login\">Sign in again</a></p></main></body></html>"
-	);
-	let mut res = (status, Html(body)).into_response();
-	res.headers_mut().insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(PAGE_CSP));
-	res
-}
-
-/// The sign-in's answers carry a code or a token in their URLs: kept out of caches and out
-/// of the `Referer` of whatever the page loads next.
-fn private(mut res: Response) -> Response {
-	let h = res.headers_mut();
-	h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-	h.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
-	res
-}
-
-/// Percent-encodes a query value: everything but RFC 3986's unreserved characters.
-pub(crate) fn encode(value: &str) -> String {
-	let mut out = String::with_capacity(value.len());
-	for b in value.bytes() {
-		if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
-			out.push(char::from(b));
-		} else {
-			out.push_str(&format!("%{b:02X}"));
-		}
-	}
-	out
-}
-
 #[derive(Deserialize)]
 pub struct Login {
 	return_to: Option<String>,
 	prompt: Option<Prompt>,
-}
-
-/// OIDC `prompt`, passed on to concierge.
-#[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum Prompt {
-	/// Google's account chooser, past the evinvest.ltd session the browser may already have.
-	SelectAccount,
-}
-
-/// Longest `return_to`: a path the panel links to, with room for its query.
-const MAX_RETURN_TO: usize = 512;
-
-/// Whether `/auth/callback` may send the browser to `path`: a path on this origin, and
-/// nothing a browser could read as another (`//host`, `/\host`), nor anything but visible
-/// ASCII (no control character, no space).
-fn same_origin_path(path: &str) -> bool {
-	path.len() <= MAX_RETURN_TO && path.starts_with('/') && !path[1..].starts_with('/') && !path.contains('\\') && path.bytes().all(|b| b.is_ascii_graphic())
 }
 
 /// `GET /auth/login`.
@@ -380,6 +328,58 @@ pub async fn logout(State(s): State<SignIn>, headers: HeaderMap) -> Response {
 		}
 	}
 	signed_out(&s, StatusCode::NO_CONTENT.into_response())
+}
+
+fn json_error(status: StatusCode, msg: &str) -> Response {
+	(status, Json(json!({ "error": msg }))).into_response()
+}
+
+/// A page on this origin with fixed text: nothing from the request is echoed.
+fn page(status: StatusCode, title: &str, message: &str) -> Response {
+	let body = format!(
+		"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+		 <title>{title}</title></head><body><main><h1>{title}</h1><p>{message}</p><p><a href=\"/auth/login\">Sign in again</a></p></main></body></html>"
+	);
+	let mut res = (status, Html(body)).into_response();
+	res.headers_mut().insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(PAGE_CSP));
+	res
+}
+
+/// The sign-in's answers carry a code or a token in their URLs: kept out of caches and out
+/// of the `Referer` of whatever the page loads next.
+fn private(mut res: Response) -> Response {
+	let h = res.headers_mut();
+	h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+	h.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+	res
+}
+
+/// Percent-encodes a query value: everything but RFC 3986's unreserved characters.
+pub(crate) fn encode(value: &str) -> String {
+	let mut out = String::with_capacity(value.len());
+	for b in value.bytes() {
+		if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+			out.push(char::from(b));
+		} else {
+			out.push_str(&format!("%{b:02X}"));
+		}
+	}
+	out
+}
+
+/// OIDC `prompt`, passed on to concierge.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Prompt {
+	/// Google's account chooser, past the evinvest.ltd session the browser may already have.
+	SelectAccount,
+}
+
+/// Whether `/auth/callback` may send the browser to `path`: a path on this origin, and
+/// nothing a browser could read as another (`//host`, `/\host`), nor anything but visible
+/// ASCII (no control character, no space).
+fn same_origin_path(path: &str) -> bool {
+	path.len() <= MAX_RETURN_TO && path.starts_with('/') && !path[1..].starts_with('/') && !path.contains('\\') && path.bytes().all(|b| b.is_ascii_graphic())
 }
 
 fn signed_out(s: &SignIn, mut res: Response) -> Response {

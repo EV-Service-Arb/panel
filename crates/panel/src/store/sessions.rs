@@ -19,31 +19,6 @@ pub struct SessionRow {
 	pub expires_at: Timestamp,
 }
 
-#[derive(sqlx::FromRow)]
-struct Row {
-	user_id: Uuid,
-	access_sealed: Vec<u8>,
-	access_expires_at: i64,
-	refresh_sealed: Vec<u8>,
-	data_key_fp: Vec<u8>,
-	expires_at: i64,
-}
-
-impl TryFrom<Row> for SessionRow {
-	type Error = eyre::Report;
-
-	fn try_from(r: Row) -> eyre::Result<Self> {
-		Ok(Self {
-			user_id: r.user_id,
-			access_sealed: r.access_sealed,
-			access_expires_at: from_db(r.access_expires_at)?,
-			refresh_sealed: r.refresh_sealed,
-			data_key_fp: r.data_key_fp,
-			expires_at: from_db(r.expires_at)?,
-		})
-	}
-}
-
 /// The sealed tokens of a session, as written.
 pub struct SealedTokens<'a> {
 	pub access: &'a [u8],
@@ -72,7 +47,6 @@ pub async fn insert(conn: &mut SqliteConnection, id_hash: &[u8], user_id: Uuid, 
 	Ok(())
 }
 
-// A macro, not a const, so every query stays a literal (`concat!`) that sqlx takes as audited.
 macro_rules! columns {
 	() => {
 		"user_id, access_sealed, access_expires_at, refresh_sealed, data_key_fp, expires_at"
@@ -228,3 +202,30 @@ pub async fn prune(conn: &mut SqliteConnection, now: Timestamp) -> eyre::Result<
 		.wrap_err("pruning expired sessions")?
 		.rows_affected())
 }
+
+#[derive(sqlx::FromRow)]
+struct Row {
+	user_id: Uuid,
+	access_sealed: Vec<u8>,
+	access_expires_at: i64,
+	refresh_sealed: Vec<u8>,
+	data_key_fp: Vec<u8>,
+	expires_at: i64,
+}
+
+impl TryFrom<Row> for SessionRow {
+	type Error = eyre::Report;
+
+	fn try_from(r: Row) -> eyre::Result<Self> {
+		Ok(Self {
+			user_id: r.user_id,
+			access_sealed: r.access_sealed,
+			access_expires_at: from_db(r.access_expires_at)?,
+			refresh_sealed: r.refresh_sealed,
+			data_key_fp: r.data_key_fp,
+			expires_at: from_db(r.expires_at)?,
+		})
+	}
+}
+
+// A macro, not a const, so every query stays a literal (`concat!`) that sqlx takes as audited.

@@ -7,7 +7,11 @@
 //! session id; the database holds its hash and the tokens, sealed. What talks to concierge
 //! is the server's; this is told the tokens and, to rotate them, asks a [`Refresher`].
 
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::{
+	collections::HashMap,
+	future::Future,
+	sync::{Arc, Mutex},
+};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use eyre::WrapErr;
@@ -39,9 +43,17 @@ pub const ROTATION_WAIT: SignedDuration = SignedDuration::from_secs(6);
 
 const ROTATION_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 
+const PRELOGIN_AAD: &[u8] = b"sa-panel/prelogin/v1";
+
+/// Rotates a refresh token at concierge. The port the session asks when its access token is
+/// about to expire; the server implements it over gRPC.
+pub trait Refresher: Sync {
+	fn refresh(&self, refresh_token: &str) -> impl Future<Output = Result<Tokens, RefreshError>> + Send;
+}
+
 /// The rotations under way in this process, one lock per session: its single flight.
 #[derive(Debug, Default)]
-pub struct Rotations(std::sync::Mutex<HashMap<SessionKey, Arc<tokio::sync::Mutex<()>>>>);
+pub struct Rotations(Mutex<HashMap<SessionKey, Arc<tokio::sync::Mutex<()>>>>);
 
 impl Rotations {
 	fn of(&self, key: SessionKey) -> Arc<tokio::sync::Mutex<()>> {
@@ -74,12 +86,6 @@ impl std::fmt::Debug for Tokens {
 			.field("refresh_expires_at", &self.refresh_expires_at)
 			.finish_non_exhaustive()
 	}
-}
-
-/// Rotates a refresh token at concierge. The port the session asks when its access token is
-/// about to expire; the server implements it over gRPC.
-pub trait Refresher: Sync {
-	fn refresh(&self, refresh_token: &str) -> impl Future<Output = Result<Tokens, RefreshError>> + Send;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -174,16 +180,6 @@ pub struct PreLogin {
 	pub return_to: Option<String>,
 }
 
-#[derive(Deserialize, Serialize)]
-struct PreLoginPlain {
-	state: String,
-	verifier: String,
-	return_to: Option<String>,
-	issued_at: i64,
-}
-
-const PRELOGIN_AAD: &[u8] = b"sa-panel/prelogin/v1";
-
 /// 256 random bits as 64 hex characters: states, verifiers, session ids, CSRF tokens.
 pub fn random_token() -> eyre::Result<String> {
 	let mut raw = Zeroizing::new([0u8; 32]);
@@ -194,6 +190,14 @@ pub fn random_token() -> eyre::Result<String> {
 /// The S256 code challenge of a PKCE verifier.
 pub fn pkce_challenge(verifier: &str) -> String {
 	URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
+}
+
+#[derive(Deserialize, Serialize)]
+struct PreLoginPlain {
+	state: String,
+	verifier: String,
+	return_to: Option<String>,
+	issued_at: i64,
 }
 
 /// Which of a session's two tokens.

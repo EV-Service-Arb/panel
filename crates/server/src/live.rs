@@ -65,6 +65,15 @@ pub const CLOSE_SESSION_ENDED: u16 = 4401;
 /// RFC 6455's "going away": the server is stopping.
 pub const CLOSE_GOING_AWAY: u16 = 1001;
 
+/// How long the feed may say nothing (sites pings every 25 s) before it is taken for dead.
+const FEED_IDLE: Duration = Duration::from_secs(60);
+
+/// The longest line sites' feed may send.
+const FEED_LINE: usize = 64 * 1024;
+
+/// The waits between reconnections: doubling from the first to the last.
+const FEED_BACKOFF: (Duration, Duration) = (Duration::from_secs(1), Duration::from_secs(30));
+
 /// What the live sockets may cost.
 #[derive(Clone, Copy, Debug)]
 pub struct LiveLimits {
@@ -118,9 +127,89 @@ impl Live {
 	}
 }
 
+/// `GET /api/v1/live`. The upgrade is extracted as a `Result` so a request that is not a
+/// handshake is still answered 403/401 first, the same as one that is.
+pub async fn upgrade(State(live): State<Live>, headers: HeaderMap, ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>) -> Response {
+	if !same_origin(&headers, live.sign_in.panel_origin()) {
+		tracing::info!(origin = ?headers.get(header::ORIGIN), "live: a handshake from another origin refused");
+		return refuse(StatusCode::FORBIDDEN, "origin");
+	}
+	let caller = match signin::check(&live.sign_in, &headers, Freshness::Cached).await {
+		Ok(c) => c,
+		Err(denied) => return denied.into_response(&live.sign_in),
+	};
+	let ws = match ws {
+		Ok(ws) => ws,
+		Err(rejection) => return rejection.into_response(),
+	};
+	// The check passed, so the cookie is there and names a session.
+	let Some(key) = live.sign_in.cookies().get(&headers, cookies::SESSION).and_then(SessionKey::of_cookie) else {
+		return Denied::Unauthenticated.into_response(&live.sign_in);
+	};
+	let Some(slot) = live.slots.take(caller.user_id, &live.limits) else {
+		tracing::info!(user_id = %caller.user_id, "live: too many sockets");
+		return refuse(StatusCode::TOO_MANY_REQUESTS, "too many live connections");
+	};
+	// Only the cookie is kept, to ask for the session again.
+	let mut cookie = HeaderMap::new();
+	for v in headers.get_all(header::COOKIE) {
+		cookie.append(header::COOKIE, v.clone());
+	}
+	let rx = live.sign_in.panel.bus().subscribe();
+	let span = tracing::info_span!("live", user_id = %caller.user_id);
+	ws.max_message_size(4096).max_frame_size(4096).max_write_buffer_size(256 * 1024).on_upgrade(move |socket| {
+		Connection {
+			socket,
+			live,
+			caller,
+			cookie,
+			key,
+			rx,
+			_slot: slot,
+		}
+		.run()
+		.instrument(span)
+	})
+}
+
+/// Follows sites' change feed until `shutdown`, onto `bus`: reconnected with a backoff whenever
+/// it ends, fails, or goes quiet; sites sends `resync` first on every connection, so whatever
+/// was missed meanwhile is read again.
+pub async fn follow(services: Services, bus: sa_panel::live::Bus, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+	let mut wait = FEED_BACKOFF.0;
+	while !*shutdown.borrow() {
+		let heard = tokio::select! {
+			r = feed(&services, &bus) => r,
+			_ = shutdown.changed() => return,
+		};
+		match heard {
+			Ok(true) => wait = FEED_BACKOFF.0,
+			Ok(false) => {}
+			Err(e) => tracing::warn!(error = format!("{e:#}"), "live: sites' feed broke off"),
+		}
+		tokio::select! {
+			() = tokio::time::sleep(wait) => {}
+			_ = shutdown.changed() => return,
+		}
+		wait = (wait * 2).min(FEED_BACKOFF.1);
+	}
+}
+
 /// Who holds how many sockets.
 #[derive(Clone, Debug, Default)]
 struct Slots(Arc<Mutex<Held>>);
+impl Slots {
+	fn take(&self, user: Uuid, limits: &LiveLimits) -> Option<Slot> {
+		let mut held = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+		let mine = held.by_user.get(&user).copied().unwrap_or(0);
+		if held.total >= limits.total || mine >= limits.per_user {
+			return None;
+		}
+		held.total += 1;
+		held.by_user.insert(user, mine + 1);
+		Some(Slot { slots: self.clone(), user })
+	}
+}
 
 #[derive(Debug, Default)]
 struct Held {
@@ -134,19 +223,6 @@ struct Held {
 struct Slot {
 	slots: Slots,
 	user: Uuid,
-}
-
-impl Slots {
-	fn take(&self, user: Uuid, limits: &LiveLimits) -> Option<Slot> {
-		let mut held = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-		let mine = held.by_user.get(&user).copied().unwrap_or(0);
-		if held.total >= limits.total || mine >= limits.per_user {
-			return None;
-		}
-		held.total += 1;
-		held.by_user.insert(user, mine + 1);
-		Some(Slot { slots: self.clone(), user })
-	}
 }
 
 impl Drop for Slot {
@@ -209,51 +285,6 @@ fn same_origin(headers: &HeaderMap, ours: &str) -> bool {
 	headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()).is_some_and(|origin| origin.eq_ignore_ascii_case(ours))
 }
 
-/// `GET /api/v1/live`. The upgrade is extracted as a `Result` so a request that is not a
-/// handshake is still answered 403/401 first, the same as one that is.
-pub async fn upgrade(State(live): State<Live>, headers: HeaderMap, ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>) -> Response {
-	if !same_origin(&headers, live.sign_in.panel_origin()) {
-		tracing::info!(origin = ?headers.get(header::ORIGIN), "live: a handshake from another origin refused");
-		return refuse(StatusCode::FORBIDDEN, "origin");
-	}
-	let caller = match signin::check(&live.sign_in, &headers, Freshness::Cached).await {
-		Ok(c) => c,
-		Err(denied) => return denied.into_response(&live.sign_in),
-	};
-	let ws = match ws {
-		Ok(ws) => ws,
-		Err(rejection) => return rejection.into_response(),
-	};
-	// The check passed, so the cookie is there and names a session.
-	let Some(key) = live.sign_in.cookies().get(&headers, cookies::SESSION).and_then(SessionKey::of_cookie) else {
-		return Denied::Unauthenticated.into_response(&live.sign_in);
-	};
-	let Some(slot) = live.slots.take(caller.user_id, &live.limits) else {
-		tracing::info!(user_id = %caller.user_id, "live: too many sockets");
-		return refuse(StatusCode::TOO_MANY_REQUESTS, "too many live connections");
-	};
-	// Only the cookie is kept, to ask for the session again.
-	let mut cookie = HeaderMap::new();
-	for v in headers.get_all(header::COOKIE) {
-		cookie.append(header::COOKIE, v.clone());
-	}
-	let rx = live.sign_in.panel.bus().subscribe();
-	let span = tracing::info_span!("live", user_id = %caller.user_id);
-	ws.max_message_size(4096).max_frame_size(4096).max_write_buffer_size(256 * 1024).on_upgrade(move |socket| {
-		Connection {
-			socket,
-			live,
-			caller,
-			cookie,
-			key,
-			rx,
-			_slot: slot,
-		}
-		.run()
-		.instrument(span)
-	})
-}
-
 struct Connection {
 	socket: WebSocket,
 	live: Live,
@@ -264,18 +295,6 @@ struct Connection {
 	rx: broadcast::Receiver<Signal>,
 	_slot: Slot,
 }
-
-/// What one turn of the loop decided.
-enum Step {
-	Nothing,
-	Send(Message),
-	/// Behind by more than the bus holds: skip what is left of it and say so.
-	Lagged(u64),
-	Close(u16, &'static str),
-	/// The peer is gone or broke the protocol: nothing more to say to it.
-	Drop,
-}
-
 impl Connection {
 	async fn run(mut self) {
 		let limits = self.live.limits;
@@ -373,14 +392,16 @@ impl Connection {
 	}
 }
 
-/// How long the feed may say nothing (sites pings every 25 s) before it is taken for dead.
-const FEED_IDLE: Duration = Duration::from_secs(60);
-
-/// The longest line sites' feed may send.
-const FEED_LINE: usize = 64 * 1024;
-
-/// The waits between reconnections: doubling from the first to the last.
-const FEED_BACKOFF: (Duration, Duration) = (Duration::from_secs(1), Duration::from_secs(30));
+/// What one turn of the loop decided.
+enum Step {
+	Nothing,
+	Send(Message),
+	/// Behind by more than the bus holds: skip what is left of it and say so.
+	Lagged(u64),
+	Close(u16, &'static str),
+	/// The peer is gone or broke the protocol: nothing more to say to it.
+	Drop,
+}
 
 /// A line of sites' feed (`GET /api/conductor/changes`).
 #[derive(serde::Deserialize)]
@@ -395,29 +416,6 @@ enum Line {
 	},
 	Resync,
 	Ping,
-}
-
-/// Follows sites' change feed until `shutdown`, onto `bus`: reconnected with a backoff whenever
-/// it ends, fails, or goes quiet; sites sends `resync` first on every connection, so whatever
-/// was missed meanwhile is read again.
-pub async fn follow(services: Services, bus: sa_panel::live::Bus, mut shutdown: tokio::sync::watch::Receiver<bool>) {
-	let mut wait = FEED_BACKOFF.0;
-	while !*shutdown.borrow() {
-		let heard = tokio::select! {
-			r = feed(&services, &bus) => r,
-			_ = shutdown.changed() => return,
-		};
-		match heard {
-			Ok(true) => wait = FEED_BACKOFF.0,
-			Ok(false) => {}
-			Err(e) => tracing::warn!(error = format!("{e:#}"), "live: sites' feed broke off"),
-		}
-		tokio::select! {
-			() = tokio::time::sleep(wait) => {}
-			_ = shutdown.changed() => return,
-		}
-		wait = (wait * 2).min(FEED_BACKOFF.1);
-	}
 }
 
 /// One connection to the feed, until it ends: whether a line came through it.

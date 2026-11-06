@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 use super::{from_db, to_db};
 
+type Row = (Uuid, String, String, String, i64, Uuid);
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccessRequest {
 	pub user_id: Uuid,
@@ -18,23 +20,10 @@ pub struct AccessRequest {
 	pub event_id: Uuid,
 }
 
-type Row = (Uuid, String, String, String, i64, Uuid);
-
 macro_rules! columns {
 	() => {
 		"user_id, need, email, name, requested_at, event_id"
 	};
-}
-
-fn row((user_id, need, email, name, requested_at, event_id): Row) -> eyre::Result<AccessRequest> {
-	Ok(AccessRequest {
-		user_id,
-		need,
-		email,
-		name,
-		requested_at: from_db(requested_at)?,
-		event_id,
-	})
 }
 
 pub async fn of_user(conn: &mut SqliteConnection, user: Uuid) -> eyre::Result<Vec<AccessRequest>> {
@@ -89,4 +78,15 @@ pub async fn to_tell(conn: &mut SqliteConnection, since: Timestamp, limit: i64) 
 	.await
 	.wrap_err("finding access requests to tell")?;
 	rows.into_iter().map(row).collect()
+}
+
+fn row((user_id, need, email, name, requested_at, event_id): Row) -> eyre::Result<AccessRequest> {
+	Ok(AccessRequest {
+		user_id,
+		need,
+		email,
+		name,
+		requested_at: from_db(requested_at)?,
+		event_id,
+	})
 }

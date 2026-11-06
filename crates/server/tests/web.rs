@@ -66,7 +66,7 @@ fn app_routes() -> Router {
 }
 
 fn app(dir: &Path) -> Router {
-	web::serve(app_routes(), Files::new(dir).unwrap())
+	web::serve(app_routes(), Files::try_new(dir).unwrap())
 }
 
 async fn send(app: &Router, method: Method, uri: &str, headers: &[(header::HeaderName, &str)]) -> (StatusCode, HeaderMap, String) {
@@ -232,7 +232,7 @@ async fn nothing_outside_the_directory() {
 #[test]
 fn a_directory_without_the_export_is_refused_at_boot() {
 	let export = Export::new();
-	let e = Files::new(&export.root).unwrap_err();
+	let e = Files::try_new(&export.root).unwrap_err();
 	assert!(format!("{e}").contains("has no index.html"), "{e}");
-	assert!(Files::new(&export.root.join("missing")).is_err());
+	assert!(Files::try_new(&export.root.join("missing")).is_err());
 }

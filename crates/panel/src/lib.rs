@@ -91,17 +91,6 @@ impl std::fmt::Debug for NewSource {
 	}
 }
 
-/// The sources' keys changed: no brand, no single subject a screen would refetch by.
-fn sources_changed() -> live::Change {
-	live::Change {
-		topic: "sources".into(),
-		brand: None,
-		id: None,
-		at: Timestamp::now(),
-		audience: live::Audience::Holders(Sources::Manage.as_str().into()),
-	}
-}
-
 /// The engine.
 #[derive(Clone, Debug)]
 pub struct Panel {
@@ -114,7 +103,6 @@ pub struct Panel {
 	/// Told of every change review_archive's snapshot carries.
 	snapshot_due: Arc<tokio::sync::Notify>,
 }
-
 impl Panel {
 	pub fn new(store: Store, key: DataKey, renewal: Renewal, google: sa_places::Google) -> Self {
 		Self {
@@ -214,5 +202,16 @@ impl Panel {
 			refuse(e)
 		})?;
 		Ok(source.grant)
+	}
+}
+
+/// The sources' keys changed: no brand, no single subject a screen would refetch by.
+fn sources_changed() -> live::Change {
+	live::Change {
+		topic: "sources".into(),
+		brand: None,
+		id: None,
+		at: Timestamp::now(),
+		audience: live::Audience::Holders(Sources::Manage.as_str().into()),
 	}
 }

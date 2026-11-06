@@ -45,6 +45,12 @@ use zeroize::Zeroizing;
 const TOKEN: &str = "123456:test-bot-token";
 const DATA_KEY: &str = "0f0e0d0c0b0a09080706050403020100000102030405060708090a0b0c0d0e0f";
 
+/// The capture review_archive serves for a gone review.
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\nnot really";
+
+const ROYAT: &str = "ChIJLU7jZClu5kcR4PcOOO6p3I0";
+
+const CHAMALIERES: &str = "ChIJD7fiBh9u5kcRYJSMaMOCCwQ";
 fn t0() -> Timestamp {
 	"2026-09-30T18:00:00Z".parse().unwrap()
 }
@@ -180,9 +186,6 @@ impl FakeService {
 	}
 }
 
-/// The capture review_archive serves for a gone review.
-const PNG: &[u8] = b"\x89PNG\r\n\x1a\nnot really";
-
 async fn serve(service: FakeService) -> (String, Log) {
 	let notes = service.clone();
 	let received = service.clone();
@@ -266,70 +269,6 @@ struct Setup {
 	archive_seen: Log,
 	n: Hub<BotApi, FakeConcierge, Services>,
 }
-
-async fn setup() -> Setup {
-	let db = TestDb::create().await;
-	let panel = aliases::panel_with(db.store().await, DataKey::from_hex(DATA_KEY).unwrap());
-	let (mock, base) = mock_bot().await;
-	let (sites, archive) = (FakeService::default(), FakeService::default());
-	let (sites_base, seen) = serve(sites.clone()).await;
-	let (archive_base, archive_seen) = serve(archive.clone()).await;
-	let concierge = FakeConcierge::default();
-	let n = Hub {
-		panel: panel.clone(),
-		bot: BotApi::new(&base, TOKEN).unwrap(),
-		concierge: concierge.clone(),
-		feeds: Services::new(Upstreams {
-			review_archive: archive_base.parse().unwrap(),
-			playbook: sites_base.parse().unwrap(),
-			sites: sites_base.parse().unwrap(),
-			signer: SEED.parse().unwrap(),
-		}),
-		locale: Locale::Ru,
-		cabinet: cabinet(),
-	};
-	panel
-		.import_review_archive(Export {
-			people: vec![],
-			gmails: vec![],
-			gmbs: vec![],
-			ledger: vec![],
-			kickbacks: vec![],
-		})
-		.await
-		.unwrap();
-	Setup {
-		db: db.pool().await,
-		_db: db,
-		panel,
-		mock,
-		concierge,
-		sites,
-		archive,
-		seen,
-		archive_seen,
-		n,
-	}
-}
-
-fn private(id: i64) -> Chat {
-	Chat { id, private: true }
-}
-
-/// A lead's two buttons, as sites describes them.
-fn lead_buttons(lead: &str) -> Value {
-	json!([
-		{"id": "take", "label": "Взял", "pressed": "Взял",
-		 "call": {"method": "POST", "path": format!("/api/v1/leads/aquafix/{lead}/stage"), "body": {"stage": "contacted"}}, "leaves": []},
-		{"id": "no_answer", "label": "Не дозвонился", "pressed": "Не дозвонился",
-		 "call": {"method": "POST", "path": format!("/api/v1/leads/aquafix/{lead}/no_answer"), "body": null}, "leaves": ["take"]},
-	])
-}
-
-fn text(text: &str) -> Value {
-	json!({"text": text, "entities": []})
-}
-
 impl Setup {
 	/// A user linked to `chat` at `now`, as the Alerts page and `/start` do it.
 	async fn link(&self, user: Uuid, permissions: PermissionSet, chat: i64, now: Timestamp) {
@@ -483,6 +422,69 @@ impl Setup {
 	}
 }
 
+async fn setup() -> Setup {
+	let db = TestDb::create().await;
+	let panel = aliases::panel_with(db.store().await, DataKey::from_hex(DATA_KEY).unwrap());
+	let (mock, base) = mock_bot().await;
+	let (sites, archive) = (FakeService::default(), FakeService::default());
+	let (sites_base, seen) = serve(sites.clone()).await;
+	let (archive_base, archive_seen) = serve(archive.clone()).await;
+	let concierge = FakeConcierge::default();
+	let n = Hub {
+		panel: panel.clone(),
+		bot: BotApi::try_new(&base, TOKEN).unwrap(),
+		concierge: concierge.clone(),
+		feeds: Services::new(Upstreams {
+			review_archive: archive_base.parse().unwrap(),
+			playbook: sites_base.parse().unwrap(),
+			sites: sites_base.parse().unwrap(),
+			signer: SEED.parse().unwrap(),
+		}),
+		locale: Locale::Ru,
+		cabinet: cabinet(),
+	};
+	panel
+		.import_review_archive(Export {
+			people: vec![],
+			gmails: vec![],
+			gmbs: vec![],
+			ledger: vec![],
+			kickbacks: vec![],
+		})
+		.await
+		.unwrap();
+	Setup {
+		db: db.pool().await,
+		_db: db,
+		panel,
+		mock,
+		concierge,
+		sites,
+		archive,
+		seen,
+		archive_seen,
+		n,
+	}
+}
+
+fn private(id: i64) -> Chat {
+	Chat { id, private: true }
+}
+
+/// A lead's two buttons, as sites describes them.
+fn lead_buttons(lead: &str) -> Value {
+	json!([
+		{"id": "take", "label": "Взял", "pressed": "Взял",
+		 "call": {"method": "POST", "path": format!("/api/v1/leads/aquafix/{lead}/stage"), "body": {"stage": "contacted"}}, "leaves": []},
+		{"id": "no_answer", "label": "Не дозвонился", "pressed": "Не дозвонился",
+		 "call": {"method": "POST", "path": format!("/api/v1/leads/aquafix/{lead}/no_answer"), "body": null}, "leaves": ["take"]},
+	])
+}
+
+fn text(text: &str) -> Value {
+	json!({"text": text, "entities": []})
+}
+
 fn texts(calls: &[Value]) -> Vec<String> {
 	calls.iter().map(|c| c["text"].as_str().unwrap_or_default().to_owned()).collect()
 }
@@ -490,9 +492,6 @@ fn texts(calls: &[Value]) -> Vec<String> {
 fn cabinet() -> url::Url {
 	"https://evinvest.test".parse().unwrap()
 }
-
-const ROYAT: &str = "ChIJLU7jZClu5kcR4PcOOO6p3I0";
-const CHAMALIERES: &str = "ChIJD7fiBh9u5kcRYJSMaMOCCwQ";
 
 // ── linking ──────────────────────────────────────────────────────────────────────────────
 

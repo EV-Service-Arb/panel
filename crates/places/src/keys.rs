@@ -22,16 +22,6 @@ pub enum Spent {
 	/// restart, after a human has fixed it.
 	Billing,
 }
-
-impl std::fmt::Display for Spent {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			Self::Quota { limit, reset } => write!(f, "its project's {limit} is used, until {:02}:{:02} UTC", reset % 86_400 / 3600, reset % 3600 / 60),
-			Self::Billing => write!(f, "its project's billing is disabled"),
-		}
-	}
-}
-
 impl Spent {
 	/// What a refusal says about the key, if it says the key is done for a window. Anything else —
 	/// a malformed query, a key with the wrong referrer — is `None`: rotating on it would spend
@@ -64,16 +54,17 @@ impl Spent {
 	}
 }
 
-/// The keys and which of them sit out.
-pub struct Keys(Mutex<Vec<(Zeroizing<String>, Option<Spent>)>>);
-
-impl std::fmt::Debug for Keys {
+impl std::fmt::Display for Spent {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		let keys = self.0.lock().expect("never poisoned: no panic while held");
-		f.debug_list().entries(keys.iter().map(|(_, out)| out)).finish()
+		match self {
+			Self::Quota { limit, reset } => write!(f, "its project's {limit} is used, until {:02}:{:02} UTC", reset % 86_400 / 3600, reset % 3600 / 60),
+			Self::Billing => write!(f, "its project's billing is disabled"),
+		}
 	}
 }
 
+/// The keys and which of them sit out.
+pub struct Keys(Mutex<Vec<(Zeroizing<String>, Option<Spent>)>>);
 impl Keys {
 	/// `keys` in the order they are used in.
 	pub fn new(keys: Vec<String>) -> Self {
@@ -109,6 +100,13 @@ impl Keys {
 		let tail = &key[key.len().saturating_sub(4)..];
 		tracing::warn!(key = %format!("…{tail}"), "Places key spent: {why}");
 		*out = Some(why);
+	}
+}
+
+impl std::fmt::Debug for Keys {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let keys = self.0.lock().expect("never poisoned: no panic while held");
+		f.debug_list().entries(keys.iter().map(|(_, out)| out)).finish()
 	}
 }
 

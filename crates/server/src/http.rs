@@ -53,26 +53,6 @@ impl Section {
 	}
 }
 
-/// What the `/api/v1` routes are served on.
-#[derive(Clone)]
-pub(crate) struct ApiState {
-	pub(crate) panel: Panel,
-	/// With the forward configured.
-	pub(crate) sites: Option<Services>,
-	/// What the Connected sites page asks the landings with.
-	pub(crate) probe: reqwest::Client,
-	/// With `TELEGRAM_BOT_TOKEN`.
-	pub(crate) telegram: Option<Telegram>,
-	/// With `GOOGLE_MAPS_BROWSER_KEY`.
-	pub(crate) map: Option<gmbs::MapDto>,
-}
-
-impl FromRef<ApiState> for Panel {
-	fn from_ref(s: &ApiState) -> Self {
-		s.panel.clone()
-	}
-}
-
 /// One `/api/v1` route, and who passes its gate.
 pub struct ApiRoute {
 	pub method: Method,
@@ -83,7 +63,6 @@ pub struct ApiRoute {
 	freshness: Freshness,
 	handler: MethodRouter<ApiState>,
 }
-
 impl ApiRoute {
 	pub(crate) fn new<H: Handler<T, ApiState>, T: 'static>(method: Method, path: &'static str, section: Option<Section>, freshness: Freshness, handler: H) -> Self {
 		let filter = MethodFilter::try_from(method.clone()).expect("the routes name standard methods");
@@ -124,21 +103,6 @@ pub struct Limits {
 	pub api_timeout: Duration,
 	/// `/api/v1/live`.
 	pub live: LiveLimits,
-}
-
-impl Default for Limits {
-	fn default() -> Self {
-		Self {
-			max_concurrent: 32,
-			body_timeout: Duration::from_secs(10),
-			request_timeout: Duration::from_secs(30),
-			auth_concurrent: 8,
-			auth_timeout: Duration::from_secs(10),
-			api_concurrent: 32,
-			api_timeout: Duration::from_secs(15),
-			live: LiveLimits::default(),
-		}
-	}
 }
 
 /// Everything the conductor answers but the front end's files; ingest and the forward only with
@@ -182,6 +146,41 @@ pub fn app(sign_in: SignIn, forward: Option<Forward>, grafana: Option<&Grafana>,
 		None => app,
 	};
 	app.layer(middleware::map_response(nosniff))
+}
+
+/// What the `/api/v1` routes are served on.
+#[derive(Clone)]
+pub(crate) struct ApiState {
+	pub(crate) panel: Panel,
+	/// With the forward configured.
+	pub(crate) sites: Option<Services>,
+	/// What the Connected sites page asks the landings with.
+	pub(crate) probe: reqwest::Client,
+	/// With `TELEGRAM_BOT_TOKEN`.
+	pub(crate) telegram: Option<Telegram>,
+	/// With `GOOGLE_MAPS_BROWSER_KEY`.
+	pub(crate) map: Option<gmbs::MapDto>,
+}
+
+impl FromRef<ApiState> for Panel {
+	fn from_ref(s: &ApiState) -> Self {
+		s.panel.clone()
+	}
+}
+
+impl Default for Limits {
+	fn default() -> Self {
+		Self {
+			max_concurrent: 32,
+			body_timeout: Duration::from_secs(10),
+			request_timeout: Duration::from_secs(30),
+			auth_concurrent: 8,
+			auth_timeout: Duration::from_secs(10),
+			api_concurrent: 32,
+			api_timeout: Duration::from_secs(15),
+			live: LiveLimits::default(),
+		}
+	}
 }
 
 /// At most `concurrent` at once across `routes`, past it `503` rather than a queue; at most
