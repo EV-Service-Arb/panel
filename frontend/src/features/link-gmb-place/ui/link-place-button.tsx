@@ -11,7 +11,7 @@ import { notifyFailure } from "@/shared/ui/notify";
 import { useButtonSize } from "@/shared/ui/touch";
 
 /** Which of sites' places is this GMB's landing; `linked` holds every GMB's link, so a place another GMB has is shown taken. */
-export function LinkPlaceButton({ gmbId, linked, onDone }: { gmbId: number; linked: Map<number, SiteTag>; onDone: () => void }) {
+export function LinkPlaceButton({ gmbId, linked, onDone }: { gmbId: number; linked: ReadonlyMap<number, SiteTag>; onDone: () => void }) {
   const t = useT();
   const button = useButtonSize();
   const [open, setOpen] = useState(false);
@@ -54,7 +54,7 @@ function Picker({
   onUnlink,
 }: {
   gmbId: number;
-  linked: Map<number, SiteTag>;
+  linked: ReadonlyMap<number, SiteTag>;
   onClose: () => void;
   onPick: (brand: string, location: string) => void;
   onUnlink?: () => void;

@@ -8,10 +8,10 @@ use std::collections::BTreeSet;
 
 use eyre::WrapErr;
 use jiff::Timestamp;
-use sa_places::{Ask, Place};
+use sa_places::{Ask, LatLng, Place};
 use uuid::Uuid;
 
-pub use crate::store::gmbs::{Gmail, Gmb};
+pub use crate::store::gmbs::{Gmail, Gmb, Point};
 use crate::{Panel, Refused, store::gmbs as db, tokens::is_open};
 
 fn places_error(e: sa_places::Error) -> eyre::Result<Refused> {
@@ -100,8 +100,8 @@ impl Panel {
 			Some(o) if owner.is_none_or(|owner| owner == o) => {}
 			_ => return Ok(Err(Refused::NotFound)),
 		}
-		if let Some(p) = &place {
-			db::set_point(&mut tx, &place_id, p.location).await?;
+		if let Some(at) = place.as_ref().and_then(|p| p.location) {
+			db::set_point(&mut tx, &place_id, at).await?;
 		}
 		let (name, address) = place.as_ref().map_or((None, None), |p| (p.name.as_deref(), p.address.as_deref()));
 		let Some(added) = db::add_gmb(&mut tx, None, gmail_id, &place_id, name, address, now).await? else {
@@ -113,23 +113,41 @@ impl Panel {
 	}
 
 	/// Every place a GMB is on without a point, asked of Places (its cache first) and located.
-	/// Returns how many were, and the places Places refused with why.
-	pub async fn locate(&self) -> eyre::Result<(usize, Vec<(String, String)>)> {
+	/// Returns how many were, the places Places gives no point (service-area ones, for the map to
+	/// place), and the places Places refused with why.
+	pub async fn locate(&self) -> eyre::Result<(usize, Vec<String>, Vec<(String, String)>)> {
 		let unlocated = db::unlocated(&mut *self.store.pool().acquire().await.wrap_err("a connection for the unlocated")?).await?;
-		let (mut located, mut refused) = (0, Vec::new());
+		let (mut located, mut unplaceable, mut refused) = (0, Vec::new(), Vec::new());
 		for place_id in unlocated {
 			match self.google.details(&place_id, Ask::Cached).await {
-				Ok(place) => {
+				Ok(Place { location: Some(at), .. }) => {
 					let mut tx = self.store.begin_write().await?;
-					db::set_point(&mut tx, &place_id, place.location).await?;
+					db::set_point(&mut tx, &place_id, at).await?;
 					tx.commit().await.wrap_err("committing a point")?;
 					located += 1;
 				}
+				Ok(Place { location: None, .. }) => unplaceable.push(place_id),
 				Err(sa_places::Error::Invalid(why)) => refused.push((place_id, why)),
 				Err(e) => return Err(eyre::eyre!(e).wrap_err(format!("locating {place_id}"))),
 			}
 		}
-		Ok((located, refused))
+		Ok((located, unplaceable, refused))
+	}
+
+	/// The owner's GMB `id` placed at `at` on the map: its place's point while Places has none.
+	pub async fn place_gmb(&self, owner: Uuid, id: i64, at: LatLng) -> eyre::Result<Result<(), Refused>> {
+		if !(at.lat.is_finite() && at.lng.is_finite() && (-90.0..=90.0).contains(&at.lat) && (-180.0..=180.0).contains(&at.lng)) {
+			return Ok(Err(Refused::Invalid(format!("({}, {}) is no point on Earth", at.lat, at.lng))));
+		}
+		let mut tx = self.store.begin_write().await?;
+		if !is_open(&mut tx).await? {
+			return Ok(Err(Refused::Closed));
+		}
+		if let Err(r) = db::place(&mut tx, owner, id, at).await? {
+			return Ok(Err(r));
+		}
+		tx.commit().await.wrap_err("committing a placed point")?;
+		Ok(Ok(()))
 	}
 
 	/// Every one of `ids` on or off, or none: each must be the owner's, not removed.

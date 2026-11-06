@@ -15,7 +15,7 @@ use axum::{
 	routing::{get, post},
 };
 use sa_places::{
-	Ask, Error, Google, Keys, Spent,
+	Ask, Error, Google, Keys, LatLng, Spent,
 	parse::{Parsed, parse},
 };
 use serde_json::{Value, json};
@@ -71,6 +71,13 @@ fn procope() -> Value {
 	json!({ "id": PROCOPE, "displayName": { "text": "Le Procope" }, "formattedAddress": "13 Rue de l'Ancienne Comédie, Paris", "location": { "latitude": 48.853, "longitude": 2.3389 } })
 }
 
+const MOLD_ASSIST: &str = "ChIJmoldassistmoldassi";
+
+/// A service-area business: Places answers it with no address and no point.
+fn mold_assist() -> Value {
+	json!({ "id": MOLD_ASSIST, "displayName": { "text": "Mold Assist" } })
+}
+
 async fn search_text(State(s): State<Stub>, headers: HeaderMap, body: String) -> Response {
 	let body: Value = serde_json::from_str(&body).unwrap();
 	let query = body["textQuery"].as_str().unwrap().to_owned();
@@ -80,9 +87,10 @@ async fn search_text(State(s): State<Stub>, headers: HeaderMap, body: String) ->
 	match query.as_str() {
 		"Nowhere" => axum::Json(json!({})).into_response(),
 		"Broken" => (StatusCode::FORBIDDEN, "API key not valid").into_response(),
+		"Mold Assist" => axum::Json(json!({ "places": [mold_assist()] })).into_response(),
 		_ => axum::Json(json!({ "places": [
 			procope(),
-			{ "id": "ChIJsecondsecondsecond", "location": { "latitude": 1.0, "longitude": 2.0 } },
+			{ "id": "ChIJsecondsecondsecond" },
 			{ "id": "ChIJnamesakenamesakena", "displayName": { "text": "le procope" }, "formattedAddress": "1 Rue de Lyon, Marseille", "location": { "latitude": 43.3, "longitude": 5.4 } }
 		] }))
 		.into_response(),
@@ -95,6 +103,7 @@ async fn place_details(State(s): State<Stub>, headers: HeaderMap, Path(id): Path
 	}
 	match id.as_str() {
 		PROCOPE | "ChIJmovedmovedmovedmo" => axum::Json(procope()).into_response(),
+		MOLD_ASSIST => axum::Json(mold_assist()).into_response(),
 		"ChIJotherotherotherot" => axum::Json(json!({ "id": id, "location": { "latitude": 0.5, "longitude": 0.5 } })).into_response(),
 		_ => (StatusCode::NOT_FOUND, "not found").into_response(),
 	}
@@ -126,7 +135,7 @@ async fn every_place_bearing_the_name_is_found_and_the_search_is_biased_to_the_m
 	server.abort();
 	let ids: Vec<&str> = got.iter().map(|(id, _)| id.as_str()).collect();
 	assert_eq!(ids, [PROCOPE, "ChIJnamesakenamesakena"]);
-	assert_eq!(got[0].1.as_ref().unwrap().location.lat, 48.853);
+	assert_eq!(got[0].1.as_ref().unwrap().location.unwrap().lat, 48.853);
 	let (key, mask, body) = s.got.lock().unwrap()[0].clone();
 	assert_eq!((key.as_str(), mask.as_str()), ("key-123", "places.id,places.displayName,places.formattedAddress,places.location"));
 	assert_eq!(body["locationBias"]["circle"]["center"], json!({ "latitude": 48.853, "longitude": 2.3389 }));
@@ -156,9 +165,19 @@ async fn a_place_added_by_its_id_is_named_and_located_and_an_unknown_id_refused(
 	assert_eq!(moved, PROCOPE, "a moved place comes back under the id Google gives it now");
 	let got = got.unwrap();
 	assert_eq!((got.name.as_deref(), got.address.as_deref()), (Some("Le Procope"), Some("13 Rue de l'Ancienne Comédie, Paris")));
-	assert_eq!((got.location.lat, got.location.lng), (48.853, 2.3389));
+	assert_eq!(got.location, Some(LatLng { lat: 48.853, lng: 2.3389 }));
 	assert!(matches!(unknown, Error::Invalid(_)), "{unknown:#}");
 	assert_eq!(s.got.lock().unwrap()[0].1, "id,displayName,formattedAddress,location");
+}
+
+#[tokio::test]
+async fn a_service_area_place_has_no_point() {
+	let (_s, google, _cache, server) = google(&["k"]).await;
+	let detailed = google.details(MOLD_ASSIST, Ask::Afresh).await.unwrap();
+	let (_, searched) = google.resolve("https://www.google.com/maps/place/Mold+Assist").await.unwrap();
+	server.abort();
+	assert_eq!((detailed.name.as_deref(), detailed.location), (Some("Mold Assist"), None));
+	assert_eq!(searched.unwrap().location, None);
 }
 
 #[tokio::test]

@@ -81,7 +81,7 @@ const gmails: { id: number; gmail: string; created_at: string; gmbs: Json[] }[] 
     gmail: "owner@gmail.com",
     created_at: minsAgo(60 * 24 * 30),
     gmbs: [
-      { id: 1, place_id: "ChIJstubstubstub00001", name: "Plombier Paris 11 (stub)", address: "12 rue Oberkampf, Paris", gbp_account: null, gbp_location: null, created_at: minsAgo(60 * 24 * 30), enabled: true, location: { lat: 48.8649, lng: 2.3766 } },
+      { id: 1, place_id: "ChIJstubstubstub00001", name: "Plombier Paris 11 (stub)", address: "12 rue Oberkampf, Paris", gbp_account: null, gbp_location: null, created_at: minsAgo(60 * 24 * 30), enabled: true, location: { lat: 48.8649, lng: 2.3766, placed: false } },
       { id: 2, place_id: "ChIJstubstubstub00002", name: "Serrurier Lyon 3 (stub)", address: "4 cours Gambetta, Lyon", gbp_account: null, gbp_location: null, created_at: minsAgo(60 * 24 * 20), enabled: true, location: null },
     ],
   },
@@ -122,6 +122,14 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL): Promise
   // no browser key: the home page shows the outline without a map
   if (path === "/map") return send(res, 404, { error: "not found" });
   if (path === "/gmbs/resolve") return send(res, 200, { candidates: [{ place_id: "ChIJstubstubstub00009", name: "Électricien Lille (stub)", address: "8 rue Faidherbe, Lille" }] });
+  const placing = path.match(/^\/gmbs\/(\d+)\/location$/);
+  if (placing && req.method === "PUT") {
+    const gmb = gmails.flatMap((g) => g.gmbs).find((b) => b.id === Number(placing[1]));
+    if (!gmb) return send(res, 404, { error: "not found" });
+    const { lat, lng } = (await readJson(req)) as { lat: number; lng: number };
+    gmb.location = { lat, lng, placed: true };
+    return send(res, 204);
+  }
   if (path === "/tokens") return send(res, 200, tokens);
   if (path === "/tokens/ledger") return send(res, 200, { entries: ledger, next: null });
   if (path === "/tokens/usage") return send(res, 200, { days: usageDays });
@@ -164,11 +172,11 @@ const server = createServer((req, res) => {
   }
   if (url.pathname === "/api/review_archive/me/gmbs") {
     if (!signedIn(req)) return send(res, 401, { error: "sign in" });
-    return send(res, 200, { gmbs: { "1": { tracked: true, rating: 4.6, reviews: 132 }, "2": { tracked: false, rating: null, reviews: null } }, places_tracked: 1 });
+    return send(res, 200, { gmbs: { "1": { tracked: true, rating: 4.6, reviews: 132, suspended: 2, reinstating: 1, failing: false }, "2": { tracked: false, rating: null, reviews: null, suspended: 0, reinstating: 0, failing: false } }, places_tracked: 1 });
   }
   if (url.pathname === "/api/sites/gmbs") {
     if (!signedIn(req)) return send(res, 401, { error: "sign in" });
-    return send(res, 200, { "1": { brand: "aquafix", location: "paris-11" } });
+    return send(res, 200, { "1": { brand: "aquafix", location: "paris-11", leads_7d: 5, overdue: 1 } });
   }
   if (url.pathname === "/api/sites/places") {
     if (!signedIn(req)) return send(res, 401, { error: "sign in" });

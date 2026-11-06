@@ -3,9 +3,10 @@
 import { Skeleton, cn } from "@evinvest/uikit";
 import { importLibrary } from "@googlemaps/js-api-loader";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { type Listed, type MapConfig, fetchMapConfig, narrowed, setOnMap, useGmailScope, useGmails, useOnMap } from "@/entities/gmb";
+import { type LatLng, type Listed, type MapConfig, type Tags, fetchMapConfig, issueOf, narrowed, setOnMap, useGmailScope, useGmails, useGmbTags, useOnMap } from "@/entities/gmb";
+import { PlacingBar } from "@/features/place-gmb";
 import { takeReturnPage } from "@/shared/api";
 import { useT } from "@/shared/i18n";
 import { useResource } from "@/shared/lib/use-resource";
@@ -47,7 +48,8 @@ let fitted = false;
 function GmbMap({ config }: { config: MapConfig }) {
   const gmails = useGmails();
   const scope = useGmailScope();
-  const { hovered, peeked } = useOnMap();
+  const { hovered, peeked, placing } = useOnMap();
+  const { tags } = useGmbTags();
   const { host, map } = useTheMap(config.key, config.map_id);
   const listed = gmails.status === "ok" ? narrowed(gmails.data, scope, "") : [];
   const located = listed.filter((l) => l.gmb.location !== null);
@@ -57,7 +59,11 @@ function GmbMap({ config }: { config: MapConfig }) {
     locatedRef.current = located;
   });
   const markers = useRef(new Map<number, { marker: google.maps.marker.AdvancedMarkerElement; dot: HTMLSpanElement; listed: Listed }>());
-  const shown = located.map((l) => `${l.gmb.id}:${l.gmb.enabled}:${l.gmb.location?.lat},${l.gmb.location?.lng}`).join(" ");
+  const shown = located.map((l) => `${l.gmb.id}:${l.gmb.enabled}:${l.gmb.location?.lat},${l.gmb.location?.lng},${l.gmb.location?.placed}`).join(" ");
+  const styling = useRef({ hovered, peeked, tags });
+  useEffect(() => {
+    styling.current = { hovered, peeked, tags };
+  });
 
   useEffect(() => () => setOnMap({ inView: null, hovered: null, peeked: null }), []);
 
@@ -102,7 +108,7 @@ function GmbMap({ config }: { config: MapConfig }) {
         marker.addEventListener("gmp-click", () => setOnMap({ peeked: l.gmb.id }));
         made.set(l.gmb.id, { marker, dot, listed: l });
       }
-      styleDots(made, null, null);
+      styleDots(made, styling.current);
     });
     return () => {
       live = false;
@@ -111,7 +117,45 @@ function GmbMap({ config }: { config: MapConfig }) {
     };
   }, [map, shown]);
 
-  useEffect(() => styleDots(markers.current, hovered, peeked), [hovered, peeked, shown]);
+  useEffect(() => styleDots(markers.current, { hovered, peeked, tags }), [hovered, peeked, tags, shown]);
+
+  const placed = placing === null || gmails.status !== "ok" ? undefined : gmails.data.flatMap((g) => g.gmbs).find((b) => b.id === placing);
+  const placedRef = useRef(placed);
+  useEffect(() => {
+    placedRef.current = placed;
+  });
+  const [moved, setMoved] = useState<{ gmb: number; at: LatLng } | null>(null);
+  const pin = placed !== undefined && moved?.gmb === placed.id ? moved.at : null;
+  const pinMarker = useRef<google.maps.marker.AdvancedMarkerElement | null>(null);
+  useEffect(() => {
+    const gmb = placedRef.current;
+    if (map.status !== "ok" || gmb === undefined) return;
+    const move = (at: LatLng) => setMoved({ gmb: gmb.id, at });
+    let live = true;
+    const click = map.map.addListener("click", (e: google.maps.MapMouseEvent) => e.latLng && move(e.latLng.toJSON()));
+    void importLibrary("marker").then(({ AdvancedMarkerElement }) => {
+      if (!live) return;
+      const centre = map.map.getCenter();
+      if (centre === undefined) throw new Error("the map has no centre while shown");
+      const at = gmb.location ?? centre.toJSON();
+      const marker = new AdvancedMarkerElement({ map: map.map, position: at, gmpDraggable: true, zIndex: 2, title: gmb.name ?? gmb.place_id });
+      marker.addListener("dragend", () => {
+        const to = marker.position;
+        if (to) move(to instanceof google.maps.LatLng ? to.toJSON() : { lat: to.lat, lng: to.lng });
+      });
+      pinMarker.current = marker;
+      move(at);
+    });
+    return () => {
+      live = false;
+      click.remove();
+      if (pinMarker.current) pinMarker.current.map = null;
+      pinMarker.current = null;
+    };
+  }, [map, placed?.id]);
+  useEffect(() => {
+    if (pinMarker.current && pin) pinMarker.current.position = pin;
+  }, [pin]);
 
   const peekedListed = listed.find((l) => l.gmb.id === peeked);
   useEffect(() => {
@@ -127,17 +171,27 @@ function GmbMap({ config }: { config: MapConfig }) {
           <ErrorState failure={{ kind: "invalid", message: map.message }} />
         </div>
       )}
-      {peekedListed && <Peek listed={peekedListed} onClose={() => setOnMap({ peeked: null })} />}
+      {peekedListed && placed === undefined && <Peek listed={peekedListed} onClose={() => setOnMap({ peeked: null })} />}
+      {map.status === "ok" && placed !== undefined && pin !== null && <PlacingBar gmb={placed} map={map.map} at={pin} onMove={(at) => setMoved({ gmb: placed.id, at })} />}
     </>
   );
 }
 
-function styleDots(made: Map<number, { dot: HTMLSpanElement; listed: Listed; marker: google.maps.marker.AdvancedMarkerElement }>, hovered: number | null, peeked: number | null) {
+/** A pin is red while its GMB needs the operator, and hollow where its point was placed by hand. */
+function styleDots(
+  made: Map<number, { dot: HTMLSpanElement; listed: Listed; marker: google.maps.marker.AdvancedMarkerElement }>,
+  { hovered, peeked, tags }: { hovered: number | null; peeked: number | null; tags: Tags },
+) {
   for (const [id, { dot, listed, marker }] of made) {
     const lit = id === hovered || id === peeked;
+    const issue = issueOf(listed.gmb, tags);
+    const tone = issue !== null && issue !== "off" ? "negative" : listed.gmb.enabled ? "positive" : "ink-soft";
+    const hollow = listed.gmb.location?.placed === true;
     dot.className = cn(
-      "block size-3.5 rounded-full border-2 border-background shadow-md transition-transform",
-      listed.gmb.enabled ? "bg-positive" : "bg-ink-soft",
+      "block size-3.5 rounded-full border-2 shadow-md transition-transform",
+      hollow ? "bg-background" : "border-background",
+      hollow && { negative: "border-accent-error", positive: "border-positive", "ink-soft": "border-ink-soft" }[tone],
+      !hollow && { negative: "bg-accent-error", positive: "bg-positive", "ink-soft": "bg-ink-soft" }[tone],
       lit && "scale-150",
       id === peeked && "ring-2 ring-ink",
     );

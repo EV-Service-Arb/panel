@@ -10,9 +10,11 @@ export interface OnMap {
   hovered: number | null;
   /** The GMB whose card is open. */
   peeked: number | null;
+  /** The GMB whose point is being placed on the map by hand: until set or cancelled, the map left or not. */
+  placing: number | null;
 }
 
-const NONE: OnMap = { inView: null, hovered: null, peeked: null };
+const NONE: OnMap = { inView: null, hovered: null, peeked: null, placing: null };
 let state = NONE;
 const listeners = new Set<() => void>();
 

@@ -261,8 +261,11 @@ async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSign
 		}
 		Cmd::Gmb(GmbCmd::Locate) => {
 			eyre::ensure!(!settings.places_keys().is_empty(), "locating asks Places: GOOGLE_MAPS_KEYS must be set");
-			let (located, refused) = connect().await?.locate().await?;
+			let (located, unplaceable, refused) = connect().await?.locate().await?;
 			println!("{located} places located");
+			if !unplaceable.is_empty() {
+				println!("{} have no point on Google: place them on the map", unplaceable.len());
+			}
 			for (place_id, why) in &refused {
 				println!("{place_id}: {why}");
 			}

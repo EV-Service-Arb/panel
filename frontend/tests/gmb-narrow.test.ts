@@ -12,7 +12,7 @@ const gmb = (id: number, name: string, address: string | null, located: boolean)
   gbp_location: null,
   created_at: "2026-11-05T00:00:00Z",
   enabled: true,
-  location: located ? { lat: 45.76, lng: 4.83 } : null,
+  location: located ? { lat: 45.76, lng: 4.83, placed: false } : null,
 });
 
 const gmails: Gmail[] = [

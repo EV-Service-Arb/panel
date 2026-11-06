@@ -32,11 +32,16 @@ import { useEffect, useState } from "react";
 
 import {
   type Gmail,
+  ISSUES,
+  type Issue,
   type Listed,
   type SiteTag,
+  type Tags,
   byView,
   chooseGmailScope,
-  fetchSiteTags,
+  issueCounts,
+  issueOf,
+  issueText,
   narrowed,
   removeGmail,
   removeGmb,
@@ -44,15 +49,16 @@ import {
   switchGmbs,
   useGmailScope,
   useGmails,
+  useGmbTags,
   useOnMap,
 } from "@/entities/gmb";
 import { may, useMe } from "@/entities/session";
 import { AddGmailButton } from "@/features/add-gmail";
 import { AddGmbButton } from "@/features/add-gmb";
 import { LinkPlaceButton } from "@/features/link-gmb-place";
+import { PlaceButton } from "@/features/place-gmb";
 import { ROUTES } from "@/shared/config/routes";
 import { useT } from "@/shared/i18n";
-import { useResource } from "@/shared/lib/use-resource";
 import { ErrorState } from "@/shared/ui/error-state";
 import { notifyFailure } from "@/shared/ui/notify";
 import { useButtonSize } from "@/shared/ui/touch";
@@ -80,10 +86,10 @@ export function GmbTree({ onNavigate }: { onNavigate?: () => void }) {
   const scope = useGmailScope();
   const { inView, hovered, peeked } = useOnMap();
   const pathname = usePathname();
-  const linking = may(me, "sa:sites:work:places:edit");
-  const sites = useResource("gmbs.sites", () => (linking ? fetchSiteTags() : Promise.resolve(null)), "gmbs.sites", { focus: true });
-  const linked = sites.status === "ok" ? sites.data : null;
+  const { sites, tags } = useGmbTags();
+  const linked = may(me, "sa:sites:work:places:edit") ? tags.sites : null;
   const [filter, setFilter] = useState("");
+  const [only, setOnly] = useState<Issue | null>(null);
 
   // a scoped gmail removed, here or in another tab: back to all of them
   const known = gmails.status === "ok" ? gmails.data : null;
@@ -107,12 +113,22 @@ export function GmbTree({ onNavigate }: { onNavigate?: () => void }) {
   if (gmails.status === "loading") return <Skeleton className="mx-2 h-24" />;
   if (gmails.status === "error") return <ErrorState failure={gmails.failure} onRetry={gmails.reload} />;
   const scoped = gmails.data.find((g) => g.id === scope) ?? null;
-  const listed = narrowed(gmails.data, scoped?.id ?? null, filter);
+  const found = narrowed(gmails.data, scoped?.id ?? null, filter);
+  const counts = issueCounts(
+    found.map((l) => l.gmb),
+    tags,
+  );
+  const rank = (l: Listed) => {
+    const issue = issueOf(l.gmb, tags);
+    return issue === null ? ISSUES.length : ISSUES.indexOf(issue);
+  };
+  const listed = found.filter((l) => only === null || issueOf(l.gmb, tags) === only).sort((a, b) => rank(a) - rank(b));
   const onMap = pathname === "/" && inView !== null;
   const row = (l: Listed) => (
     <GmbRow
       key={l.gmb.id}
       listed={l}
+      tags={tags}
       showGmail={scoped === null}
       onMap={onMap}
       lit={l.gmb.id === hovered || l.gmb.id === peeked}
@@ -134,6 +150,25 @@ export function GmbTree({ onNavigate }: { onNavigate?: () => void }) {
         </InputGroupAddon>
         <InputGroupInput type="search" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("gmbs.filter")} aria-label={t("gmbs.filter")} />
       </InputGroup>
+      {counts.size > 0 && (
+        <div role="group" aria-label={t("gmbs.issues")} className="flex flex-wrap gap-1 px-0.5 pt-1">
+          {ISSUES.filter((i) => counts.has(i)).map((i) => (
+            <button
+              key={i}
+              type="button"
+              aria-pressed={only === i}
+              onClick={() => setOnly(only === i ? null : i)}
+              className={cn(
+                "rounded-full border px-2 py-0.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                only === i ? "border-ink bg-ink text-background" : "border-border hover:bg-hover/50",
+                only !== i && (i === "off" ? "text-ink-soft" : "text-accent-error-ink"),
+              )}
+            >
+              {t(`gmbs.issue.${i}`)} <span className="tabular-nums">{counts.get(i)}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {split ? (
         <>
           <h3 className={HEADING}>
@@ -222,6 +257,7 @@ function Scope({ gmails, scoped, onFlip, onChanged }: { gmails: Gmail[]; scoped:
 
 function GmbRow({
   listed: { gmb, gmail },
+  tags,
   showGmail,
   onMap,
   lit,
@@ -232,21 +268,40 @@ function GmbRow({
   onNavigate,
 }: {
   listed: Listed;
+  tags: Tags;
   showGmail: boolean;
   onMap: boolean;
   lit: boolean;
   current: boolean;
-  linked: Map<number, SiteTag> | null;
+  linked: ReadonlyMap<number, SiteTag> | null;
   onFlip: (ids: number[], enabled: boolean) => Promise<void>;
   onChanged: () => void;
   onNavigate?: () => void;
 }) {
   const t = useT();
   const name = gmb.name ?? gmb.place_id;
+  const issue = issueOf(gmb, tags);
+  const archive = tags.archive?.get(gmb.id);
+  const site = tags.sites?.get(gmb.id);
+  const key =
+    tags.sites !== null
+      ? site && { text: String(site.leads_7d), title: t("gmbs.leads7d.title") }
+      : archive?.rating != null && { text: `★ ${archive.rating.toFixed(1)}`, title: t("gmbs.rating.title") };
   const label = (
     <>
-      <span className={cn("block truncate", gmb.enabled ? "text-ink" : "text-ink-soft")}>{name}</span>
-      <span className="block truncate text-xs text-ink-soft">{[gmb.address, showGmail ? gmail.gmail : null].filter(Boolean).join(" · ")}</span>
+      <span className="flex items-baseline gap-2">
+        <span className={cn("min-w-0 flex-1 truncate", gmb.enabled ? "text-ink" : "text-ink-soft")}>{name}</span>
+        {key && (
+          <span className="shrink-0 text-xs text-ink-soft tabular-nums" title={key.title}>
+            {key.text}
+          </span>
+        )}
+      </span>
+      <span className="block truncate text-xs text-ink-soft">
+        {issue && <span className={cn("font-medium", issue === "off" ? "text-ink-soft" : "text-accent-error-ink")}>{issueText(issue, gmb.id, tags, t)}</span>}
+        {issue && (gmb.address || showGmail) && " · "}
+        {[gmb.address, showGmail ? gmail.gmail : null].filter(Boolean).join(" · ")}
+      </span>
     </>
   );
   const body = "min-w-0 flex-1 py-1.5 pl-2 text-left";
@@ -273,6 +328,7 @@ function GmbRow({
         </Link>
       )}
       <span className={cn("flex items-center", ON_HOVER)}>
+        <PlaceButton gmb={gmb} {...(onNavigate && { onNavigate })} />
         {linked && <LinkPlaceButton gmbId={gmb.id} linked={linked} onDone={onChanged} />}
         <Remove title={t("gmbs.gmb.remove.title", { name })} body={t("gmbs.gmb.remove.body")} remove={() => removeGmb(gmb.id)} onRemoved={onChanged} />
       </span>

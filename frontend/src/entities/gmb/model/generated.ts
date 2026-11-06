@@ -33,9 +33,10 @@ created_at: string,
  */
 enabled: boolean, 
 /**
- * `null`: added without a Places key, and not located since.
+ * `null`: added without a Places key and not located since, or a service-area place not
+ * placed yet. `placed`: on the map by hand.
  */
-location: { lat: number, lng: number } | null, };
+location: { lat: number, lng: number, placed: boolean } | null, };
 /**
  * `GET /map`: the browser's Maps JS key, referrer-restricted, and the map's id.
  */
