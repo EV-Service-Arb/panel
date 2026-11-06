@@ -12,6 +12,8 @@
 - [GMB Radar](https://www.gmbradar.com/local-seo-tool/local-rank-tracker)
   Demo Vid: https://www.youtube.com/watch?v=m8z3fyb_d3M
 
+  Really good interactions. Not beautiful, small scope, but the only functionality it provides has amazing UX.
+
 - [LocalRank](https://app.localrank.so)
   Has
   - gmaps keyword-reachability
