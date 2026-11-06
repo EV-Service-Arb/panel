@@ -67,6 +67,7 @@ float_cmp = "allow"
 len_zero = "allow"
 
 [workspace.lints.rust]
+stable_features = "allow"
 unused_features = "allow"
 
 [workspace.lints.cargo]
