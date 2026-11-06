@@ -39,12 +39,14 @@ fn now() -> u64 {
 	SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
 }
 
+type Refusals = HashMap<String, Vec<(StatusCode, String)>>;
+
 #[derive(Clone, Default)]
 struct Stub {
 	/// Each request: its key, field mask, and what it asked.
 	got: Arc<Mutex<Vec<(String, String, Value)>>>,
 	/// A key's next answers are these refusals.
-	refuse: Arc<Mutex<HashMap<String, Vec<(StatusCode, String)>>>>,
+	refuse: Arc<Mutex<Refusals>>,
 }
 
 impl Stub {

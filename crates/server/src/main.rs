@@ -331,6 +331,7 @@ enum Identity {
 	Dev(settings::DevSignIn),
 }
 
+#[expect(clippy::too_many_arguments, reason = "each part of the environment serve runs with, named at its one call")]
 async fn serve(
 	panel: Panel,
 	identity: Identity,
