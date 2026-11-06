@@ -161,7 +161,7 @@ export function GmbTree({ onNavigate }: { onNavigate?: () => void }) {
               className={cn(
                 "rounded-full border px-2 py-0.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 only === i ? "border-ink bg-ink text-background" : "border-border hover:bg-hover/50",
-                only !== i && (i === "off" ? "text-ink-soft" : "text-negative"),
+                only !== i && (i === "off" ? "text-ink-soft" : "text-accent-error-ink"),
               )}
             >
               {t(`gmbs.issue.${i}`)} <span className="tabular-nums">{counts.get(i)}</span>
@@ -298,7 +298,7 @@ function GmbRow({
         )}
       </span>
       <span className="block truncate text-xs text-ink-soft">
-        {issue && <span className={cn("font-medium", issue === "off" ? "text-ink-soft" : "text-negative")}>{issueText(issue, gmb.id, tags, t)}</span>}
+        {issue && <span className={cn("font-medium", issue === "off" ? "text-ink-soft" : "text-accent-error-ink")}>{issueText(issue, gmb.id, tags, t)}</span>}
         {issue && (gmb.address || showGmail) && " · "}
         {[gmb.address, showGmail ? gmail.gmail : null].filter(Boolean).join(" · ")}
       </span>

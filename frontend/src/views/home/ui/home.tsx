@@ -65,7 +65,7 @@ function GmbMap({ config }: { config: MapConfig }) {
     styling.current = { hovered, peeked, tags };
   });
 
-  useEffect(() => () => setOnMap({ inView: null, hovered: null, peeked: null, placing: null }), []);
+  useEffect(() => () => setOnMap({ inView: null, hovered: null, peeked: null }), []);
 
   useEffect(() => {
     if (map.status !== "ok") return;
@@ -190,8 +190,8 @@ function styleDots(
     dot.className = cn(
       "block size-3.5 rounded-full border-2 shadow-md transition-transform",
       hollow ? "bg-background" : "border-background",
-      hollow && { negative: "border-negative", positive: "border-positive", "ink-soft": "border-ink-soft" }[tone],
-      !hollow && { negative: "bg-negative", positive: "bg-positive", "ink-soft": "bg-ink-soft" }[tone],
+      hollow && { negative: "border-accent-error", positive: "border-positive", "ink-soft": "border-ink-soft" }[tone],
+      !hollow && { negative: "bg-accent-error", positive: "bg-positive", "ink-soft": "bg-ink-soft" }[tone],
       lit && "scale-150",
       id === peeked && "ring-2 ring-ink",
     );
