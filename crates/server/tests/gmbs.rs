@@ -1,5 +1,5 @@
 //! A GMB's point: Places asked once for it, carried by `GET /gmails`, filled in later by
-//! `locate`; and the browser's map.
+//! `locate`, placed by hand where Places has none; and the browser's map.
 
 use std::sync::{Arc, Mutex};
 
@@ -29,6 +29,8 @@ use serde_json::{Value, json};
 
 const PROCOPE: &str = "ChIJprocopeprocopeproc";
 const FLORE: &str = "ChIJfloreflorefloreflo";
+/// A service-area business: Places gives it no point.
+const ASSIST: &str = "ChIJassistassistassis";
 
 /// Places, counting what it is asked.
 async fn places() -> (Arc<Mutex<Vec<String>>>, String) {
@@ -37,6 +39,7 @@ async fn places() -> (Arc<Mutex<Vec<String>>>, String) {
 		let (lat, lng) = match id.as_str() {
 			PROCOPE => (48.853, 2.3389),
 			FLORE => (48.854, 2.3326),
+			ASSIST => return Json(json!({ "id": id, "displayName": { "text": "Mold Assist" } })).into_response(),
 			_ => return (StatusCode::NOT_FOUND, "not found").into_response(),
 		};
 		Json(json!({ "id": id, "displayName": { "text": id }, "formattedAddress": "Paris", "location": { "latitude": lat, "longitude": lng } })).into_response()
@@ -119,13 +122,13 @@ async fn a_gmb_is_located_when_added_and_its_place_asked_once() {
 	for gmail in &gmails {
 		let (status, gmb) = call(&mut b, &app, Method::POST, &format!("/api/v1/gmails/{gmail}/gmbs"), Some(json!({ "place_id": PROCOPE }))).await;
 		assert_eq!(status, StatusCode::CREATED, "{gmb}");
-		assert_eq!(gmb["location"], json!({ "lat": 48.853, "lng": 2.3389 }));
+		assert_eq!(gmb["location"], json!({ "lat": 48.853, "lng": 2.3389, "placed": false }));
 	}
 	assert_eq!(asked.lock().unwrap().len(), 1, "the same place under another gmail is not asked again");
 
 	let (_, listed) = call(&mut b, &app, Method::GET, "/api/v1/gmails", None).await;
 	for g in listed["gmails"].as_array().unwrap() {
-		assert_eq!(g["gmbs"][0]["location"], json!({ "lat": 48.853, "lng": 2.3389 }), "{listed}");
+		assert_eq!(g["gmbs"][0]["location"], json!({ "lat": 48.853, "lng": 2.3389, "placed": false }), "{listed}");
 	}
 }
 
@@ -135,18 +138,7 @@ async fn locate_fills_only_the_missing_points_and_pays_for_each_once() {
 	let (db, cache) = (TestDb::create().await, tempfile::tempdir().unwrap());
 	let keyless = panel(&db, None, cache.path()).await;
 	opened(&keyless).await;
-	let owner = DevIdentity::named("dev@localhost");
-	keyless
-		.user_seen(
-			&sa_panel::tokens::User {
-				user_id: owner,
-				email: "dev@localhost".into(),
-				name: "dev".into(),
-			},
-			jiff::Timestamp::now(),
-		)
-		.await
-		.unwrap();
+	let owner = seen(&keyless, "dev@localhost").await;
 	let gmail = keyless.add_gmail(owner, "a@gmail.com", jiff::Timestamp::now()).await.unwrap().unwrap();
 	for place in [PROCOPE, FLORE] {
 		let gmb = keyless.add_gmb(Some(owner), gmail.id, place, jiff::Timestamp::now()).await.unwrap().unwrap();
@@ -154,10 +146,86 @@ async fn locate_fills_only_the_missing_points_and_pays_for_each_once() {
 	}
 
 	let keyed = panel(&db, Some(&base), cache.path()).await;
-	assert_eq!(keyed.locate().await.unwrap(), (2, vec![]));
+	assert_eq!(keyed.locate().await.unwrap(), (2, vec![], vec![]));
 	assert!(keyed.gmails(owner).await.unwrap()[0].1.iter().all(|b| b.location.is_some()));
-	assert_eq!(keyed.locate().await.unwrap(), (0, vec![]));
+	assert_eq!(keyed.locate().await.unwrap(), (0, vec![], vec![]));
 	assert_eq!(asked.lock().unwrap().len(), 2, "a second run asks nothing");
+}
+
+async fn seen(p: &Panel, email: &str) -> uuid::Uuid {
+	let user_id = DevIdentity::named(email);
+	let user = sa_panel::tokens::User {
+		user_id,
+		email: email.into(),
+		name: email.into(),
+	};
+	p.user_seen(&user, jiff::Timestamp::now()).await.unwrap();
+	user_id
+}
+
+#[tokio::test]
+async fn a_service_area_gmb_has_no_point_until_placed_on_the_map() {
+	let (asked, base) = places().await;
+	let (db, cache) = (TestDb::create().await, tempfile::tempdir().unwrap());
+	let keyless = panel(&db, None, cache.path()).await;
+	opened(&keyless).await;
+	let owner = seen(&keyless, "dev@localhost").await;
+	let gmail = keyless.add_gmail(owner, "a@gmail.com", jiff::Timestamp::now()).await.unwrap().unwrap();
+	keyless.add_gmb(Some(owner), gmail.id, FLORE, jiff::Timestamp::now()).await.unwrap().unwrap();
+
+	let keyed = panel(&db, Some(&base), cache.path()).await;
+	let app = app(keyed.clone(), None);
+	let mut b = Browser::default();
+	b.sign_in(&app).await;
+	let (status, assist) = call(&mut b, &app, Method::POST, &format!("/api/v1/gmails/{}/gmbs", gmail.id), Some(json!({ "place_id": ASSIST }))).await;
+	assert_eq!((status, &assist["location"]), (StatusCode::CREATED, &Value::Null), "{assist}");
+	assert_eq!(
+		keyed.locate().await.unwrap(),
+		(1, vec![ASSIST.to_owned()], vec![]),
+		"listed, and the run goes on to the next place"
+	);
+
+	let location = format!("/api/v1/gmbs/{}/location", assist["id"]);
+	let point = |gmails: &Value| gmails["gmails"][0]["gmbs"].as_array().unwrap().iter().find(|g| g["id"] == assist["id"]).unwrap()["location"].clone();
+	for (lat, lng) in [(43.589, -79.644), (43.6, -79.65)] {
+		let (status, _) = call(&mut b, &app, Method::PUT, &location, Some(json!({ "lat": lat, "lng": lng }))).await;
+		assert_eq!(status, StatusCode::NO_CONTENT);
+		let (_, listed) = call(&mut b, &app, Method::GET, "/api/v1/gmails", None).await;
+		assert_eq!(point(&listed), json!({ "lat": lat, "lng": lng, "placed": true }), "placed, then moved");
+	}
+	assert_eq!(keyed.locate().await.unwrap(), (0, vec![], vec![]));
+	assert_eq!(*asked.lock().unwrap(), [ASSIST, FLORE], "a placed place is not asked of Places again");
+}
+
+#[tokio::test]
+async fn a_point_is_placed_only_on_the_callers_gmb_without_googles_and_on_earth() {
+	let (_asked, base) = places().await;
+	let (db, cache) = (TestDb::create().await, tempfile::tempdir().unwrap());
+	let p = panel(&db, Some(&base), cache.path()).await;
+	opened(&p).await;
+	let other = seen(&p, "other@localhost").await;
+	let theirs = p.add_gmail(other, "other@gmail.com", jiff::Timestamp::now()).await.unwrap().unwrap();
+	let theirs = p.add_gmb(Some(other), theirs.id, ASSIST, jiff::Timestamp::now()).await.unwrap().unwrap();
+	let app = app(p, None);
+	let mut b = Browser::default();
+	b.sign_in(&app).await;
+	let (_, gmail) = call(&mut b, &app, Method::POST, "/api/v1/gmails", Some(json!({ "gmail": "a@gmail.com" }))).await;
+	let mut mine = Vec::new();
+	for place in [PROCOPE, ASSIST] {
+		let (_, gmb) = call(&mut b, &app, Method::POST, &format!("/api/v1/gmails/{}/gmbs", gmail["id"]), Some(json!({ "place_id": place }))).await;
+		mine.push(gmb["id"].as_i64().unwrap());
+	}
+
+	let paris = json!({ "lat": 48.86, "lng": 2.35 });
+	for (gmb, at, want) in [
+		(mine[0], &paris, StatusCode::CONFLICT),
+		(theirs.id, &paris, StatusCode::NOT_FOUND),
+		(mine[1], &json!({ "lat": 91.0, "lng": 2.35 }), StatusCode::BAD_REQUEST),
+		(mine[1], &json!({ "lat": 48.86, "lng": -180.5 }), StatusCode::BAD_REQUEST),
+	] {
+		let (status, body) = call(&mut b, &app, Method::PUT, &format!("/api/v1/gmbs/{gmb}/location"), Some(at.clone())).await;
+		assert_eq!(status, want, "GMB {gmb} at {at}: {body}");
+	}
 }
 
 #[tokio::test]

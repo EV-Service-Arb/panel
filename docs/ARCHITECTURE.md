@@ -173,8 +173,10 @@ reserved paths (`web.rs`) are derived from it.
 - **The outline.** Every signed-in page sits beside it: the open service's own views (the sites:
   `<mfe-sites-nav>`, mounted on every page and shown on theirs; the review archive: its places,
   Telegram and settings), then the caller's GMBs under a gmail scope every app shares (kept in the
-  browser), with their switches. `/` is the map of them: one Google map per page session, kept
-  while the page is away (each built is a billed load), its viewport splitting the outline's list.
+  browser), with their switches, each row, pin and card with what needs the operator, from the
+  services' tags on the GMBs (review_archive `/me/gmbs`, sites `/gmbs`). `/` is the map of them:
+  one Google map per page session, kept while the page is away (each built is a billed load), its
+  viewport splitting the outline's list; placing a GMB's point is a mode of it.
 - **The pages.** `/sites` mounts `<mfe-sites-panel api="/api/sites" base="/sites" csrf-cookie>`
   from `/sites/mfe/`; `/review_archive` mounts
   `<mfe-review-archive-dashboard grafana="/grafana/">` from `/review_archive/mfe/`. Any `/sites/<view>` or
@@ -286,8 +288,8 @@ POST   /alerts/destinations/{id}/test       204; 400 with what Telegram said
 DELETE /alerts/destinations/{id}            204, 404
 GET    /gmails                              {gmails: [{id, gmail, created_at, gmbs: [{id, place_id,
                                             name, address, gbp_account, gbp_location, created_at,
-                                            enabled, location: {lat, lng} | null}]}]} the caller's,
-                                            removed ones left out
+                                            enabled, location: {lat, lng, placed} | null}]}]} the
+                                            caller's, removed ones left out
 POST   /gmails                              {gmail} → 201 the gmail; 409 held already
 DELETE /gmails/{id}                         204; its GMBs count as removed
 GET    /gmbs/resolve?place=                 {candidates: [{place_id, name, address}]} (sa_places)
@@ -295,6 +297,7 @@ POST   /gmails/{id}/gmbs                    {place_id} → 201 the GMB; 409 unde
 DELETE /gmbs/{id}                           204
 PUT    /gmbs/enabled                        {gmbs: [id], enabled} → 204: every one switched, or none
                                             (404 one not the caller's)
+PUT    /gmbs/{id}/location                  {lat, lng} → 204, placed by hand; 409 Google has its point
 GET    /map                                 {key, map_id}: the browser's Maps JS key and map id;
                                             404 without GOOGLE_MAPS_BROWSER_KEY
 GET    /tokens                              {balance, daily, cap, kickbacks}: renewed, the
@@ -401,10 +404,12 @@ push (a change, a page, 60 s)
   document.
 - **A place's site** is sites': its `places.gmb_id`, linked from the outline through the forward;
   sites down or refusing leaves the GMBs without the link.
-- **A GMB's point** is its place's (`place_points`, keyed by place id, the newest answer kept),
-  written with the GMB from the answer that named it. A GMB added without a key, or imported, has
-  none until `panel gmb locate` asks for the missing ones: a command, so the spend is explicit;
-  run after a deploy that brings points, and after `local-stack --from-prod`.
+- **A GMB's point** is its place's (`place_points`, keyed by place id): Google's, else one the
+  operator places on the map (a service-area place has none on Google). Google's replaces a placed
+  one, a placed one never replaces Google's. Google's is written with the GMB from the answer that
+  named it; a GMB added without a key, or imported, has none until `panel gmb locate` asks for the
+  missing ones and lists those Google gives no point: a command, so the spend is explicit; run
+  after a deploy that brings points, and after `local-stack --from-prod`.
 
 ## Alerts
 

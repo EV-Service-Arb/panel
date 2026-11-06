@@ -20,7 +20,8 @@ pub struct Place {
 	/// Its display name.
 	pub name: Option<String>,
 	pub address: Option<String>,
-	pub location: LatLng,
+	/// None for a service-area business: Google shows it no point.
+	pub location: Option<LatLng>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -236,7 +237,7 @@ struct Hit {
 	id: String,
 	display_name: Option<Text>,
 	formatted_address: Option<String>,
-	location: Location,
+	location: Option<Location>,
 }
 
 #[derive(Deserialize)]
@@ -256,10 +257,7 @@ impl From<Hit> for Place {
 			place_id: h.id,
 			name: h.display_name.map(|t| t.text),
 			address: h.formatted_address,
-			location: LatLng {
-				lat: h.location.latitude,
-				lng: h.location.longitude,
-			},
+			location: h.location.map(|l| LatLng { lat: l.latitude, lng: l.longitude }),
 		}
 	}
 }

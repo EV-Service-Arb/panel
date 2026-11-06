@@ -4,9 +4,9 @@ import type { Candidates, Gmails, Gmb, MapConfig, Place } from "./generated";
 
 export type { Gmail, Gmb, MapConfig, Place as Candidate } from "./generated";
 
-export type LatLng = NonNullable<Gmb["location"]>;
+export type LatLng = { lat: number; lng: number };
 
-const gmbParser: Parser<Gmb> = object({
+export const gmbParser: Parser<Gmb> = object({
   id: num,
   place_id: str,
   name: nullable(str),
@@ -15,7 +15,7 @@ const gmbParser: Parser<Gmb> = object({
   gbp_location: nullable(str),
   created_at: str,
   enabled: bool,
-  location: nullable(object({ lat: num, lng: num })),
+  location: nullable(object({ lat: num, lng: num, placed: bool })),
 });
 
 export const mapConfigParser: Parser<MapConfig> = object({ key: str, map_id: str });
@@ -39,11 +39,12 @@ function byGmb<T>(p: Parser<T>): Parser<Map<number, T>> {
   };
 }
 
-const archiveTagParser = object({ tracked: bool, rating: nullable(num), reviews: nullable(num) });
+const archiveTagParser = object({ tracked: bool, rating: nullable(num), reviews: nullable(num), suspended: num, reinstating: num, failing: bool });
+export type ArchiveTag = Infer<typeof archiveTagParser>;
 export const archiveParser = object({ gmbs: byGmb(archiveTagParser), places_tracked: num });
 export type Archive = Infer<typeof archiveParser>;
 
-const siteTagParser = object({ brand: str, location: str });
+const siteTagParser = object({ brand: str, location: str, leads_7d: num, overdue: num });
 export type SiteTag = Infer<typeof siteTagParser>;
 export const sitesParser = byGmb(siteTagParser);
 

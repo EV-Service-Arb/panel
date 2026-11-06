@@ -17,19 +17,21 @@ import {
   RadioGroupItem,
 } from "@evinvest/uikit";
 import { Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useId, useState } from "react";
 
-import { type Candidate, addGmb, resolvePlace } from "@/entities/gmb";
+import { type Candidate, addGmb, resolvePlace, setOnMap } from "@/entities/gmb";
 import { useT } from "@/shared/i18n";
 import { notifyFailure } from "@/shared/ui/notify";
 import { useButtonSize, useControlSize } from "@/shared/ui/touch";
 
-/** A place or Maps URL pasted, resolved to candidates, one picked and added under `gmailId`. */
+/** A place or Maps URL pasted, resolved to candidates, one picked and added under `gmailId`; one Google has no point for is then placed on the home map. */
 export function AddGmbButton({ gmailId, onAdded }: { gmailId: number; onAdded: () => void }) {
   const t = useT();
   const button = useButtonSize();
   const size = useControlSize();
   const id = useId();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [place, setPlace] = useState("");
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
@@ -62,10 +64,14 @@ export function AddGmbButton({ gmailId, onAdded }: { gmailId: number; onAdded: (
 
   const add = (placeId: string) =>
     act(async () => {
-      await addGmb(gmailId, placeId);
+      const added = await addGmb(gmailId, placeId);
       setOpen(false);
       reset();
       onAdded();
+      if (added.location === null) {
+        router.push("/");
+        setOnMap({ placing: added.id, peeked: null });
+      }
     });
 
   return (

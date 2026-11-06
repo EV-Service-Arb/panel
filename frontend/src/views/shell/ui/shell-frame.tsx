@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect } from "react";
 
 import { GmailsProvider } from "@/entities/gmb";
+import { seesSites, useMe } from "@/entities/session";
 import { goToSignIn } from "@/shared/api";
 import { useT } from "@/shared/i18n";
 import { useLiveSocket } from "@/shared/lib/live";
@@ -18,6 +19,7 @@ const UNAUTHENTICATED_EVENT = "sa:unauthenticated";
 /** Every signed-in screen under the top bar, beside the outline; the tab's live socket and the elements' window events. */
 export function ShellFrame({ onForbidden, children }: { onForbidden: () => void; children: ReactNode }) {
   const t = useT();
+  const me = useMe();
   useLiveSocket({ onUnauthenticated: goToSignIn, onForbidden });
   const leads = t("title.leads");
   useEffect(() => followTitleCount(window, document, leads), [leads]);
@@ -26,7 +28,7 @@ export function ShellFrame({ onForbidden, children }: { onForbidden: () => void;
     return () => window.removeEventListener(UNAUTHENTICATED_EVENT, goToSignIn);
   }, []);
   return (
-    <GmailsProvider>
+    <GmailsProvider seesSites={seesSites(me)}>
       <div className="flex min-h-svh flex-col">
         <div className="sticky top-0 z-30">
           <PanelTopBar />

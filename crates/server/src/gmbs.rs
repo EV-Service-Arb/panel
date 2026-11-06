@@ -9,6 +9,7 @@
 //! POST   /api/v1/gmails/{id}/gmbs {place_id}  → 201 Gmb; 409 that gmail has it
 //! DELETE /api/v1/gmbs/{id}            → 204
 //! PUT    /api/v1/gmbs/enabled {gmbs, enabled}  → 204; 404 one is not theirs, and none switched
+//! PUT    /api/v1/gmbs/{id}/location {lat, lng}  → 204; 409 Google has its point
 //! GET    /api/v1/map                  Map: what the browser loads Maps JS with; 404 without it
 //! ```
 //!
@@ -48,6 +49,7 @@ pub(crate) fn routes() -> Vec<ApiRoute> {
 		ApiRoute::new(M::POST, "/gmails/{id}/gmbs", None, Cached, add_gmb),
 		ApiRoute::new(M::DELETE, "/gmbs/{id}", None, Cached, remove_gmb),
 		ApiRoute::new(M::PUT, "/gmbs/enabled", None, Cached, switch),
+		ApiRoute::new(M::PUT, "/gmbs/{id}/location", None, Cached, place),
 		ApiRoute::new(M::GET, "/map", None, Cached, map),
 	]
 }
@@ -76,9 +78,10 @@ pub struct GmbDto {
 	pub created_at: String,
 	/// The caller's switch; review_archive inherits it.
 	pub enabled: bool,
-	/// `null`: added without a Places key, and not located since.
-	#[ts(type = "{ lat: number, lng: number } | null")]
-	pub location: Option<sa_places::LatLng>,
+	/// `null`: added without a Places key and not located since, or a service-area place not
+	/// placed yet. `placed`: on the map by hand.
+	#[ts(type = "{ lat: number, lng: number, placed: boolean } | null")]
+	pub location: Option<sa_panel::gmbs::Point>,
 }
 
 /// A gmail of the caller's, with the GMBs it manages.
@@ -235,5 +238,13 @@ async fn switch(State(panel): State<Panel>, Extension(caller): Extension<Caller>
 	let Switch { gmbs, enabled } = body(b)?;
 	panel.switch_gmbs(caller.user_id, &gmbs, enabled).await??;
 	tracing::info!(user_id = %caller.user_id, ?gmbs, enabled, "GMBs switched");
+	Ok(StatusCode::NO_CONTENT)
+}
+
+async fn place(State(panel): State<Panel>, Extension(caller): Extension<Caller>, Path(raw): Path<String>, b: Result<Json<sa_places::LatLng>, JsonRejection>) -> ApiResult<StatusCode> {
+	let gmb = id(&raw)?;
+	let at = body(b)?;
+	panel.place_gmb(caller.user_id, gmb, at).await??;
+	tracing::info!(user_id = %caller.user_id, gmb_id = gmb, ?at, "GMB placed");
 	Ok(StatusCode::NO_CONTENT)
 }
