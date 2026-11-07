@@ -9,6 +9,8 @@ type PanelConfig = {
   reviewArchiveUi: "grafana" | "legacy";
   /** `oldschool`: the kit's pre-0.31 navy look, kept to roll back to. */
   theme: "dark" | "oldschool";
+  /** The assistant in the corner of every signed-in page; a preview whose answers are canned. */
+  assistant: boolean;
 };
 
 export const PANEL: PanelConfig = {
@@ -16,4 +18,5 @@ export const PANEL: PanelConfig = {
   walletPage: true,
   reviewArchiveUi: "grafana",
   theme: "dark",
+  assistant: true,
 };

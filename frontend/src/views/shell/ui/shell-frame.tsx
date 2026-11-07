@@ -3,8 +3,11 @@
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 
+import { PANEL } from "@config";
+
 import { GmailsProvider } from "@/entities/gmb";
 import { seesSites, useMe } from "@/entities/session";
+import { Assistant } from "@/features/assistant";
 import { goToSignIn } from "@/shared/api";
 import { useT } from "@/shared/i18n";
 import { useLiveSocket } from "@/shared/lib/live";
@@ -32,12 +35,13 @@ export function ShellFrame({ onForbidden, children }: { onForbidden: () => void;
     <GmailsProvider seesSites={seesSites(me)}>
       <div className="flex h-svh flex-col">
         <PanelTopBar />
-        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
           {/* `hidden`, not unmounted, on a phone: the outline keeps `mfe-sites-nav` mounted */}
           <aside className="hidden w-72 shrink-0 overflow-y-auto border-r border-border p-2 md:block">
             <Outline />
           </aside>
           <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">{children}</main>
+          {PANEL.assistant && <Assistant />}
         </div>
         <PanelHotbar live={live} />
       </div>

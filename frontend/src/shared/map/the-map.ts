@@ -30,7 +30,7 @@ function theMap(key: string, scheme: string): { element: HTMLDivElement; map: Pr
   element.style.width = "100%";
   element.style.height = "100%";
   const map = Promise.all([importLibrary("maps"), importLibrary("core")]).then(
-    ([{ Map, RenderingType }, { ColorScheme }]) =>
+    ([{ Map, RenderingType }, { ColorScheme, ControlPosition }]) =>
       new Map(element, {
         renderingType: RenderingType.RASTER,
         colorScheme: scheme === "dark" ? ColorScheme.DARK : ColorScheme.LIGHT,
@@ -40,6 +40,8 @@ function theMap(key: string, scheme: string): { element: HTMLDivElement; map: Pr
         zoom: 2,
         disableDefaultUI: true,
         zoomControl: true,
+        // the bottom-right corner is the assistant's launcher
+        zoomControlOptions: { position: ControlPosition.RIGHT_CENTER },
         clickableIcons: false,
       }),
   );
