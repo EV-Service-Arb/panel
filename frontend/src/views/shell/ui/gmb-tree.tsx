@@ -172,9 +172,17 @@ export function GmbTree({ onNavigate }: { onNavigate?: () => void }) {
       {split ? (
         <>
           <h3 className={HEADING}>
-            {t("gmbs.inView")} <span className="tabular-nums">{split.inView.length}</span>
+            {t("gmbs.inView")} <span className="tabular-nums">{split.inView.length + split.offInView.length}</span>
           </h3>
           <ul className="flex flex-col">{split.inView.map(row)}</ul>
+          {split.offInView.length > 0 && (
+            <>
+              <h4 className={cn(HEADING, "mx-2 border-t border-border px-0 font-normal")}>
+                {t("gmbs.issue.off")} <span className="tabular-nums">{split.offInView.length}</span>
+              </h4>
+              <ul className="flex flex-col">{split.offInView.map(row)}</ul>
+            </>
+          )}
           <h3 className={HEADING}>
             {t("gmbs.elsewhere")} <span className="tabular-nums">{split.elsewhere.length}</span>
           </h3>

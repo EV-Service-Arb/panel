@@ -1,1 +1,1 @@
-export { type TheMap, useTheMap } from "./the-map";
+export { type TheMap, pin, showPlaces, usePlacesShown, useTheMap } from "./the-map";

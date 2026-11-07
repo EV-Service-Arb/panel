@@ -237,10 +237,8 @@
             # comma-separated, free ones first; without them a GMB is added by its place id alone,
             # unnamed and unlocated
             "GOOGLE_MAPS_KEYS"
-            # both or neither: the browser's Maps JS key (referrer-restricted) and the map id;
-            # without them the home page has no map
+            # the browser's Maps JS key (referrer-restricted); without it the home page has no map
             "GOOGLE_MAPS_BROWSER_KEY"
-            "GOOGLE_MAPS_MAP_ID"
           ];
           ingress = {
             # in-cluster only, by service DNS: the landings' and bots' ingest

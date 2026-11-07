@@ -38,9 +38,9 @@ enabled: boolean,
  */
 location: { lat: number, lng: number, placed: boolean } | null, };
 /**
- * `GET /map`: the browser's Maps JS key, referrer-restricted, and the map's id.
+ * `GET /map`: the browser's Maps JS key, referrer-restricted.
  */
-export type MapConfig = { key: string, map_id: string, };
+export type MapConfig = { key: string, };
 /**
  * A place a pasted input may mean.
  */

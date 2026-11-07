@@ -38,12 +38,11 @@ use crate::{
 	signin::{Caller, Freshness},
 };
 
-/// `GET /map`: the browser's Maps JS key, referrer-restricted, and the map's id.
+/// `GET /map`: the browser's Maps JS key, referrer-restricted.
 #[derive(Clone, Debug, Serialize, TS)]
 #[ts(rename = "MapConfig")]
 pub struct MapDto {
 	pub key: String,
-	pub map_id: String,
 }
 
 /// A GMB under one of the caller's gmails.

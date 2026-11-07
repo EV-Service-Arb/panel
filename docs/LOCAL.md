@@ -204,7 +204,6 @@ order `~/.config/gmaps_optimal_placement.nix` lists them, and the map loads with
 | --- | --- |
 | `GOOGLE_MAPS_KEYS` | `$GOOGLE_MAPS_KEY,$GOOGLE_MAPS_KEY_ICOS1` |
 | `GOOGLE_MAPS_BROWSER_KEY` | `$GOOGLE_MAPS_KEY` |
-| `GOOGLE_MAPS_MAP_ID` | `DEMO_MAP_ID` |
 
 Without `GOOGLE_MAPS_KEY` in the shell, a GMB is added by its place id alone and `/` has no map.
 Answers are kept in `.local/google_cache/`: `--reset` pays for them again.

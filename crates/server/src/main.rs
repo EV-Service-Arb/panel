@@ -244,7 +244,7 @@ async fn run(cli: Cli, settings: Settings, dev_sign_in: Option<settings::DevSign
 				grafana.is_none() || forward.is_some(),
 				"PANEL_GRAFANA_SERVER needs the forward (PANEL_ASSERTION_KEY and the services' URLs): Grafana reads the services through it"
 			);
-			serve(connect().await?, identity, forward, telegram, grafana, settings.web()?, settings.map()?, bind).await
+			serve(connect().await?, identity, forward, telegram, grafana, settings.web()?, settings.map(), bind).await
 		}
 		Cmd::Source(cmd) => source(&connect().await?, cmd).await,
 		Cmd::Gmail(GmailCmd::Add { email, gmail }) => {

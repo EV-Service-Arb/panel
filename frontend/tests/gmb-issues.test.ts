@@ -23,9 +23,9 @@ function check(gmbs: Gmb[], tags: Tags, want: Record<number, Issue | null>) {
 }
 
 describe("a GMB's issue", () => {
-  const every = [gmb(1, { located: false, enabled: false }), gmb(2, { enabled: false }), gmb(3), gmb(4)];
+  const every = [gmb(1, { located: false }), gmb(2), gmb(3), gmb(4), gmb(5, { located: false, enabled: false })];
 
-  it("is the most pressing one it has", () => {
+  it("is the most pressing one it has; an off one's is only that it is off", () => {
     check(
       every,
       {
@@ -34,20 +34,22 @@ describe("a GMB's issue", () => {
           [2, archive(0, true)],
           [3, archive(0, false)],
           [4, archive(0, false)],
+          [5, archive(2, true)],
         ]),
         sites: new Map([
           [1, site(1)],
           [2, site(0)],
           [3, site(0)],
+          [5, site(1)],
         ]),
       },
-      { 1: "overdue", 2: "failing", 3: null, 4: "no_site" },
+      { 1: "overdue", 2: "failing", 3: null, 4: "no_site", 5: "off" },
     );
   });
 
   it("drops what a service that did not answer would have said", () => {
     const tags: Tags = { archive: null, sites: null };
-    check(every, tags, { 1: "unlocated", 2: "off", 3: null, 4: null });
+    check(every, tags, { 1: "unlocated", 2: null, 3: null, 4: null, 5: "off" });
     expect(issueCounts(every, tags)).toEqual(
       new Map<Issue, number>([
         ["unlocated", 1],

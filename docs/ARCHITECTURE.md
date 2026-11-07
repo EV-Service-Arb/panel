@@ -298,8 +298,8 @@ DELETE /gmbs/{id}                           204
 PUT    /gmbs/enabled                        {gmbs: [id], enabled} → 204: every one switched, or none
                                             (404 one not the caller's)
 PUT    /gmbs/{id}/location                  {lat, lng} → 204, placed by hand; 409 Google has its point
-GET    /map                                 {key, map_id}: the browser's Maps JS key and map id;
-                                            404 without GOOGLE_MAPS_BROWSER_KEY
+GET    /map                                 {key}: the browser's Maps JS key; 404 without
+                                            GOOGLE_MAPS_BROWSER_KEY
 GET    /tokens                              {balance, daily, cap, kickbacks}: renewed, the
                                             kick-backs not claimed
 GET    /tokens/ledger?before=&limit=        {entries, next}: newest first, limit 1–200
@@ -574,8 +574,8 @@ delivery (0.5 s)  lead messages noted > 1 h ago dead ("stale"); > 20 of one rule
   The keys are used in their order, free ones first; one Google says is spent for a quota window
   sits out until the window resets, one whose billing is off until restart. Every answer is kept
   in `google_cache/` beside `PANEL_DB_PATH`, on the volume. The browser loads Maps JS straight
-  from Google with `GOOGLE_MAPS_BROWSER_KEY` (referrer-restricted to the public origin) and
-  `GOOGLE_MAPS_MAP_ID`; the server's keys never reach it.
+  from Google with `GOOGLE_MAPS_BROWSER_KEY` (referrer-restricted to the public origin); the
+  server's keys never reach it.
 - **Telegram, outbound only.** With `TELEGRAM_BOT_TOKEN` the pods need egress to
   `api.telegram.org:443`; no webhook is set on the bot (`getUpdates` refuses to run while one is).
 - **`/api/v1/live` through the public IngressRoute, as a WebSocket.** Nothing in front may buffer

@@ -1,7 +1,6 @@
 "use client";
 
 import { Skeleton, cn } from "@evinvest/uikit";
-import { importLibrary } from "@googlemaps/js-api-loader";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -10,10 +9,11 @@ import { PlacingBar } from "@/features/place-gmb";
 import { takeReturnPage } from "@/shared/api";
 import { useT } from "@/shared/i18n";
 import { useResource } from "@/shared/lib/use-resource";
-import { useTheMap } from "@/shared/map";
+import { pin, useTheMap } from "@/shared/map";
 import { EmptyState } from "@/shared/ui/empty-state";
 import { ErrorState } from "@/shared/ui/error-state";
 
+import { MapLayers } from "./map-layers";
 import { Peek } from "./peek";
 
 /** `/`: the caller's GMBs on a map, unless they come back from the sign-in dialog to the page they were on. */
@@ -50,7 +50,7 @@ function GmbMap({ config }: { config: MapConfig }) {
   const scope = useGmailScope();
   const { hovered, peeked, placing } = useOnMap();
   const { tags } = useGmbTags();
-  const { host, map } = useTheMap(config.key, config.map_id);
+  const { host, map } = useTheMap(config.key);
   const listed = gmails.status === "ok" ? narrowed(gmails.data, scope, "") : [];
   const located = listed.filter((l) => l.gmb.location !== null);
   const locatedRef = useRef(located);
@@ -58,7 +58,7 @@ function GmbMap({ config }: { config: MapConfig }) {
   useEffect(() => {
     locatedRef.current = located;
   });
-  const markers = useRef(new Map<number, { marker: google.maps.marker.AdvancedMarkerElement; dot: HTMLSpanElement; listed: Listed }>());
+  const markers = useRef(new Map<number, { remove: () => void; dot: HTMLSpanElement; listed: Listed }>());
   const shown = located.map((l) => `${l.gmb.id}:${l.gmb.enabled}:${l.gmb.location?.lat},${l.gmb.location?.lng},${l.gmb.location?.placed}`).join(" ");
   const styling = useRef({ hovered, peeked, tags });
   useEffect(() => {
@@ -96,23 +96,18 @@ function GmbMap({ config }: { config: MapConfig }) {
 
   useEffect(() => {
     if (map.status !== "ok") return;
-    let live = true;
     const made = markers.current;
-    void importLibrary("marker").then(({ AdvancedMarkerElement }) => {
-      if (!live) return;
-      for (const l of locatedRef.current) {
-        const dot = document.createElement("span");
-        dot.addEventListener("mouseenter", () => setOnMap({ hovered: l.gmb.id }));
-        dot.addEventListener("mouseleave", () => setOnMap({ hovered: null }));
-        const marker = new AdvancedMarkerElement({ map: map.map, position: l.gmb.location, title: l.gmb.name ?? l.gmb.place_id, content: dot, gmpClickable: true });
-        marker.addEventListener("gmp-click", () => setOnMap({ peeked: l.gmb.id }));
-        made.set(l.gmb.id, { marker, dot, listed: l });
-      }
-      styleDots(made, styling.current);
-    });
+    for (const l of locatedRef.current) {
+      const dot = document.createElement("span");
+      dot.title = l.gmb.name ?? l.gmb.place_id;
+      dot.addEventListener("mouseenter", () => setOnMap({ hovered: l.gmb.id }));
+      dot.addEventListener("mouseleave", () => setOnMap({ hovered: null }));
+      dot.addEventListener("click", () => setOnMap({ peeked: l.gmb.id }));
+      made.set(l.gmb.id, { remove: pin(map.map, dot, l.gmb.location!).remove, dot, listed: l });
+    }
+    styleDots(made, styling.current);
     return () => {
-      live = false;
-      for (const { marker } of made.values()) marker.map = null;
+      for (const { remove } of made.values()) remove();
       made.clear();
     };
   }, [map, shown]);
@@ -125,37 +120,31 @@ function GmbMap({ config }: { config: MapConfig }) {
     placedRef.current = placed;
   });
   const [moved, setMoved] = useState<{ gmb: number; at: LatLng } | null>(null);
-  const pin = placed !== undefined && moved?.gmb === placed.id ? moved.at : null;
-  const pinMarker = useRef<google.maps.marker.AdvancedMarkerElement | null>(null);
+  const placedAt = placed !== undefined && moved?.gmb === placed.id ? moved.at : null;
+  const placingPin = useRef<ReturnType<typeof pin> | null>(null);
   useEffect(() => {
     const gmb = placedRef.current;
     if (map.status !== "ok" || gmb === undefined) return;
     const move = (at: LatLng) => setMoved({ gmb: gmb.id, at });
-    let live = true;
     const click = map.map.addListener("click", (e: google.maps.MapMouseEvent) => e.latLng && move(e.latLng.toJSON()));
-    void importLibrary("marker").then(({ AdvancedMarkerElement }) => {
-      if (!live) return;
-      const centre = map.map.getCenter();
-      if (centre === undefined) throw new Error("the map has no centre while shown");
-      const at = gmb.location ?? centre.toJSON();
-      const marker = new AdvancedMarkerElement({ map: map.map, position: at, gmpDraggable: true, zIndex: 2, title: gmb.name ?? gmb.place_id });
-      marker.addListener("dragend", () => {
-        const to = marker.position;
-        if (to) move(to instanceof google.maps.LatLng ? to.toJSON() : { lat: to.lat, lng: to.lng });
-      });
-      pinMarker.current = marker;
-      move(at);
-    });
+    const centre = map.map.getCenter();
+    if (centre === undefined) throw new Error("the map has no centre while shown");
+    const at = gmb.location ?? centre.toJSON();
+    const dot = document.createElement("span");
+    dot.title = gmb.name ?? gmb.place_id;
+    dot.className = "block size-5 rounded-full border-2 border-background bg-accent-error shadow-md ring-2 ring-ink";
+    dot.style.zIndex = "3";
+    placingPin.current = pin(map.map, dot, at, move);
+    move(at);
     return () => {
-      live = false;
       click.remove();
-      if (pinMarker.current) pinMarker.current.map = null;
-      pinMarker.current = null;
+      placingPin.current?.remove();
+      placingPin.current = null;
     };
   }, [map, placed?.id]);
   useEffect(() => {
-    if (pinMarker.current && pin) pinMarker.current.position = pin;
-  }, [pin]);
+    if (placingPin.current && moved) placingPin.current.move(moved.at);
+  }, [moved]);
 
   const peekedListed = listed.find((l) => l.gmb.id === peeked);
   useEffect(() => {
@@ -172,29 +161,31 @@ function GmbMap({ config }: { config: MapConfig }) {
         </div>
       )}
       {peekedListed && placed === undefined && <Peek listed={peekedListed} onClose={() => setOnMap({ peeked: null })} />}
-      {map.status === "ok" && placed !== undefined && pin !== null && <PlacingBar gmb={placed} map={map.map} at={pin} onMove={(at) => setMoved({ gmb: placed.id, at })} />}
+      {map.status === "ok" && <MapLayers map={map.map} />}
+      {map.status === "ok" && placed !== undefined && placedAt !== null && <PlacingBar gmb={placed} map={map.map} at={placedAt} onMove={(at) => setMoved({ gmb: placed.id, at })} />}
     </>
   );
 }
 
-/** A pin is red while its GMB needs the operator, and hollow where its point was placed by hand. */
+/** A pin is red while its GMB needs the operator, faded while it is off, and hollow where its point was placed by hand. */
 function styleDots(
-  made: Map<number, { dot: HTMLSpanElement; listed: Listed; marker: google.maps.marker.AdvancedMarkerElement }>,
+  made: Map<number, { dot: HTMLSpanElement; listed: Listed }>,
   { hovered, peeked, tags }: { hovered: number | null; peeked: number | null; tags: Tags },
 ) {
-  for (const [id, { dot, listed, marker }] of made) {
+  for (const [id, { dot, listed }] of made) {
     const lit = id === hovered || id === peeked;
     const issue = issueOf(listed.gmb, tags);
-    const tone = issue !== null && issue !== "off" ? "negative" : listed.gmb.enabled ? "positive" : "ink-soft";
+    const tone = issue === "off" ? "ink-soft" : issue !== null ? "negative" : "positive";
     const hollow = listed.gmb.location?.placed === true;
     dot.className = cn(
       "block size-3.5 rounded-full border-2 shadow-md transition-transform",
       hollow ? "bg-background" : "border-background",
       hollow && { negative: "border-accent-error", positive: "border-positive", "ink-soft": "border-ink-soft" }[tone],
       !hollow && { negative: "bg-accent-error", positive: "bg-positive", "ink-soft": "bg-ink-soft" }[tone],
+      issue === "off" && !lit && "opacity-50",
       lit && "scale-150",
       id === peeked && "ring-2 ring-ink",
     );
-    marker.zIndex = lit ? 1 : 0;
+    dot.style.zIndex = lit ? "2" : issue === "off" ? "0" : "1";
   }
 }

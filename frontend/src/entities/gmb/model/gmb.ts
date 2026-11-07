@@ -18,7 +18,7 @@ export const gmbParser: Parser<Gmb> = object({
   location: nullable(object({ lat: num, lng: num, placed: bool })),
 });
 
-export const mapConfigParser: Parser<MapConfig> = object({ key: str, map_id: str });
+export const mapConfigParser: Parser<MapConfig> = object({ key: str });
 
 export const gmailsParser: Parser<Gmails> = object({ gmails: arrayOf(object({ id: num, gmail: str, created_at: str, gmbs: arrayOf(gmbParser) })) });
 

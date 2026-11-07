@@ -12,8 +12,9 @@ export interface Tags {
   sites: ReadonlyMap<number, SiteTag> | null;
 }
 
-/** The GMB's most pressing issue; `null` when nothing needs the operator. */
+/** The GMB's most pressing issue; `null` when nothing needs the operator. An off GMB is out of every service, so being off is all it has. */
 export function issueOf(gmb: Gmb, tags: Tags): Issue | null {
+  if (!gmb.enabled) return "off";
   const archive = tags.archive?.get(gmb.id);
   const site = tags.sites?.get(gmb.id);
   if (site !== undefined && site.overdue > 0) return "overdue";
@@ -21,7 +22,6 @@ export function issueOf(gmb: Gmb, tags: Tags): Issue | null {
   if (archive?.failing) return "failing";
   if (gmb.location === null) return "unlocated";
   if (tags.sites !== null && site === undefined) return "no_site";
-  if (!gmb.enabled) return "off";
   return null;
 }
 

@@ -232,13 +232,10 @@ async fn a_point_is_placed_only_on_the_callers_gmb_without_googles_and_on_earth(
 async fn the_map_is_told_only_when_configured() {
 	let db = TestDb::create().await;
 	let cache = tempfile::tempdir().unwrap();
-	let pair = MapDto {
-		key: "browser-key".into(),
-		map_id: "DEMO_MAP_ID".into(),
-	};
+	let configured = MapDto { key: "browser-key".into() };
 	for (map, want) in [
 		(None, (StatusCode::NOT_FOUND, json!({ "error": "not found" }))),
-		(Some(pair), (StatusCode::OK, json!({ "key": "browser-key", "map_id": "DEMO_MAP_ID" }))),
+		(Some(configured), (StatusCode::OK, json!({ "key": "browser-key" }))),
 	] {
 		let app = app(panel(&db, None, cache.path()).await, map);
 		let mut b = Browser::default();

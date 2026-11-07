@@ -81,11 +81,8 @@ ev_lib::settings! {
 		/// unnamed and unlocated.
 		#[secret]
 		google_maps_keys: Option<String>,
-		/// The key the browser loads Maps JS with: referrer-restricted, public by nature. With
-		/// GOOGLE_MAPS_MAP_ID, or neither: no map.
+		/// The key the browser loads Maps JS with: referrer-restricted, public by nature. Unset: no map.
 		google_maps_browser_key: Option<String>,
-		/// The map's id (`DEMO_MAP_ID` in development).
-		google_maps_map_id: Option<String>,
 		/// Grafana's server (the image's `grafanaServer` wrapper): `serve` runs it, at `/grafana/`.
 		/// With PANEL_GRAFANA_DIR, or neither; needs the forward and a public origin.
 		panel_grafana_server: Option<String>,
@@ -136,14 +133,10 @@ impl Settings {
 		Ok(Google::try_new(Keys::new(self.places_keys()), dir.join("google_cache"))?)
 	}
 
-	/// The browser's map: both variables, or neither.
-	pub fn map(&self) -> eyre::Result<Option<MapDto>> {
-		let set = |v: &Option<String>| v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
-		match (set(&self.google_maps_browser_key), set(&self.google_maps_map_id)) {
-			(Some(key), Some(map_id)) => Ok(Some(MapDto { key, map_id })),
-			(None, None) => Ok(None),
-			_ => eyre::bail!("GOOGLE_MAPS_BROWSER_KEY and GOOGLE_MAPS_MAP_ID: both, or neither"),
-		}
+	/// The browser's map.
+	pub fn map(&self) -> Option<MapDto> {
+		let key = self.google_maps_browser_key.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
+		Some(MapDto { key: key.to_owned() })
 	}
 
 	/// The front end's files, when `PANEL_WEB_DIR` names them.
@@ -425,7 +418,6 @@ mod tests {
 				"TOKENS_START_CAP_MULTIPLE",
 				"GOOGLE_MAPS_KEYS",
 				"GOOGLE_MAPS_BROWSER_KEY",
-				"GOOGLE_MAPS_MAP_ID",
 				"PANEL_GRAFANA_SERVER",
 				"PANEL_GRAFANA_DIR",
 				"PANEL_WEB_DIR",
@@ -549,7 +541,8 @@ mod tests {
 			("sa.evinvest.ltd", "not a URL"),
 		] {
 			let e = format!("{}", with(panel, "https://evinvest.ltd").unwrap_err());
-			assert!(e.contains("PANEL_PUBLIC_ORIGIN") && e.contains(why), "{panel}: {e}");
+			assert!(e.contains("PANEL_PUBLIC_ORIGIN"), "{panel}: {e}");
+			assert!(e.contains(why), "{panel}: {e}");
 		}
 		let e = format!("{}", with("https://sa.evinvest.ltd", "http://evinvest.ltd").unwrap_err());
 		assert!(e.contains("CONCIERGE_PUBLIC_ORIGIN"), "{e}");
