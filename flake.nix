@@ -37,6 +37,8 @@
           PANEL_BIND = "127.0.0.1:${local 0}";
           PANEL_WEB_PORT = local 1; # the front end's `npm run dev`
           STUB_PORT = local 2; # its `npm run dev:stub`
+          FIGMA_STUB_PORT = local 3; # `nix run .#figma`'s stub and `next dev`, never a running stack's
+          FIGMA_WEB_PORT = local 4;
         };
 
         # `nix run .#gen`: the front end's mirror of the Rust (crates/gen), committed.
@@ -124,7 +126,7 @@
             src = lib.cleanSource ./frontend;
             filter = path: _type: !(builtins.elem (baseNameOf path) [ "node_modules" ".next" "out" ]);
           };
-          npmDepsHash = "sha256-tE9eWCdjsxk+X1oUMA4I1nnvuDbRVloDoeBr0zzYv48=";
+          npmDepsHash = "sha256-ipNzKOC7qQcGwTodjwEYHsChUlVs4nXnJuFkzCR/OZQ=";
           env = {
             NEXT_TELEMETRY_DISABLED = "1";
           };
@@ -301,6 +303,24 @@
           touch "$out"
         '';
 
+        # The front end's own screens into Figma (frontend/tests/e2e), by `@evinvest/figma-render`'s bin;
+        # the loop is the `figma-render` skill.
+        figmaFile = "G9JfrDvGd0BKUdOKYg61Nn"; # "panel — renders"
+        figma = pkgs.writeShellApplication {
+          name = "figma";
+          runtimeInputs = with pkgs; [ coreutils git nodejs_22 playwright-test ];
+          text = lib.concatStrings
+            (lib.mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg v}\n") (localEnv // {
+              PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
+              PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
+            })) + ''
+            cd "$(git rev-parse --show-toplevel)/frontend"
+            [ node_modules/.package-lock.json -nt package-lock.json ] || npm ci >&2 # stdout is `frames`' JSON
+            ln -sfn ${pkgs.playwright-test}/lib/node_modules tests/e2e/node_modules
+            exec node_modules/.bin/evinvest-figma-render "$@" -c tests/e2e${lib.optionalString (figmaFile != null) " --file ${figmaFile}"}
+          '';
+        };
+
         # The conductor (dev sign-in), sites_panel and the landings beside its checkout, wired
         # together on this machine; the script is the source, shellchecked here (docs/LOCAL.md). It builds the
         # binary and the front end itself, unless PANEL_BIN / PANEL_WEB_DIR name others: the
@@ -343,6 +363,7 @@
           publish = v_flakes.utils.publish pkgs;
           gen = { type = "app"; program = lib.getExe gen; meta.description = "the front end's mirror of the Rust types (pre-commit runs it too)"; };
           dev = { type = "app"; program = lib.getExe dev; meta.description = "the conductor and its peers under watch, each started unless it already serves (docs/LOCAL.md)"; };
+          figma = { type = "app"; program = lib.getExe figma; meta.description = "the front end's screens into Figma over the stub: `-- frames` lists them, FIGMA_CAPTURES captures (the figma-render skill)"; };
           local-stack = { type = "app"; program = lib.getExe localStack; meta.description = "the conductor, its Grafana, sites_panel, review_archive and both landings, wired together on this machine (docs/LOCAL.md)"; };
         };
 

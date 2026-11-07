@@ -1,0 +1,2 @@
+# a symlink to the flake-pinned @playwright/test, so no trailing slash
+node_modules

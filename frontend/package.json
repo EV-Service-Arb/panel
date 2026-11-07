@@ -26,6 +26,7 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@evinvest/figma-render": "^0.1.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/google.maps": "^3.66.9",
     "@types/node": "^22.20.4",
