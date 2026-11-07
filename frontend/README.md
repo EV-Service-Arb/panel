@@ -19,7 +19,7 @@ src/entities/        session · source · tokens — types, response checks, req
 src/shared/          api/ (fetch, CSRF, the gate's answers), i18n/, lib/ (live/: the socket), mfe/, ui/
 messages/            en.json (the source of keys) and ru.json
 scripts/dev-stub.ts  a stand-in backend for local work
-tests/               vitest, in Node: the rules the screens obey live in plain modules
+tests/               vitest, in Node: the rules the screens obey live in plain modules; e2e/: the Figma frames
 ```
 
 ## Running it
@@ -45,6 +45,8 @@ for what acts on the platform session. The panel's own chip entries are the call
 stand-in, while the bundle loads or when it cannot, opens the same entries.
 
 Checks: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`.
+`nix run .#figma` puts the conductor's own screens into Figma, both breakpoints, over the stub as an
+admin (`tests/e2e`; the loop is the `figma-render` skill).
 
 ## How it is served
 

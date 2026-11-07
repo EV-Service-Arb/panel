@@ -1,6 +1,6 @@
 /**
  * A stand-in for the conductor's backend, for `next dev` without Rust or concierge: `/api/v1`
- * (who you are, sources, access requests, gmails, tokens), `/auth/*`, review_archive's and sites' GMB tags, and
+ * (who you are, sources, access requests, gmails, tokens, alerts — read only), `/auth/*`, review_archive's and sites' GMB tags, and
  * the live socket. Same shapes, same gate (401 without a session, CSRF on writes). The sites'
  * API and bundle are sites_panel's: run it for `/sites`.
  *
@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
 import type { Duplex } from "node:stream";
 
+import { type Alerts, RULES } from "../src/entities/alerts/model/generated.ts";
 import { ALIASES } from "../src/entities/session/model/generated.ts";
 import { changed, every, liveUpgrade } from "./stub-live.ts";
 
@@ -111,6 +112,15 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL): Promise
     const made = { need, requested_at: new Date().toISOString() };
     accessRequests.push(made);
     return send(res, 201, made);
+  }
+  if (path === "/alerts" && !write) {
+    const alerts: Alerts = {
+      enabled: true,
+      bot: "sa_stub_bot",
+      rules: [...RULES],
+      destinations: [{ id: 1, kind: "private", title: "Stub admin", topic_id: null, gmail_id: null, dead: null, rules: { new_lead: true, contact_overdue: true } }],
+    };
+    return send(res, 200, alerts);
   }
   if (path === "/gmails" && req.method === "GET") return send(res, 200, { gmails });
   if (path === "/gmails" && req.method === "POST") {
