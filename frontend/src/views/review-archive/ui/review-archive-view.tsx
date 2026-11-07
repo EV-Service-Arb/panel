@@ -19,7 +19,7 @@ export function ReviewArchiveView() {
       className="h-full"
       tag="mfe-review-archive-dashboard"
       scriptUrl="/review_archive/mfe/mfe-review-archive-dashboard.js"
-      attributes={{ api: "/api/review_archive", "sign-in": SIGN_IN_PATH, "csrf-cookie": csrf, base: "/review_archive", grafana: ROUTES.grafana }}
+      attributes={{ api: "/api/review_archive", "sign-in": SIGN_IN_PATH, "csrf-cookie": csrf, base: "/review_archive", grafana: ROUTES.grafana, ui: process.env.NEXT_PUBLIC_REVIEW_ARCHIVE_GRAFANA === "0" ? "legacy" : "grafana" }}
       fallback={<p className="p-6 text-muted-foreground">{t("reviewArchive.loading")}</p>}
     />
   );

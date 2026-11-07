@@ -631,7 +631,7 @@ fi
 	echo "────────────────────────────────────────────────────────────────────────"
 	echo " panel    $public_origin   (opens signed in: dev sign-in, $role)"
 	echo "          leads $public_origin/sites/leads   places $public_origin/sites/places   connected sites $public_origin/sources"
-	answers "$REVIEW_ARCHIVE_PORT" && echo "          review_archive $public_origin/review_archive?grafana=true   Grafana $public_origin/grafana/"
+	answers "$REVIEW_ARCHIVE_PORT" && echo "          review_archive $public_origin/review_archive   Grafana $public_origin/grafana/"
 	answers "$SITES_PORT" && echo " sites    $sites_origin   (behind the conductor: its /api/internal for the landings)"
 	for s in ${started[@]+"${started[@]}"}; do
 		case "${s%%:*}" in

@@ -134,6 +134,7 @@
             # /api/auth/mfe/*, the wallet's from /wallet/mfe/*).
             NEXT_PUBLIC_SIGNIN_OVERLAY = "1";
             NEXT_PUBLIC_WALLET_PAGE = "1";
+            NEXT_PUBLIC_REVIEW_ARCHIVE_GRAFANA = "1"; # review_archive's default UI; "0": its legacy one, `?grafana=true` per tab
             NEXT_PUBLIC_NAVY_THEME = "0"; # "1": the kit's pre-0.31 navy look (`data-theme="oldschool"`), kept to roll back to
           };
           # Turbopack talks to its node workers over a loopback socket, which the Darwin

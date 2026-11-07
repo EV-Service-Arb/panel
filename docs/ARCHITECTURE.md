@@ -179,7 +179,8 @@ reserved paths (`web.rs`) are derived from it.
   viewport splitting the outline's list; placing a GMB's point is a mode of it.
 - **The pages.** `/sites` mounts `<mfe-sites-panel api="/api/sites" base="/sites" csrf-cookie>`
   from `/sites/mfe/`; `/review_archive` mounts
-  `<mfe-review-archive-dashboard grafana="/grafana/">` from `/review_archive/mfe/`. Any `/sites/<view>` or
+  `<mfe-review-archive-dashboard grafana="/grafana/" ui>` from `/review_archive/mfe/`, `ui` its
+  default (`legacy` under `NEXT_PUBLIC_REVIEW_ARCHIVE_GRAFANA=0`, else `grafana`). Any `/sites/<view>` or
   `/review_archive/<view>` without a dot in its last segment is that page, for the element to
   route, and a file below a view (`/sites/<view>/index.txt`, `…/__next.*.txt`) is the page's
   own, so Next's client-side navigation to a view stays soft. The bundles run on this origin:

@@ -124,7 +124,7 @@ pulling review_archive's dashboards into it.
 | Leads, locations | `<conductor>/sites/leads`, `<conductor>/sites/places` |
 | Sources, connected sites | `<conductor>/sources` (with `--role admin`) |
 | sites_panel | `<sites_panel>` — `/api/internal` only without an assertion |
-| review_archive, drawn by Grafana | `<conductor>/review_archive?grafana=true` |
+| review_archive, drawn by Grafana | `<conductor>/review_archive` (`?grafana=false`: its legacy UI, for that tab) |
 | Grafana | `<conductor>/grafana/` |
 | aquafix, a point | `<aquafix>` with the point's slug before `localhost`, e.g. `http://royat.localhost:<port>/fr` |
 | aquafix, the brand page | `<aquafix>/fr` |
