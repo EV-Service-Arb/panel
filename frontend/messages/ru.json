@@ -265,7 +265,6 @@
   "assistant.more": "Ещё",
   "assistant.rename": "Переименовать",
   "assistant.delete": "Удалить чат",
-  "assistant.deleted": "Чат удалён",
   "assistant.undo": "Отменить",
   "assistant.dock": "Закрепить сбоку",
   "assistant.float": "Поверх страницы",
@@ -317,5 +316,6 @@
   "assistant.feedback.down": "Плохой ответ",
   "assistant.stopped": "Остановлено",
   "assistant.thinking": "Думает…",
-  "assistant.worked": "Работал {time}"
+  "assistant.worked": "Работал {time}",
+  "assistant.delete.title": "Удалить этот чат?"
 }

@@ -84,6 +84,7 @@ interface State {
   unread: boolean;
 }
 
+// shortcut: chats live in this browser's localStorage (≈5 MB, image previews included; a full one throws); server-side with the real assistant.
 const KEY = "sa:assistant";
 export const WIDTH = { min: 340, max: 760, initial: 420 } as const;
 const INITIAL: State = { chats: [], current: null, placement: "folded", opens: "floating", width: WIDTH.initial, approval: "ask", unread: false };
@@ -140,11 +141,6 @@ export function openChat(id: string | null): void {
 
 export function removeChat(id: string): void {
   set((s) => ({ ...s, chats: s.chats.filter((c) => c.id !== id), current: s.current === id ? null : s.current }));
-}
-
-/** A removed chat back where it was in the history. */
-export function restoreChat(chat: Chat): void {
-  set((s) => ({ ...s, chats: [...s.chats, chat].sort((a, b) => b.updated - a.updated), current: chat.id }));
 }
 
 export function renameChat(id: string, title: string): void {

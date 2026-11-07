@@ -3,6 +3,7 @@
 import {
   ChatMarker,
   ChatPanel,
+  ConfirmDialog,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -15,7 +16,6 @@ import {
   PopoverContent,
   PopoverTrigger,
   cn,
-  toast,
 } from "@evinvest/uikit";
 import { ChevronDown, ChevronsRight, Ellipsis, Minus, PanelRight, PictureInPicture2, Search, Sparkles, SquarePen, Trash2, Upload } from "lucide-react";
 import { usePathname } from "next/navigation";
@@ -26,7 +26,7 @@ import { useLocale, useT } from "@/shared/i18n";
 import { DESKTOP_QUERY, useMediaQuery } from "@/shared/lib/use-media-query";
 
 import { ask, asMentions, script, stop, suggestions } from "../model/canned";
-import { type Chat, type Mention, WIDTH, openChat, place, removeChat, renameChat, restoreChat, setWidth, useAssistant } from "../model/chat";
+import { type Chat, type Mention, WIDTH, openChat, place, removeChat, renameChat, setWidth, useAssistant } from "../model/chat";
 import { Composer, type ComposerHandle, type Draft } from "./composer";
 import { AssistantTurnView, UserTurnView } from "./turns";
 
@@ -86,7 +86,8 @@ export function Assistant() {
       aria-label={t("assistant")}
       data-enter="rise"
       onKeyDown={(e) => {
-        if (e.key === "Escape" && !e.defaultPrevented) fold();
+        // A menu or popover is portalled out of the window: its Escape closes it, not the window.
+        if (e.key === "Escape" && !e.defaultPrevented && e.currentTarget.contains(e.target as Node)) fold();
       }}
       className={cn(
         "absolute z-30 flex flex-col overflow-hidden bg-card",
@@ -149,6 +150,7 @@ function ChatView({ placement, onFold, desktop }: { placement: "floating" | "doc
   const composer = useRef<ComposerHandle>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [dropping, setDropping] = useState(0);
+  const [deleting, setDeleting] = useState<Chat | null>(null);
   const last = chat?.turns.at(-1);
   const streaming = last?.role === "assistant" && (last.state === "working" || last.state === "writing");
 
@@ -177,7 +179,19 @@ function ChatView({ placement, onFold, desktop }: { placement: "floating" | "doc
         composer.current?.attach([...e.dataTransfer.files]);
       }}
     >
-      <Header chat={chat} placement={placement} onFold={onFold} desktop={desktop} />
+      <Header chat={chat} placement={placement} onFold={onFold} desktop={desktop} onDelete={setDeleting} />
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(null);
+        }}
+        tone="error"
+        title={t("assistant.delete.title")}
+        description={deleting?.title ?? t("assistant.newChat")}
+        confirmLabel={t("assistant.delete")}
+        labels={{ cancel: t("assistant.edit.cancel") }}
+        onConfirm={() => removeChat(deleting!.id)}
+      />
       <ChatPanel
         streaming={streaming}
         labels={{ jump: t("assistant.jump"), log: t("assistant.log") }}
@@ -240,7 +254,19 @@ function When({ at }: { at: number }) {
   return new Intl.DateTimeFormat(locale, today ? { hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(d);
 }
 
-function Header({ chat, placement, onFold, desktop }: { chat: Chat | null; placement: "floating" | "docked"; onFold: () => void; desktop: boolean }) {
+function Header({
+  chat,
+  placement,
+  onFold,
+  desktop,
+  onDelete,
+}: {
+  chat: Chat | null;
+  placement: "floating" | "docked";
+  onFold: () => void;
+  desktop: boolean;
+  onDelete: (chat: Chat) => void;
+}) {
   const t = useT();
   const [renaming, setRenaming] = useState(false);
   const title = chat?.title ?? t("assistant.newChat");
@@ -266,7 +292,7 @@ function Header({ chat, placement, onFold, desktop }: { chat: Chat | null; place
           }}
         />
       ) : (
-        <History title={title} />
+        <History title={title} onDelete={onDelete} />
       )}
       <IconButton size="sm" aria-label={t("assistant.new")} title={`${t("assistant.new")}`} disabled={chat === null} onClick={() => openChat(null)}>
         <SquarePen />
@@ -278,9 +304,9 @@ function Header({ chat, placement, onFold, desktop }: { chat: Chat | null; place
           </IconButton>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => setRenaming(true)}>{t("assistant.rename")}</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setRenaming(true)}>{t("assistant.rename")}</DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onSelect={() => chat && deleteWithUndo(chat, t("assistant.deleted"), t("assistant.undo"))}>
+          <DropdownMenuItem variant="destructive" onClick={() => onDelete(chat!)}>
             <Trash2 aria-hidden />
             {t("assistant.delete")}
           </DropdownMenuItem>
@@ -303,22 +329,8 @@ function Header({ chat, placement, onFold, desktop }: { chat: Chat | null; place
   );
 }
 
-function deleteWithUndo(chat: Chat, said: string, undo: string): void {
-  removeChat(chat.id);
-  const id = toast(said, {
-    description: (
-      <button type="button" className="font-medium text-ink underline underline-offset-2" onClick={() => {
-          restoreChat(chat);
-          toast.dismiss(id);
-        }}>
-        {undo}
-      </button>
-    ),
-  });
-}
-
 /** The chat's title, opening every chat this browser keeps: searchable, newest first. */
-function History({ title }: { title: string }) {
+function History({ title, onDelete }: { title: string; onDelete: (chat: Chat) => void }) {
   const t = useT();
   const s = useAssistant();
   const [open, setOpen] = useState(false);
@@ -400,7 +412,8 @@ function History({ title }: { title: string }) {
                       className="hidden size-6 group-hover/row:inline-flex"
                       onClick={(e) => {
                         e.stopPropagation();
-                        deleteWithUndo(c, t("assistant.deleted"), t("assistant.undo"));
+                        setOpen(false);
+                        onDelete(c);
                       }}
                     >
                       <Trash2 />

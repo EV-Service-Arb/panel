@@ -31,9 +31,7 @@ export interface Draft {
 }
 
 export interface ComposerHandle {
-  focus: () => void;
   attach: (files: readonly File[]) => void;
-  mention: () => void;
 }
 
 // A draft outlives the panel folding and switching chats, not a reload.
@@ -102,7 +100,7 @@ export function Composer({
       follow(el);
     });
   };
-  useImperativeHandle(handle, () => ({ focus: () => field()?.focus(), attach, mention: () => insert("@") }));
+  useImperativeHandle(handle, () => ({ attach }));
 
   const gmails = useGmails();
   const all = gmails.status === "ok" ? gmails.data : [];
@@ -125,7 +123,7 @@ export function Composer({
     const el = field();
     if (picking?.kind === "mention") {
       const l = locations[i];
-      if (l === undefined) return;
+      if (l === undefined) throw new Error("only a shown option is chosen");
       const label = l.gmb.name ?? l.gmb.place_id;
       const caret = el?.selectionStart ?? draft.text.length;
       const text = `${draft.text.slice(0, picking.from)}@${label} ${draft.text.slice(caret)}`;
@@ -134,7 +132,7 @@ export function Composer({
       requestAnimationFrame(() => el?.setSelectionRange(end, end));
     } else if (picking?.kind === "command") {
       const c = commands[i];
-      if (c === undefined) return;
+      if (c === undefined) throw new Error("only a shown option is chosen");
       const s = subject && !draft.subjectOff ? (subject.gmb.name ?? subject.gmb.place_id) : null;
       const text = c.prompt(s);
       setDraft((d) => ({
@@ -227,16 +225,16 @@ export function Composer({
                 </IconButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
-                <DropdownMenuItem onSelect={() => fileInput.current?.click()}>
+                <DropdownMenuItem onClick={() => fileInput.current?.click()}>
                   <Paperclip aria-hidden />
                   {t("assistant.attach")}
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => requestAnimationFrame(() => insert("@"))}>
+                <DropdownMenuItem onClick={() => requestAnimationFrame(() => insert("@"))}>
                   <AtSign aria-hidden />
                   {t("assistant.mention")}
                 </DropdownMenuItem>
                 {subject !== null && draft.subjectOff && (
-                  <DropdownMenuItem onSelect={() => setDraft((d) => ({ ...d, subjectOff: false }))}>
+                  <DropdownMenuItem onClick={() => setDraft((d) => ({ ...d, subjectOff: false }))}>
                     <MapPin aria-hidden />
                     {t("assistant.context.add", { name: name! })}
                   </DropdownMenuItem>

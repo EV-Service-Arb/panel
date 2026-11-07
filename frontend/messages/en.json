@@ -265,7 +265,6 @@
   "assistant.more": "More",
   "assistant.rename": "Rename",
   "assistant.delete": "Delete chat",
-  "assistant.deleted": "Chat deleted",
   "assistant.undo": "Undo",
   "assistant.dock": "Dock to the side",
   "assistant.float": "Float over the page",
@@ -317,5 +316,6 @@
   "assistant.feedback.down": "Bad answer",
   "assistant.stopped": "Stopped",
   "assistant.thinking": "Thinking…",
-  "assistant.worked": "Worked for {time}"
+  "assistant.worked": "Worked for {time}",
+  "assistant.delete.title": "Delete this chat?"
 }
