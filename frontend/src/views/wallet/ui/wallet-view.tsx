@@ -1,8 +1,8 @@
 "use client";
 
 import { PageFrame } from "@evinvest/uikit";
+import { PANEL } from "@config";
 import { WalletElement } from "@/features/wallet-element";
-import { WALLET_PAGE_ENABLED } from "@/shared/config/wallet-page";
 import { useT } from "@/shared/i18n";
 import { EmptyState } from "@/shared/ui/empty-state";
 
@@ -10,8 +10,8 @@ import { EmptyState } from "@/shared/ui/empty-state";
 export function WalletView() {
   const t = useT();
   return (
-    <PageFrame breakpoint="md" title={t("wallet.title")} {...(WALLET_PAGE_ENABLED ? { description: t("wallet.description") } : {})} width="content">
-      {WALLET_PAGE_ENABLED ? <WalletElement /> : <EmptyState title={t("wallet.unavailable.title")} description={t("wallet.off.body")} />}
+    <PageFrame breakpoint="md" title={t("wallet.title")} {...(PANEL.walletPage ? { description: t("wallet.description") } : {})} width="content">
+      {PANEL.walletPage ? <WalletElement /> : <EmptyState title={t("wallet.unavailable.title")} description={t("wallet.off.body")} />}
     </PageFrame>
   );
 }

@@ -5,7 +5,7 @@ import { defineConfig } from "vitest/config";
 // screens obey live in plain modules (`model/`, `lib/`), so no DOM is needed.
 export default defineConfig({
   resolve: {
-    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+    alias: { "@config": fileURLToPath(new URL("./panel.config.ts", import.meta.url)), "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   test: {
     environment: "node",

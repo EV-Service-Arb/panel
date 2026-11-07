@@ -127,15 +127,6 @@
           npmDepsHash = "sha256-tE9eWCdjsxk+X1oUMA4I1nnvuDbRVloDoeBr0zzYv48=";
           env = {
             NEXT_TELEMETRY_DISABLED = "1";
-            # NEXT_PUBLIC_* values are inlined by `next build`, so these are compile-time:
-            # the image carries the choice, no runtime switch. They turn on the platform path:
-            # the sign-in dialog over the panel, the platform's account chip and sign-in, and
-            # the wallet page. The bundles come from the platform origin (concierge's from
-            # /api/auth/mfe/*, the wallet's from /wallet/mfe/*).
-            NEXT_PUBLIC_SIGNIN_OVERLAY = "1";
-            NEXT_PUBLIC_WALLET_PAGE = "1";
-            NEXT_PUBLIC_REVIEW_ARCHIVE_GRAFANA = "1"; # review_archive's default UI; "0": its legacy one, `?grafana=true` per tab
-            NEXT_PUBLIC_NAVY_THEME = "0"; # "1": the kit's pre-0.31 navy look (`data-theme="oldschool"`), kept to roll back to
           };
           # Turbopack talks to its node workers over a loopback socket, which the Darwin
           # sandbox refuses unless asked.

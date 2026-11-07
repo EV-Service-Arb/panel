@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
+import { PANEL } from "@config";
+
 import { DocumentLang } from "@/shared/i18n";
 
 import "./globals.css";
@@ -18,7 +20,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" data-theme={process.env.NEXT_PUBLIC_NAVY_THEME === "1" ? "oldschool" : undefined}>
+    <html lang="en" data-theme={PANEL.theme === "dark" ? undefined : PANEL.theme}>
       <body className="min-h-svh bg-background font-sans text-ink antialiased">
         <DocumentLang />
         {children}

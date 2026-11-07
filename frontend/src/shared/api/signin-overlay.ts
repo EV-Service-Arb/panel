@@ -1,12 +1,11 @@
 // State of the sign-in overlay, outside React: a 401 is seen by `http` and the live socket, which
-// are not components. The overlay is opt-in at build time (`NEXT_PUBLIC_SIGNIN_OVERLAY=1`); off, or
+// are not components. The overlay is `signinOverlay` in panel.config.ts; off, or
 // with no host component mounted to show it, `requestSignInOverlay` says no and the caller
 // redirects as it always did.
 
-export type OverlayState = "idle" | "open" | "dismissed";
+import { PANEL } from "@config";
 
-/** Inlined at build time by Next; anything but "1" keeps the full redirect. */
-const SIGNIN_OVERLAY_ENABLED = process.env.NEXT_PUBLIC_SIGNIN_OVERLAY === "1";
+export type OverlayState = "idle" | "open" | "dismissed";
 
 let state: OverlayState = "idle";
 let hosts = 0;
@@ -37,7 +36,7 @@ export function registerOverlayHost(): () => void {
 
 /** True when the overlay took the 401; false means the caller must redirect itself. */
 export function requestSignInOverlay(): boolean {
-  if (!SIGNIN_OVERLAY_ENABLED || hosts === 0) return false;
+  if (!PANEL.signinOverlay || hosts === 0) return false;
   rememberPage();
   set("open");
   return true;

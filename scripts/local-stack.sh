@@ -583,8 +583,7 @@ if [ "$watch" = 1 ] && [ "$run_panel" = 1 ]; then
 		cd "$root/frontend"
 		# npm ci stamps node_modules/.package-lock.json: a lockfile pulled since is newer
 		[ node_modules/.package-lock.json -nt package-lock.json ] || prefixed web npm ci
-		# the image's build switches (flake.nix, the frontend's env)
-		NEXT_PUBLIC_SIGNIN_OVERLAY=1 NEXT_PUBLIC_WALLET_PAGE=1 PANEL_DEV_BACKEND="$origin" \
+		PANEL_DEV_BACKEND="$origin" \
 			prefixed web npx next dev --port "$WEB_DEV_PORT"
 	) &
 	web_pid=$!

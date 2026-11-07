@@ -34,9 +34,10 @@ import { useTokens } from "@/entities/tokens";
 import { AccountChip } from "@/features/account-chip";
 import { useSignOut } from "@/features/sign-out";
 
+import { PANEL } from "@config";
+
 import { safeLocalPath } from "@/shared/api";
 import { ROUTES } from "@/shared/config/routes";
-import { WALLET_PAGE_ENABLED } from "@/shared/config/wallet-page";
 import { LOCALES, type Locale, chooseLocale, useLocale, useT } from "@/shared/i18n";
 
 import { Outline } from "./outline";
@@ -210,7 +211,7 @@ function ScreensMenu() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
-        {ownScreens(me, WALLET_PAGE_ENABLED)
+        {ownScreens(me, PANEL.walletPage)
           .filter(inMenu)
           .map((id) => (
             <DropdownMenuItem key={id} asChild>
@@ -238,7 +239,7 @@ function OwnScreens({ bar = false, className, onNavigate }: { bar?: boolean; cla
   };
   return (
     <div className={cn("flex items-center gap-1", className)}>
-      {ownScreens(me, WALLET_PAGE_ENABLED)
+      {ownScreens(me, PANEL.walletPage)
         .filter((id) => !(bar && inMenu(id)))
         .map((id) => {
         const here = pathname.startsWith(ROUTES[id]);
