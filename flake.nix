@@ -126,7 +126,7 @@
             src = lib.cleanSource ./frontend;
             filter = path: _type: !(builtins.elem (baseNameOf path) [ "node_modules" ".next" "out" ]);
           };
-          npmDepsHash = "sha256-sVqNm7zzHTCmosErpGopgslNOjkIByAKWR9kP4qaoKk=";
+          npmDepsHash = "sha256-7vE7JiikgXeTqo5UtnsUUmpcJTXrC3ihMT8DJahURgY=";
           env = {
             NEXT_TELEMETRY_DISABLED = "1";
           };
@@ -363,7 +363,7 @@
           publish = v_flakes.utils.publish pkgs;
           gen = { type = "app"; program = lib.getExe gen; meta.description = "the front end's mirror of the Rust types (pre-commit runs it too)"; };
           dev = { type = "app"; program = lib.getExe dev; meta.description = "the conductor and its peers under watch, each started unless it already serves (docs/LOCAL.md)"; };
-          figma = { type = "app"; program = lib.getExe figma; meta.description = "the front end's screens into Figma over the stub: `-- frames` lists them, FIGMA_CAPTURES captures (the figma-render skill)"; };
+          figma = { type = "app"; program = lib.getExe figma; meta.description = "the front end's screens into Figma over the stub, gridded on a new page of figmaFile; `-- frames` lists them"; };
           local-stack = { type = "app"; program = lib.getExe localStack; meta.description = "the conductor, its Grafana, sites_panel, review_archive and both landings, wired together on this machine (docs/LOCAL.md)"; };
         };
 
