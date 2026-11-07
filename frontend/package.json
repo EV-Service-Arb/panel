@@ -14,8 +14,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "postinstall": "node --disable-warning=ExperimentalWarning scripts/npm-local.ts",
-    "local": "node --disable-warning=ExperimentalWarning scripts/npm-local.ts"
+    "postinstall": "[ -z \"$IN_NIX_SHELL\" ] || js-local"
   },
   "dependencies": {
     "@evinvest/concierge": "^0.5.0",

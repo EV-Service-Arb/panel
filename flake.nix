@@ -374,6 +374,7 @@
               openssl # sentry's native-tls
               sqlite # inspecting the database
               rust
+              (v_flakes.js-local { inherit pkgs; }) # frontend/_.js-local.json: our npm packages from their checkouts
             ] ++ pre-commit-check.enabledPackages ++ combined.enabledPackages;
 
             env = localEnv // {

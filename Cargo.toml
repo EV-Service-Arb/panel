@@ -65,6 +65,8 @@ zeroize = "1"
 [workspace.lints.clippy]
 float_cmp = "allow"
 len_zero = "allow"
+if_not_else = "warn"
+integer_division = "warn"
 
 [workspace.lints.rust]
 stable_features = "allow"
