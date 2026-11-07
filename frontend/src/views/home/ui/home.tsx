@@ -13,7 +13,6 @@ import { pin, useTheMap } from "@/shared/map";
 import { EmptyState } from "@/shared/ui/empty-state";
 import { ErrorState } from "@/shared/ui/error-state";
 
-import { MapLayers } from "./map-layers";
 import { Peek } from "./peek";
 
 /** `/`: the caller's GMBs on a map, unless they come back from the sign-in dialog to the page they were on. */
@@ -29,7 +28,7 @@ export function Home() {
   const config = useResource("map", fetchMapConfig);
 
   return (
-    <div className="relative h-[calc(100svh-3.5rem)] min-h-0 flex-1">
+    <div className="relative min-h-0 flex-1">
       {config.status === "loading" && <Skeleton className="absolute inset-0 rounded-none" />}
       {config.status === "error" && (
         <div className="p-6">
@@ -161,7 +160,6 @@ function GmbMap({ config }: { config: MapConfig }) {
         </div>
       )}
       {peekedListed && placed === undefined && <Peek listed={peekedListed} onClose={() => setOnMap({ peeked: null })} />}
-      {map.status === "ok" && <MapLayers map={map.map} />}
       {map.status === "ok" && placed !== undefined && placedAt !== null && <PlacingBar gmb={placed} map={map.map} at={placedAt} onMove={(at) => setMoved({ gmb: placed.id, at })} />}
     </>
   );

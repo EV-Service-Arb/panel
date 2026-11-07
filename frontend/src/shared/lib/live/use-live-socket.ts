@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { type Connect, createLiveClient } from "./client";
+import { type Connect, type LiveStatus, createLiveClient } from "./client";
 import { LIVE_PATH } from "./protocol";
 import { relayLive } from "./relay";
 
@@ -26,8 +26,9 @@ export interface LiveSocketHandlers {
  * mounted once by the shell. Hidden and visible map to the client's pause and resume, `online` to
  * a retry now.
  */
-export function useLiveSocket(handlers: LiveSocketHandlers): void {
+export function useLiveSocket(handlers: LiveSocketHandlers): LiveStatus {
   const latest = useRef(handlers);
+  const [status, setStatus] = useState<LiveStatus>("closed");
   useEffect(() => {
     latest.current = handlers;
   });
@@ -44,7 +45,10 @@ export function useLiveSocket(handlers: LiveSocketHandlers): void {
         random: Math.random,
       },
       {
-        status: relay.status,
+        status: (s) => {
+          relay.status(s);
+          setStatus(s);
+        },
         message: relay.message,
         unauthenticated: () => latest.current.onUnauthenticated(),
         forbidden: () => latest.current.onForbidden(),
@@ -63,4 +67,5 @@ export function useLiveSocket(handlers: LiveSocketHandlers): void {
       relay.stop();
     };
   }, []);
+  return status;
 }

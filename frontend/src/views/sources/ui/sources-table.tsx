@@ -28,7 +28,7 @@ export function SourcesTable({ sources, onRevoked }: { sources: Source[]; onRevo
 function State({ source, onRevoked }: { source: Source; onRevoked: () => void }) {
   const t = useT();
   const locale = useLocale();
-  if (source.revoked_at) return <Badge variant="neutral">{t("sources.revoked", { at: formatDateTime(source.revoked_at, locale) })}</Badge>;
+  if (source.revoked_at) return <Badge tone="neutral">{t("sources.revoked", { at: formatDateTime(source.revoked_at, locale) })}</Badge>;
   return <RevokeButton keyId={source.key_id} onRevoked={onRevoked} />;
 }
 

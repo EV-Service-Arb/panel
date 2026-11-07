@@ -9,7 +9,7 @@ import { EDGE_CELL, TABLE_HEAD } from "@/shared/ui/table";
 
 const HEAD = cn(TABLE_HEAD, EDGE_CELL);
 
-const STATE_VARIANT = { unset: "neutral", live: "positive", empty: "neutral", withdrawn: "neutral", down: "error" } as const;
+const STATE_TONE = { unset: "neutral", live: "positive", empty: "neutral", withdrawn: "neutral", down: "error" } as const;
 
 /** Every active site key: what its landing says of itself, beside what sites saw of it. */
 export function ConnectedSitesTable({ sites }: { sites: ConnectedSite[] }) {
@@ -65,10 +65,10 @@ function Row({ site }: { site: ConnectedSite }) {
 function Report({ site }: { site: ConnectedSite }) {
   const t = useT();
   const { report } = site;
-  if (report.state === "no_origin") return <Badge variant="neutral">{t("connected.noOrigin")}</Badge>;
+  if (report.state === "no_origin") return <Badge tone="neutral">{t("connected.noOrigin")}</Badge>;
   if (report.state === "failed")
     return (
-      <Badge variant="error" title={report.detail}>
+      <Badge tone="error" title={report.detail}>
         {t("connected.failed")}
       </Badge>
     );
@@ -87,7 +87,7 @@ function Report({ site }: { site: ConnectedSite }) {
 function State({ label, state }: { label: string; state: SourceState }) {
   const t = useT();
   return (
-    <Badge variant={STATE_VARIANT[state.state]} title={state.detail ?? undefined}>
+    <Badge tone={STATE_TONE[state.state]} title={state.detail ?? undefined}>
       {label}: {t(`connected.state.${state.state}` satisfies MessageKey)}
     </Badge>
   );

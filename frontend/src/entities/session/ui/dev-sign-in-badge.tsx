@@ -12,7 +12,7 @@ export function DevSignInBadge({ className }: { className?: string }) {
   const { dev_sign_in } = useMe();
   if (!dev_sign_in) return null;
   return (
-    <Badge variant="warn" title={t("session.devSignIn.hint")} className={cn("uppercase tracking-wide", className)}>
+    <Badge tone="warn" title={t("session.devSignIn.hint")} className={cn("uppercase tracking-wide", className)}>
       {t("session.devSignIn")}
     </Badge>
   );
