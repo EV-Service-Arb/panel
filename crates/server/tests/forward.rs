@@ -48,11 +48,8 @@ async fn a_signed_in_call_reaches_the_service_with_an_assertion_and_without_the_
 	let a = sa_auth::verify(&keys, token, Service::ReviewArchive, "GET", "/me/overview", None, now).expect("the panel's assertion, not the forged one");
 	let Principal::User(a) = a.principal else { panic!("a session's call is a user's") };
 	assert_eq!(a.email, "dev-admin@localhost");
-	assert!(
-		a.permissions.iter().all(|p| p.starts_with("sa:review_archive:")) && a.permissions.iter().count() == 2,
-		"{:?}",
-		a.permissions
-	);
+	assert!(a.permissions.iter().all(|p| p.starts_with("sa:review_archive:")), "{:?}", a.permissions);
+	assert!(a.permissions.iter().count() == 2, "{:?}", a.permissions);
 }
 
 #[tokio::test]
@@ -135,7 +132,8 @@ async fn sites_is_told_the_caller_with_its_own_permissions_only() {
 	};
 	assert_eq!(user.email, "dev-admin@localhost");
 	let held: Vec<&str> = user.permissions.iter().collect();
-	assert!(!held.is_empty() && held.iter().all(|p| p.starts_with("sa:sites:")), "{held:?}");
+	assert!(!held.is_empty(), "{held:?}");
+	assert!(held.iter().all(|p| p.starts_with("sa:sites:")), "{held:?}");
 	assert_eq!(held.len(), sa_auth::SA_ADMIN.members.iter().filter(|p| p.starts_with("sa:sites:")).count());
 
 	assert_eq!(

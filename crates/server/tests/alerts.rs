@@ -804,7 +804,8 @@ async fn a_review_goes_to_its_gmbs_owners_only() {
 		"another's destination"
 	);
 	let alerts = s.panel.alerts(owner, &nobody).await.unwrap();
-	assert!(alerts.rules.contains(&Rule::ReviewGone) && !alerts.rules.contains(&Rule::NewLead), "{:?}", alerts.rules);
+	assert!(alerts.rules.contains(&Rule::ReviewGone), "{:?}", alerts.rules);
+	assert!(!alerts.rules.contains(&Rule::NewLead), "{:?}", alerts.rules);
 	s.mock.clear();
 
 	s.review("review_new", t0(), &[royat, scoped_gmb, chamalieres, off], None);
@@ -928,7 +929,8 @@ async fn a_channel_is_added_by_its_admin_and_gets_no_pii() {
 	assert_eq!(s.n.deliver(at(2_999)).await.unwrap().sent, 0);
 	assert_eq!(s.n.deliver(at(3_000)).await.unwrap().sent, 2);
 	let dests = s.panel.alerts(user, &operator).await.unwrap().destinations;
-	assert!(dests.iter().any(|d| d.id == channel) && dests.iter().any(|d| d.id == topic && d.topic_id == Some(5)));
+	assert!(dests.iter().any(|d| d.id == channel));
+	assert!(dests.iter().any(|d| d.id == topic && d.topic_id == Some(5)));
 }
 
 /// A chat the bot was removed from goes dead; a test that arrives brings it back.
@@ -1187,7 +1189,8 @@ async fn a_destination_changing_tells_its_user() {
 			if let sa_panel::live::Signal::Changed(c) = signal
 				&& c.topic == "alerts"
 			{
-				assert!(c.visible_to(user, &aliases::operator()) && !c.visible_to(Uuid::now_v7(), &aliases::admin()));
+				assert!(c.visible_to(user, &aliases::operator()));
+				assert!(!c.visible_to(Uuid::now_v7(), &aliases::admin()));
 				users.push(c.audience);
 			}
 		}
@@ -1288,7 +1291,8 @@ async fn a_button_calls_sites_as_its_user_and_is_one_action_however_often_presse
 		};
 		assert_eq!((who.sub.as_str(), who.email.as_str(), who.name.as_str()), (user.to_string().as_str(), "olga@example.com", "Olga"));
 		let held: Vec<&str> = who.permissions.iter().collect();
-		assert!(!held.is_empty() && held.iter().all(|p| p.starts_with("sa:sites:")), "sites' slice only: {held:?}");
+		assert!(!held.is_empty(), "sites' slice only: {held:?}");
+		assert!(held.iter().all(|p| p.starts_with("sa:sites:")), "sites' slice only: {held:?}");
 	}
 	assert_eq!(answers(&s), ["Записано.", "Уже записано."]);
 	let edits = s.mock.calls("editMessageText");

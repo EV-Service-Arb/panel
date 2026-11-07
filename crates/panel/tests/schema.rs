@@ -165,7 +165,8 @@ async fn the_runtime_does_its_work_on_a_fresh_database() {
 		// Access requests, and alerts: a link, rules, sites' notes and the conductor's own into
 		// the outbox, a delivery, a dead chat, the access checks with their pruning, the poller.
 		let (asked, made) = panel.request_access(user, "o@x.io", "Olga", "sa:operator", now).await.unwrap();
-		assert!(made && asked.need == "sa:operator");
+		assert!(made);
+		assert!(asked.need == "sa:operator");
 		let hub = |blocked| Hub {
 			panel: panel.clone(),
 			bot: FakeBot { blocked },

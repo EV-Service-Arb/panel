@@ -190,7 +190,8 @@ async fn dev_sign_in_opens_a_real_session_with_its_permissions() {
 	assert_eq!(b.send(&app, Method::GET, "/api/v1/me").await.0, StatusCode::UNAUTHORIZED, "no session yet");
 	let (status, location) = b.sign_in(&app).await;
 	assert_eq!((status, location.as_str()), (StatusCode::SEE_OTHER, "/"));
-	assert!(b.jar.contains_key("sa_session") && b.jar.contains_key("sa_csrf"), "{:?}", b.jar.keys());
+	assert!(b.jar.contains_key("sa_session"), "{:?}", b.jar.keys());
+	assert!(b.jar.contains_key("sa_csrf"), "{:?}", b.jar.keys());
 
 	let (status, _, me) = b.send(&app, Method::GET, "/api/v1/me").await;
 	assert_eq!(status, StatusCode::OK, "{me}");

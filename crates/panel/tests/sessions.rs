@@ -69,7 +69,8 @@ async fn a_session_lives_rotates_and_ends() {
 
 	let pool = db.pool().await;
 	let (access, refresh): (Vec<u8>, Vec<u8>) = sqlx::query_as("SELECT access_sealed, refresh_sealed FROM sessions").fetch_one(&pool).await.unwrap();
-	assert!(!access.windows(8).any(|w| w == b"access-1") && !refresh.windows(9).any(|w| w == b"refresh-1"), "sealed");
+	assert!(!access.windows(8).any(|w| w == b"access-1"), "sealed");
+	assert!(!refresh.windows(9).any(|w| w == b"refresh-1"), "sealed");
 	let stored: Vec<u8> = sqlx::query_scalar("SELECT id_hash FROM sessions").fetch_one(&pool).await.unwrap();
 	assert_ne!(stored, opened.cookie.as_bytes(), "the cookie itself is not stored");
 

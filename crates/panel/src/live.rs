@@ -148,7 +148,8 @@ mod tests {
 			audience,
 		};
 		let sources = change(Audience::Holders(sa_auth::Sources::Manage.as_str().into()));
-		assert!(!sources.visible_to(ann, &operator) && sources.visible_to(ann, &admin));
+		assert!(!sources.visible_to(ann, &operator));
+		assert!(sources.visible_to(ann, &admin));
 		let link = change(Audience::User(ann));
 		assert!(link.visible_to(ann, &operator));
 		assert!(!link.visible_to(bob, &admin), "another user's link, admin or not");

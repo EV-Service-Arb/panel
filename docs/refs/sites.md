@@ -8,6 +8,8 @@
   <!--- reviews analysis against competitors for ideas on what to improve (albeit irrelevant for us)-->
   - [{create post, respond to reviews, local keywords}](https://app.localfalcon.com/dashboard)
     I think I can do first 2 better long-term (given I can specialize); and keywords can't be done better than Semrush anyways I think
+	- also how cool is this MCP onboarding https://www.localfalcon.com/features/mcp#connect
+	- home is very strong too https://app.localfalcon.com/dashboard
 
 - [GMB Radar](https://www.gmbradar.com/local-seo-tool/local-rank-tracker)
   Demo Vid: https://www.youtube.com/watch?v=m8z3fyb_d3M

@@ -445,7 +445,9 @@ mod tests {
 		assert!(big.len() <= 64, "{big}");
 		let one_letter = format!("t.1001.{}", hex::encode(callback_mac(&KEY, 42, 1001, "t")));
 		assert_eq!(parse_callback(&KEY, 42, &one_letter), Some((1001, "take".to_owned())), "a message sent with one-letter buttons");
-		assert!(!is_button_id("t") && !is_button_id("Take") && is_button_id("no_answer"));
+		assert!(!is_button_id("t"));
+		assert!(!is_button_id("Take"));
+		assert!(is_button_id("no_answer"));
 	}
 
 	#[test]

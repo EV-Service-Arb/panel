@@ -384,7 +384,8 @@ async fn an_operator_signs_in_and_signs_out() {
 	assert_eq!(cb.status, StatusCode::SEE_OTHER);
 	assert_eq!(cb.headers[header::LOCATION], "/");
 	assert_eq!(cb.headers[header::CACHE_CONTROL], "no-store");
-	assert!(b.jar.contains_key("sa_session") && b.jar.contains_key("sa_csrf"));
+	assert!(b.jar.contains_key("sa_session"));
+	assert!(b.jar.contains_key("sa_csrf"));
 	assert!(!b.jar.contains_key("sa_prelogin"), "the pre-login is single-use");
 
 	let me = b.get(&app, "/api/v1/me").await;
@@ -795,7 +796,8 @@ async fn the_alerts_page_links_telegram_and_chooses_rules() {
 	assert_eq!(link.status, StatusCode::CREATED, "{}", link.body);
 	let url = link.body["url"].as_str().unwrap();
 	let token = url.strip_prefix("https://t.me/evinvest_sa_bot?start=").unwrap();
-	assert!(token.len() == 43 && token.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'), "{url}");
+	assert!(token.len() == 43, "{url}");
+	assert!(token.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'), "{url}");
 
 	let rules = format!("/api/v1/alerts/destinations/{destination}/rules");
 	let muted = b.send(&app, Method::PUT, &rules, Some(json!({"rules": {"new_lead": false}})), true).await;

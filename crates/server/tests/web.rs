@@ -224,7 +224,8 @@ async fn nothing_outside_the_directory() {
 		"//etc/passwd",
 	] {
 		let (status, _, body) = get_(&app, uri).await;
-		assert!(!body.contains("do not serve") && !body.contains("root:"), "{uri} leaked: {body}");
+		assert!(!body.contains("do not serve"), "{uri} leaked: {body}");
+		assert!(!body.contains("root:"), "{uri} leaked: {body}");
 		assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
 	}
 }

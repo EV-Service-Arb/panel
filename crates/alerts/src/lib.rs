@@ -301,9 +301,13 @@ mod tests {
 		let operator: PermissionSet = sa_auth::SA_OPERATOR.members.iter().copied().collect();
 		let admin: PermissionSet = SA_ADMIN.members.iter().copied().collect();
 		let nobody: PermissionSet = std::iter::empty::<&str>().collect();
-		assert!(Rule::Booked.on_by_default() && Rule::Booked.open_to(&operator));
-		assert!(Rule::NewLead.open_to(&operator) && Rule::ContactOverdue.open_to(&operator));
-		assert!(!Rule::PaymentReceived.open_to(&operator) && !Rule::SourceSilent.open_to(&operator) && !Rule::AccessRequested.open_to(&operator));
+		assert!(Rule::Booked.on_by_default());
+		assert!(Rule::Booked.open_to(&operator));
+		assert!(Rule::NewLead.open_to(&operator));
+		assert!(Rule::ContactOverdue.open_to(&operator));
+		assert!(!Rule::PaymentReceived.open_to(&operator));
+		assert!(!Rule::SourceSilent.open_to(&operator));
+		assert!(!Rule::AccessRequested.open_to(&operator));
 		assert!(Rule::ALL.iter().all(|r| r.open_to(&admin)));
 		for rule in Rule::ALL {
 			assert_eq!(rule.open_to(&nobody), rule.audience() == Audience::GmbOwners, "{rule}: owning the GMB is the hub's to check");
