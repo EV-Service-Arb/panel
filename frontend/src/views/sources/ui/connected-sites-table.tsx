@@ -9,7 +9,7 @@ import { EDGE_CELL, TABLE_HEAD } from "@/shared/ui/table";
 
 const HEAD = cn(TABLE_HEAD, EDGE_CELL);
 
-const STATE_VARIANT = { unset: "outline", live: "success", empty: "outline", withdrawn: "outline", down: "destructive" } as const;
+const STATE_VARIANT = { unset: "neutral", live: "positive", empty: "neutral", withdrawn: "neutral", down: "error" } as const;
 
 /** Every active site key: what its landing says of itself, beside what sites saw of it. */
 export function ConnectedSitesTable({ sites }: { sites: ConnectedSite[] }) {
@@ -65,10 +65,10 @@ function Row({ site }: { site: ConnectedSite }) {
 function Report({ site }: { site: ConnectedSite }) {
   const t = useT();
   const { report } = site;
-  if (report.state === "no_origin") return <Badge variant="outline">{t("connected.noOrigin")}</Badge>;
+  if (report.state === "no_origin") return <Badge variant="neutral">{t("connected.noOrigin")}</Badge>;
   if (report.state === "failed")
     return (
-      <Badge variant="destructive" title={report.detail}>
+      <Badge variant="error" title={report.detail}>
         {t("connected.failed")}
       </Badge>
     );

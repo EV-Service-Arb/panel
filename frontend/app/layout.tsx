@@ -18,7 +18,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" data-theme={process.env.NEXT_PUBLIC_NAVY_THEME === "1" ? "oldschool" : undefined}>
       <body className="min-h-svh bg-background font-sans text-ink antialiased">
         <DocumentLang />
         {children}

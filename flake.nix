@@ -124,7 +124,7 @@
             src = lib.cleanSource ./frontend;
             filter = path: _type: !(builtins.elem (baseNameOf path) [ "node_modules" ".next" "out" ]);
           };
-          npmDepsHash = "sha256-wo+QeRzq0BBf/IKQ07ivf2xhYkEYSOU0VusvJ94/dg8=";
+          npmDepsHash = "sha256-tE9eWCdjsxk+X1oUMA4I1nnvuDbRVloDoeBr0zzYv48=";
           env = {
             NEXT_TELEMETRY_DISABLED = "1";
             # NEXT_PUBLIC_* values are inlined by `next build`, so these are compile-time:
@@ -134,6 +134,7 @@
             # /api/auth/mfe/*, the wallet's from /wallet/mfe/*).
             NEXT_PUBLIC_SIGNIN_OVERLAY = "1";
             NEXT_PUBLIC_WALLET_PAGE = "1";
+            NEXT_PUBLIC_NAVY_THEME = "0"; # "1": the kit's pre-0.31 navy look (`data-theme="oldschool"`), kept to roll back to
           };
           # Turbopack talks to its node workers over a loopback socket, which the Darwin
           # sandbox refuses unless asked.

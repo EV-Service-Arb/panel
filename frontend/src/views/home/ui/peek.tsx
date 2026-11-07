@@ -39,7 +39,7 @@ export function Peek({ listed: { gmb, gmail }, onClose }: { listed: Listed; onCl
       <CardContent className="flex flex-col gap-3 px-4">
         <div className="flex flex-col gap-0.5 text-sm">
           {numbers.length > 0 && <p className="text-ink tabular-nums">{numbers.join(" · ")}</p>}
-          <p className={cn(issue === null || issue === "off" ? "text-ink-soft" : "font-medium text-accent-error-ink")}>
+          <p className={cn(issue === null || issue === "off" ? "text-ink-soft" : "font-medium text-accent-error")}>
             {issue === null ? t("home.peek.fine") : issue === "off" ? t("home.peek.off") : issueText(issue, gmb.id, tags, t)}
           </p>
         </div>
